@@ -120,7 +120,7 @@ export default function Dashboard() {
 
   // Build status pie data
   const pieData = stats
-    ? Object.entries(stats.status_counts).map(([key, count]) => ({
+    ? Object.entries(stats.status_counts ?? {}).map(([key, count]) => ({
         name: key,
         value: count,
         color: STATUS_COLORS[key as keyof typeof STATUS_COLORS] ?? '#888',
@@ -128,12 +128,12 @@ export default function Dashboard() {
     : []
 
   // Sparkline data
-  const sparkline = stats
+  const sparkline = stats && (stats.requests_per_min ?? 0) > 0
     ? generateSparkline(stats.requests_per_min, stats.requests_per_min * 0.4)
     : generateSparkline(10, 5)
 
   const hasErrors = stats
-    ? (stats.status_counts['4xx'] ?? 0) + (stats.status_counts['5xx'] ?? 0) > 0
+    ? ((stats.status_counts?.['4xx'] ?? 0) + (stats.status_counts?.['5xx'] ?? 0)) > 0
     : false
 
   return (

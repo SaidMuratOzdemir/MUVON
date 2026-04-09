@@ -28,7 +28,7 @@ export function HeaderKVEditor({
   value: Record<string, string>
   onChange: (v: Record<string, string>) => void
 }) {
-  const entries = Object.entries(value)
+  const entries = Object.entries(value ?? {})
 
   function update(idx: number, k: string, v: string) {
     const next = [...entries]

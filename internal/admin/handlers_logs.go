@@ -91,6 +91,29 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
+// logStatsResp is the JSON shape the frontend LogStats interface expects.
+type logStatsResp struct {
+	TotalRequests  int64             `json:"total_requests"`
+	TotalErrors    int64             `json:"total_errors"`
+	StatusCounts   map[string]int64  `json:"status_counts"`
+	AvgResponseMs  float64           `json:"avg_response_ms"`
+	P95ResponseMs  float64           `json:"p95_response_ms"`
+	P99ResponseMs  float64           `json:"p99_response_ms"`
+	TopHosts       []logStatHostItem `json:"top_hosts"`
+	TopPaths       []logStatPathItem `json:"top_paths"`
+	RequestsPerMin float64           `json:"requests_per_min"`
+}
+
+type logStatHostItem struct {
+	Host  string `json:"host"`
+	Count int64  `json:"count"`
+}
+
+type logStatPathItem struct {
+	Path  string `json:"path"`
+	Count int64  `json:"count"`
+}
+
 func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
 	if !s.requireLog(w) {
 		return
@@ -106,12 +129,29 @@ func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
 		to = time.Now().Format(time.RFC3339)
 	}
 
-	stats, err := s.logClient.GetLogStats(r.Context(), q.Get("host"), from, to)
+	proto, err := s.logClient.GetLogStats(r.Context(), q.Get("host"), from, to)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, stats)
+
+	statusCounts := proto.GetStatusDistribution()
+	if statusCounts == nil {
+		statusCounts = map[string]int64{}
+	}
+
+	resp := logStatsResp{
+		TotalRequests:  proto.GetTotalRequests(),
+		TotalErrors:    proto.GetTotalErrors(),
+		StatusCounts:   statusCounts,
+		AvgResponseMs:  proto.GetAvgResponseMs(),
+		P95ResponseMs:  proto.GetP95ResponseMs(),
+		P99ResponseMs:  proto.GetP99ResponseMs(),
+		TopHosts:       []logStatHostItem{},
+		TopPaths:       []logStatPathItem{},
+		RequestsPerMin: 0, // not yet exposed via gRPC
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleStreamLogs streams log entries from diaLOG via gRPC→SSE bridge.

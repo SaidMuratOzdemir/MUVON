@@ -361,7 +361,7 @@ export default function Settings() {
     try {
       const data = await api.getSettings()
       const normalized: Record<string, string> = {}
-      for (const [k, v] of Object.entries(data)) {
+      for (const [k, v] of Object.entries(data ?? {})) {
         normalized[k] = String(v)
       }
       setRawValues(normalized)
