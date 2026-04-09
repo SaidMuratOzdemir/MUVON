@@ -449,7 +449,7 @@ export default function Logs() {
     try {
       setServiceDown(false)
       const res = await api.searchLogs(filtersToParams(f, off))
-      setLogs(res.data)
+      setLogs(res.data ?? [])
       setTotal(res.total)
     } catch (err) {
       if (api.isServiceUnavailable(err)) {

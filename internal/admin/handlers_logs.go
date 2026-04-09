@@ -64,8 +64,12 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logs := resp.Logs
+	if logs == nil {
+		logs = []*pb.LogSummary{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data":   resp.Logs,
+		"data":   logs,
 		"total":  resp.Total,
 		"limit":  req.Limit,
 		"offset": req.Offset,

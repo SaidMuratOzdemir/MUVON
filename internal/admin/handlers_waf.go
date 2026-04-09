@@ -357,8 +357,12 @@ func (s *Server) handleSearchWafEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	events := resp.Events
+	if events == nil {
+		events = []*pb.WafEvent{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"events": resp.Events,
+		"events": events,
 		"total":  resp.Total,
 		"limit":  limit,
 		"offset": offset,
