@@ -3,6 +3,8 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+
+	"muvon/internal/db"
 )
 
 // secretKeys are settings that should be masked in GET responses (write-only behavior).
@@ -96,6 +98,9 @@ func (s *Server) handleListCerts(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+	if certs == nil {
+		certs = []db.TLSCert{}
 	}
 	writeJSON(w, http.StatusOK, certs)
 }

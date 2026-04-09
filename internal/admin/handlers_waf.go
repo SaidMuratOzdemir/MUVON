@@ -19,6 +19,9 @@ func (s *Server) handleListWafRules(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	if rules == nil {
+		rules = []*pb.Rule{}
+	}
 	writeJSON(w, http.StatusOK, rules)
 }
 
@@ -169,6 +172,9 @@ func (s *Server) handleListWafIPs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	if states == nil {
+		states = []*pb.IPStateEntry{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ips": states})
 }
 
@@ -276,6 +282,9 @@ func (s *Server) handleListWafExclusions(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+	if exclusions == nil {
+		exclusions = []*pb.Exclusion{}
 	}
 	writeJSON(w, http.StatusOK, exclusions)
 }

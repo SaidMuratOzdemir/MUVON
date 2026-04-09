@@ -81,7 +81,7 @@ export default function WafRules() {
     try {
       setServiceDown(false)
       const data = await api.listWafRules()
-      setRules(data)
+      setRules(data ?? [])
     } catch (err) {
       if (api.isServiceUnavailable(err)) {
         setServiceDown(true)

@@ -101,7 +101,7 @@ export default function TLSCerts() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setCerts(await api.listCerts())
+      setCerts((await api.listCerts()) ?? [])
     } catch {
       toast.error('Failed to load certificates')
     } finally {
