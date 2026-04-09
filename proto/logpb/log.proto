@@ -1,0 +1,159 @@
+syntax = "proto3";
+
+package logpb;
+
+option go_package = "dialog/proto/logpb";
+
+// LogService — diaLOG SIEM'in gRPC API'si.
+// MUVON proxy log entry'lerini bu servise gonderir.
+service LogService {
+  // SendEntry: tek bir log entry gonder (fire-and-forget).
+  rpc SendEntry(LogEntry)   returns (Ack);
+
+  // SendBatch: toplu log entry gonder (yuksek throughput).
+  rpc SendBatch(LogBatch)   returns (Ack);
+
+  // --- Arama / Okuma (admin frontend tarafindan kullanilir) ---
+  rpc SearchLogs(SearchLogsRequest) returns (SearchLogsResponse);
+  rpc GetLog(GetLogRequest)         returns (LogDetail);
+  rpc GetLogStats(GetLogStatsRequest) returns (LogStatsResponse);
+
+  // --- SSE yerine gRPC stream ---
+  rpc StreamLogs(StreamLogsRequest) returns (stream LogEntry);
+
+  // --- Not / Star ---
+  rpc UpsertNote(UpsertNoteRequest) returns (Ack);
+  rpc ToggleStar(ToggleStarRequest) returns (Ack);
+}
+
+// ===== Log Ingest =====
+
+message LogEntry {
+  string request_id          = 1;
+  string timestamp           = 2;   // RFC3339Nano
+  string host                = 3;
+  string client_ip           = 4;
+  string method              = 5;
+  string path                = 6;
+  string query_string        = 7;
+  map<string, string> request_headers = 8;
+  int32  response_status     = 9;
+  map<string, string> response_headers = 10;
+  int32  response_time_ms    = 11;
+  int32  request_size        = 12;
+  int32  response_size       = 13;
+  string user_agent          = 14;
+  string error               = 15;
+  bytes  request_body        = 16;
+  bytes  response_body       = 17;
+  bool   is_request_truncated  = 18;
+  bool   is_response_truncated = 19;
+
+  // WAF metadata — MUVON, muWAF'tan aldigi sonucu buraya ekler
+  bool   waf_blocked         = 20;
+  string waf_block_reason    = 21;
+  int32  waf_score           = 22;
+  string waf_action          = 23;
+
+  // Identity enrichment (JWT)
+  UserIdentity user_identity = 24;
+
+  // GeoIP enrichment
+  string country             = 25;
+  string city                = 26;
+}
+
+message UserIdentity {
+  map<string, string> claims = 1;
+  bool   verified            = 2;
+  string source              = 3;  // "jwt_verify" or "jwt_decode"
+}
+
+message LogBatch {
+  repeated LogEntry entries = 1;
+}
+
+message Ack {}
+
+// ===== Search =====
+
+message SearchLogsRequest {
+  string host        = 1;
+  string path        = 2;
+  string method      = 3;
+  string client_ip   = 4;
+  int32  status_min  = 5;
+  int32  status_max  = 6;
+  string from        = 7;  // RFC3339
+  string to          = 8;
+  string search      = 9;  // full text on bodies
+  bool   starred     = 10;
+  int32  resp_time_min = 11;
+  int32  resp_time_max = 12;
+  int32  limit       = 13;
+  int32  offset      = 14;
+}
+
+message SearchLogsResponse {
+  repeated LogSummary logs = 1;
+  int32 total              = 2;
+}
+
+message LogSummary {
+  string request_id      = 1;
+  string timestamp       = 2;
+  string host            = 3;
+  string client_ip       = 4;
+  string method          = 5;
+  string path            = 6;
+  int32  response_status = 7;
+  int32  response_time_ms = 8;
+  string user_agent      = 9;
+  bool   waf_blocked     = 10;
+  string waf_action      = 11;
+  bool   starred         = 12;
+}
+
+// ===== Detail =====
+
+message GetLogRequest { string request_id = 1; }
+
+message LogDetail {
+  LogEntry entry = 1;
+  string   note  = 2;
+  bool     starred = 3;
+}
+
+// ===== Stats =====
+
+message GetLogStatsRequest {
+  string host = 1;
+  string from = 2;
+  string to   = 3;
+}
+
+message LogStatsResponse {
+  int64 total_requests     = 1;
+  int64 total_errors       = 2;  // 4xx + 5xx
+  double avg_response_ms   = 3;
+  double p95_response_ms   = 4;
+  double p99_response_ms   = 5;
+  map<string, int64> status_distribution = 6;
+}
+
+// ===== Stream =====
+
+message StreamLogsRequest {
+  string host = 1;  // filter by host, empty = all
+}
+
+// ===== Notes / Stars =====
+
+message UpsertNoteRequest {
+  string request_id = 1;
+  string note       = 2;
+}
+
+message ToggleStarRequest {
+  string request_id = 1;
+}

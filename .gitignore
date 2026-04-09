@@ -1,0 +1,53 @@
+# ── Go ──────────────────────────────────────────────────────
+/build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+
+# ── Frontend ────────────────────────────────────────────────
+/frontend/dist/
+/ui/node_modules/
+/ui/dist/
+
+# ── Dependencies ────────────────────────────────────────────
+/vendor/
+
+# ── Environment & Secrets ──────────────────────────────────
+.env
+.env.agent
+*.local
+*.key
+*.crt
+*.pem
+
+# ── IDE & Editors ──────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Claude Code ────────────────────────────────────────────
+.claude/
+
+# ── Compiled Binaries ──────────────────────────────────────
+/dialog-siem
+/muvon
+/muwaf
+
+# ── GeoIP Data ─────────────────────────────────────────────
+geo.tar.gz
+*.mmdb
+GeoLite2-City_*/
+
+# ── VPS Backup ─────────────────────────────────────────────
+/vps-backup/
+
+# ── OS ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

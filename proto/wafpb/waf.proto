@@ -1,0 +1,230 @@
+syntax = "proto3";
+
+package wafpb;
+
+option go_package = "dialog/proto/wafpb";
+
+// WafService — muWAF'in gRPC API'si.
+// MUVON her gelen HTTP istegini bu servise sorar.
+service WafService {
+  // Inspect: gelen HTTP istegini denetle, skor ve aksiyon don.
+  rpc Inspect(InspectRequest)         returns (InspectResponse);
+
+  // --- IP Yonetimi ---
+  rpc BanIP(BanIPRequest)             returns (BanIPResponse);
+  rpc UnbanIP(UnbanIPRequest)         returns (UnbanIPResponse);
+  rpc WhitelistIP(WhitelistIPRequest) returns (WhitelistIPResponse);
+  rpc RemoveWhitelist(RemoveWhitelistRequest) returns (RemoveWhitelistResponse);
+  rpc ListIPStates(ListIPStatesRequest) returns (ListIPStatesResponse);
+
+  // --- Kural Yonetimi ---
+  rpc ListRules(ListRulesRequest)     returns (ListRulesResponse);
+  rpc CreateRule(CreateRuleRequest)   returns (Rule);
+  rpc UpdateRule(UpdateRuleRequest)   returns (Rule);
+  rpc DeleteRule(DeleteRuleRequest)   returns (DeleteRuleResponse);
+  rpc ImportRules(ImportRulesRequest) returns (ImportRulesResponse);
+
+  // --- Exclusion ---
+  rpc ListExclusions(ListExclusionsRequest)   returns (ListExclusionsResponse);
+  rpc CreateExclusion(CreateExclusionRequest) returns (Exclusion);
+  rpc DeleteExclusion(DeleteExclusionRequest) returns (DeleteExclusionResponse);
+
+  // --- Event / Stats ---
+  rpc SearchEvents(SearchEventsRequest) returns (SearchEventsResponse);
+  rpc GetStats(GetStatsRequest)         returns (GetStatsResponse);
+}
+
+// ===== Inspect =====
+
+message InspectRequest {
+  string request_id     = 1;
+  string client_ip      = 2;
+  string host           = 3;
+  string method         = 4;
+  string path           = 5;
+  string raw_query      = 6;
+  map<string, string> headers = 7;  // flattened: key -> "v1, v2"
+  bytes  body           = 8;
+  string content_type   = 9;
+  int32  route_id       = 10;
+  bool   detection_only = 11;
+}
+
+message InspectResponse {
+  string action         = 1;  // allow, log, rate_limit, block, temp_ban, ban
+  int32  request_score  = 2;
+  double ip_score       = 3;
+  repeated RuleMatch matches = 4;
+  string block_reason   = 5;
+  bool   detection_only = 6;
+  int64  processing_us  = 7;  // microseconds
+}
+
+message RuleMatch {
+  int32  rule_id   = 1;
+  string category  = 2;
+  int32  severity  = 3;
+  string location  = 4;
+  string field     = 5;
+  string snippet   = 6;
+}
+
+// ===== IP Management =====
+
+message BanIPRequest {
+  string ip              = 1;
+  string reason          = 2;
+  int32  duration_minutes = 3;  // 0 = permanent
+}
+message BanIPResponse {}
+
+message UnbanIPRequest { string ip = 1; }
+message UnbanIPResponse {}
+
+message WhitelistIPRequest { string ip = 1; }
+message WhitelistIPResponse {}
+
+message RemoveWhitelistRequest { string ip = 1; }
+message RemoveWhitelistResponse {}
+
+message ListIPStatesRequest {}
+message ListIPStatesResponse {
+  repeated IPStateEntry states = 1;
+}
+message IPStateEntry {
+  string ip               = 1;
+  bool   banned           = 2;
+  bool   whitelisted      = 3;
+  double cumulative_score = 4;
+  string ban_reason       = 5;
+  string last_seen        = 6;  // RFC3339
+}
+
+// ===== Rule Management =====
+
+message Rule {
+  int32  id          = 1;
+  string pattern     = 2;
+  bool   is_regex    = 3;
+  string category    = 4;
+  int32  severity    = 5;
+  string description = 6;
+  bool   is_active   = 7;
+  string created_at  = 8;
+  string updated_at  = 9;
+}
+
+message ListRulesRequest {
+  string category  = 1;  // filter
+  bool   active_only = 2;
+}
+message ListRulesResponse {
+  repeated Rule rules = 1;
+}
+
+message CreateRuleRequest {
+  string pattern     = 1;
+  bool   is_regex    = 2;
+  string category    = 3;
+  int32  severity    = 4;
+  string description = 5;
+}
+
+message UpdateRuleRequest {
+  int32  id          = 1;
+  string pattern     = 2;
+  bool   is_regex    = 3;
+  string category    = 4;
+  int32  severity    = 5;
+  string description = 6;
+  bool   is_active   = 7;
+}
+
+message DeleteRuleRequest { int32 id = 1; }
+message DeleteRuleResponse {}
+
+message ImportRulesRequest {
+  repeated CreateRuleRequest rules = 1;
+}
+message ImportRulesResponse {
+  int32 imported = 1;
+}
+
+// ===== Exclusions =====
+
+message Exclusion {
+  int32  id        = 1;
+  int32  rule_id   = 2;
+  int32  route_id  = 3;
+  string location  = 4;
+  string parameter = 5;
+}
+
+message ListExclusionsRequest {}
+message ListExclusionsResponse {
+  repeated Exclusion exclusions = 1;
+}
+
+message CreateExclusionRequest {
+  int32  rule_id   = 1;
+  int32  route_id  = 2;
+  string location  = 3;
+  string parameter = 4;
+}
+
+message DeleteExclusionRequest { int32 id = 1; }
+message DeleteExclusionResponse {}
+
+// ===== Events / Stats =====
+
+message SearchEventsRequest {
+  string client_ip  = 1;
+  string host       = 2;
+  string action     = 3;
+  string from       = 4;  // RFC3339
+  string to         = 5;
+  int32  limit      = 6;
+  int32  offset     = 7;
+}
+
+message SearchEventsResponse {
+  repeated WafEvent events = 1;
+  int32 total              = 2;
+}
+
+message WafEvent {
+  string id            = 1;
+  string request_id    = 2;
+  string client_ip     = 3;
+  string host          = 4;
+  string method        = 5;
+  string path          = 6;
+  int32  request_score = 7;
+  double ip_score      = 8;
+  string action        = 9;
+  string matched_rules = 10;  // JSON
+  string created_at    = 11;
+}
+
+message GetStatsRequest {
+  string from = 1;
+  string to   = 2;
+}
+
+message GetStatsResponse {
+  int32  total_events       = 1;
+  int32  total_blocked      = 2;
+  int32  unique_ips         = 3;
+  repeated CategoryCount top_categories = 4;
+  repeated IPCount       top_ips        = 5;
+}
+
+message CategoryCount {
+  string category = 1;
+  int32  count    = 2;
+}
+
+message IPCount {
+  string ip    = 1;
+  int32  count = 2;
+}

@@ -1,0 +1,32 @@
+# Agent makine: agent binary
+# Güncelleme:
+#   docker compose -f docker-compose.agent.yml pull && \
+#   docker compose -f docker-compose.agent.yml up -d
+
+services:
+  agent:
+    image: ghcr.io/${GITHUB_REPO:?required}/agent:${VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      AGENT_CENTRAL_URL: ${AGENT_CENTRAL_URL:?required}
+      AGENT_API_KEY: ${AGENT_API_KEY:?required}
+      AGENT_LOG_ADDR: ${AGENT_LOG_ADDR:-}
+      AGENT_LOG_LEVEL: ${LOG_LEVEL:-info}
+      # AGENT_WAF_SOCKET: /run/sockets/muwaf.sock  # muwaf varsa uncomment
+    volumes:
+      - tls_cache:/var/lib/app/tls
+      # - sockets:/run/sockets  # muwaf varsa uncomment
+
+  # ── Opsiyonel: local muWAF ────────────────────────────────────────────────
+  # muwaf:
+  #   image: ghcr.io/${GITHUB_REPO:?required}/muwaf:${VERSION:-latest}
+  #   restart: unless-stopped
+  #   volumes:
+  #     - sockets:/run/sockets
+
+volumes:
+  tls_cache:
+  # sockets:

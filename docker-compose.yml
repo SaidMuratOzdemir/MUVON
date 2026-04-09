@@ -1,0 +1,140 @@
+# MUVON Ana Makine Stack
+# Kurulum: ./install.sh  veya  cp .env.example .env && docker compose up -d
+# Güncelleme: docker compose pull && docker compose up -d
+
+services:
+  # ── PostgreSQL (ParadeDB + TimescaleDB + pg_uuidv7) ─────────────────────
+  postgres:
+    build:
+      context: ./postgres
+    image: muvon-postgres:latest
+    container_name: muvon-postgres
+    restart: unless-stopped
+    command: postgres -c shared_preload_libraries=timescaledb,pg_search,pg_cron,pg_stat_statements
+    environment:
+      POSTGRES_DB: muvon
+      POSTGRES_USER: muvon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    # PostgreSQL is NOT exposed to the host — internal network only.
+    # Services connect via "postgres:5432" within the Docker network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U muvon -d muvon"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── diaLOG SIEM ─────────────────────────────────────────────────────────
+  dialog-siem:
+    image: ghcr.io/${GITHUB_REPO}/dialog-siem:${VERSION:-latest}
+    build:
+      context: .
+      args:
+        SERVICE: dialog-siem
+    restart: unless-stopped
+    user: root
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # gRPC log ingestion for remote agents — restrict with firewall:
+      # ufw allow from <agent-ip> to any port 9001
+      - "9001:9001"
+    environment:
+      DIALOG_DSN: "postgres://muvon:${POSTGRES_PASSWORD}@postgres:5432/muvon?sslmode=disable"
+      DIALOG_SOCKET: /run/muvon/dialog.sock
+      DIALOG_TCP_ADDR: ":9001"
+      DIALOG_LOG_LEVEL: ${LOG_LEVEL:-info}
+      MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:-}
+    volumes:
+      - sockets:/run/muvon
+      - geoip:/var/lib/geoip:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── muWAF Engine ─────────────────────────────────────────────────────────
+  muwaf:
+    image: ghcr.io/${GITHUB_REPO}/muwaf:${VERSION:-latest}
+    build:
+      context: .
+      args:
+        SERVICE: muwaf
+    restart: unless-stopped
+    user: root
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MUWAF_DSN: "postgres://muvon:${POSTGRES_PASSWORD}@postgres:5432/muvon?sslmode=disable"
+      MUWAF_SOCKET: /run/muvon/muwaf.sock
+      MUWAF_LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - sockets:/run/muvon
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── MUVON Edge Gateway ───────────────────────────────────────────────────
+  muvon:
+    image: ghcr.io/${GITHUB_REPO}/muvon:${VERSION:-latest}
+    build:
+      context: .
+      args:
+        SERVICE: muvon
+    restart: unless-stopped
+    user: root
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dialog-siem:
+        condition: service_started
+      muwaf:
+        condition: service_started
+    ports:
+      - "80:80"
+      - "443:443"
+      # Local-only admin access (initial setup before TLS cert is available)
+      # Usage: curl -X POST http://127.0.0.1:9443/api/auth/setup ...
+      - "127.0.0.1:9443:9443"
+    # Allows proxying to services running on the host machine.
+    # Use http://host.docker.internal:<port> as backend_url in admin panel.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      MUVON_DSN: "postgres://muvon:${POSTGRES_PASSWORD}@postgres:5432/muvon?sslmode=disable"
+      MUVON_JWT_SECRET: ${MUVON_JWT_SECRET:?MUVON_JWT_SECRET is required}
+      MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:-}
+      MUVON_LOG_LEVEL: ${LOG_LEVEL:-info}
+      MUVON_ADMIN_DOMAIN: ${MUVON_ADMIN_DOMAIN:?MUVON_ADMIN_DOMAIN is required}
+      MUVON_LOG_SOCKET: /run/muvon/dialog.sock
+      MUVON_WAF_SOCKET: /run/muvon/muwaf.sock
+    volumes:
+      - tls_cache:/var/lib/app/tls
+      - sockets:/run/muvon
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:       # PostgreSQL data — never deleted by compose down (use down -v explicitly)
+  tls_cache:    # ACME TLS certificates
+  geoip:        # GeoLite2-City.mmdb — seeded by install.sh if MaxMind key is provided
+  sockets:      # Unix sockets shared between services (tmpfs — ephemeral, world-writable)
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
