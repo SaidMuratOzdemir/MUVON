@@ -41,18 +41,23 @@ const (
 
 // CircuitBreaker is a 3-state per-backend circuit breaker.
 type CircuitBreaker struct {
-	mu          sync.Mutex
-	state       State
-	failures    int
-	threshold   int
-	cooldown    time.Duration
-	openedAt    time.Time
-	backendURL  string
+	mu         sync.Mutex
+	state      State
+	failures   int
+	threshold  int
+	cooldown   time.Duration
+	openedAt   time.Time
+	backendURL string
+	healthURL  string
 }
 
-func newCircuitBreaker(url string) *CircuitBreaker {
+func newCircuitBreaker(url, healthURL string) *CircuitBreaker {
+	if healthURL == "" {
+		healthURL = url
+	}
 	return &CircuitBreaker{
 		backendURL: url,
+		healthURL:  healthURL,
 		state:      Closed,
 		threshold:  defaultThreshold,
 		cooldown:   defaultCooldown,
@@ -134,26 +139,37 @@ func NewManager() *Manager {
 
 // Register ensures a circuit breaker exists for the given URL.
 func (m *Manager) Register(url string) {
+	m.RegisterWithHealth(url, "")
+}
+
+func (m *Manager) RegisterWithHealth(url, healthURL string) {
 	if url == "" {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.breakers[url]; !ok {
-		m.breakers[url] = newCircuitBreaker(url)
+	if cb, ok := m.breakers[url]; ok {
+		if healthURL != "" {
+			cb.healthURL = healthURL
+		}
+	} else {
+		m.breakers[url] = newCircuitBreaker(url, healthURL)
 	}
 }
 
 // SyncBackends registers backends from the given config and removes stale ones.
 func (m *Manager) SyncBackends(cfg *config.Config) {
-	wanted := make(map[string]bool)
+	wanted := make(map[string]string)
 	for _, hc := range cfg.Hosts {
 		for _, r := range hc.Routes {
 			if r.Route.BackendURL != nil && *r.Route.BackendURL != "" {
-				wanted[*r.Route.BackendURL] = true
+				wanted[*r.Route.BackendURL] = ""
 			}
 			for _, u := range r.Route.BackendURLs {
-				wanted[u] = true
+				wanted[u] = ""
+			}
+			for _, b := range r.ManagedBackends {
+				wanted[b.BackendURL] = b.HealthURL
 			}
 		}
 	}
@@ -161,14 +177,18 @@ func (m *Manager) SyncBackends(cfg *config.Config) {
 	m.mu.Lock()
 	// Remove stale
 	for url := range m.breakers {
-		if !wanted[url] {
+		if _, ok := wanted[url]; !ok {
 			delete(m.breakers, url)
 		}
 	}
 	// Add new
-	for url := range wanted {
-		if _, ok := m.breakers[url]; !ok {
-			m.breakers[url] = newCircuitBreaker(url)
+	for url, healthURL := range wanted {
+		if cb, ok := m.breakers[url]; ok {
+			if healthURL != "" {
+				cb.healthURL = healthURL
+			}
+		} else {
+			m.breakers[url] = newCircuitBreaker(url, healthURL)
 		}
 	}
 	m.mu.Unlock()
@@ -241,22 +261,29 @@ func (m *Manager) pingLoop() {
 
 func (m *Manager) pingAll() {
 	m.mu.RLock()
-	urls := make([]string, 0, len(m.breakers))
-	for url := range m.breakers {
-		urls = append(urls, url)
+	type probe struct {
+		backendURL string
+		healthURL  string
+	}
+	probes := make([]probe, 0, len(m.breakers))
+	for url, cb := range m.breakers {
+		probes = append(probes, probe{backendURL: url, healthURL: cb.healthURL})
 	}
 	m.mu.RUnlock()
 
-	for _, url := range urls {
-		go m.ping(url)
+	for _, p := range probes {
+		go m.ping(p.backendURL, p.healthURL)
 	}
 }
 
-func (m *Manager) ping(rawURL string) {
+func (m *Manager) ping(rawURL, healthURL string) {
 	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if healthURL == "" {
+		healthURL = rawURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 	if err != nil {
 		return
 	}

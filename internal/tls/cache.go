@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,19 +55,23 @@ func (c *PGCache) Put(ctx context.Context, key string, data []byte) error {
 	// If this looks like a TLS cert+key (domain name without special chars),
 	// also upsert into tls_certificates so it shows up in the admin panel.
 	if looksLikeDomain(key) {
+		domain := strings.ToLower(strings.TrimSpace(key))
 		certPEM, keyPEM := splitPEM(data)
 		if certPEM != nil && keyPEM != nil {
 			expiresAt := extractExpiry(certPEM)
 			_, err = tx.Exec(ctx,
 				`INSERT INTO tls_certificates (domain, cert_pem, key_pem, issuer, expires_at, created_at)
 				 VALUES ($1, $2, $3, 'letsencrypt', $4, NOW())
-				 ON CONFLICT (domain) DO UPDATE SET cert_pem = $2, key_pem = $3, issuer = 'letsencrypt', expires_at = $4`,
-				key, certPEM, keyPEM, expiresAt,
+				 ON CONFLICT (domain, issuer) DO UPDATE
+				 SET cert_pem = EXCLUDED.cert_pem,
+				     key_pem = EXCLUDED.key_pem,
+				     expires_at = EXCLUDED.expires_at`,
+				domain, certPEM, keyPEM, expiresAt,
 			)
 			if err != nil {
 				return fmt.Errorf("acme cache sync cert %s: %w", key, err)
 			}
-			slog.Info("Let's Encrypt certificate obtained", "domain", key, "expires", expiresAt.Format("2006-01-02"))
+			slog.Info("Let's Encrypt certificate obtained", "domain", domain, "expires", expiresAt.Format("2006-01-02"))
 		}
 	}
 

@@ -35,7 +35,7 @@ type Server struct {
 	logClient    *logclient.RemoteLogSink   // nil = diaLOG unavailable
 	tlsManager   *tlspkg.Manager
 	healthMgr    *health.Manager
-	agentSvc     *agentsvc.Service          // nil = agent API disabled
+	agentSvc     *agentsvc.Service // nil = agent API disabled
 	frontendFS   fs.FS
 	startTime    time.Time
 }
@@ -75,6 +75,9 @@ func (s *Server) Handler() http.Handler {
 	authMux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	authMux.HandleFunc("POST /api/auth/setup", s.handleSetup)
 	mux.Handle("/api/auth/", rl.Middleware(authMux))
+
+	// Deploy webhook — HMAC-authenticated by project secret, no admin JWT.
+	mux.HandleFunc("POST /api/deploy/webhook", s.handleDeployWebhook)
 
 	// Protected API endpoints
 	api := http.NewServeMux()
@@ -148,6 +151,13 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/agents", s.handleListAgents)
 	api.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	api.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
+
+	// Managed application deploys
+	api.HandleFunc("GET /api/deploy/projects", s.handleListDeployProjects)
+	api.HandleFunc("PUT /api/deploy/projects/{slug}", s.handleUpdateDeployProject)
+	api.HandleFunc("GET /api/deploy/deployments", s.handleListDeployments)
+	api.HandleFunc("GET /api/deploy/deployments/{id}/events", s.handleListDeploymentEvents)
+	api.HandleFunc("POST /api/deploy/projects/{slug}/deploy", s.handleManualDeploy)
 
 	mux.Handle("/api/", s.authMiddleware(api))
 

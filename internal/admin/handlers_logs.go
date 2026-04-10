@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"muvon/internal/db"
 	pb "muvon/proto/logpb"
 )
 
@@ -97,15 +98,16 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 
 // logStatsResp is the JSON shape the frontend LogStats interface expects.
 type logStatsResp struct {
-	TotalRequests  int64             `json:"total_requests"`
-	TotalErrors    int64             `json:"total_errors"`
-	StatusCounts   map[string]int64  `json:"status_counts"`
-	AvgResponseMs  float64           `json:"avg_response_ms"`
-	P95ResponseMs  float64           `json:"p95_response_ms"`
-	P99ResponseMs  float64           `json:"p99_response_ms"`
-	TopHosts       []logStatHostItem `json:"top_hosts"`
-	TopPaths       []logStatPathItem `json:"top_paths"`
-	RequestsPerMin float64           `json:"requests_per_min"`
+	TotalRequests  int64              `json:"total_requests"`
+	TotalErrors    int64              `json:"total_errors"`
+	StatusCounts   map[string]int64   `json:"status_counts"`
+	AvgResponseMs  float64            `json:"avg_response_ms"`
+	P95ResponseMs  float64            `json:"p95_response_ms"`
+	P99ResponseMs  float64            `json:"p99_response_ms"`
+	TopHosts       []logStatHostItem  `json:"top_hosts"`
+	TopPaths       []logStatPathItem  `json:"top_paths"`
+	TopCountries   []db.CountryCount  `json:"top_countries"`
+	RequestsPerMin float64            `json:"requests_per_min"`
 }
 
 type logStatHostItem struct {
@@ -144,6 +146,14 @@ func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
 		statusCounts = map[string]int64{}
 	}
 
+	var topCountries []db.CountryCount
+	if j := proto.GetTopCountriesJson(); j != "" {
+		_ = json.Unmarshal([]byte(j), &topCountries)
+	}
+	if topCountries == nil {
+		topCountries = []db.CountryCount{}
+	}
+
 	resp := logStatsResp{
 		TotalRequests:  proto.GetTotalRequests(),
 		TotalErrors:    proto.GetTotalErrors(),
@@ -153,7 +163,8 @@ func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
 		P99ResponseMs:  proto.GetP99ResponseMs(),
 		TopHosts:       []logStatHostItem{},
 		TopPaths:       []logStatPathItem{},
-		RequestsPerMin: 0, // not yet exposed via gRPC
+		TopCountries:   topCountries,
+		RequestsPerMin: 0,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

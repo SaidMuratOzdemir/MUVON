@@ -44,8 +44,8 @@ func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "route_type is required"})
 		return
 	}
-	if req.RouteType == "proxy" && (req.BackendURL == nil || *req.BackendURL == "") && len(req.BackendURLs) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backend_url or backend_urls is required for proxy routes"})
+	if req.RouteType == "proxy" && req.ManagedComponentID == nil && (req.BackendURL == nil || *req.BackendURL == "") && len(req.BackendURLs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backend_url, backend_urls, or managed_component_id is required for proxy routes"})
 		return
 	}
 	if req.PathPrefix == "" {

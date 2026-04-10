@@ -5,7 +5,7 @@ UI_DIR       = ./ui
 FRONTEND_DIST= ./frontend/dist
 LDFLAGS      = -s -w
 
-SERVICES = muvon muwaf dialog-siem agent
+SERVICES = muvon muwaf dialog-siem agent muvon-deployer
 
 # ── Build (native) ──────────────────────────────────────────
 

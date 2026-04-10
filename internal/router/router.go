@@ -21,9 +21,9 @@ type Router struct {
 
 // New creates a Router. If adminDomain is non-empty, requests to that domain
 // on :443 are served by adminHandler instead of the proxy.
-func New(ch *config.Holder, logSink proxy.LogSink, transport http.RoundTripper, hm *health.Manager, inspector proxy.Inspector, frontendFS fs.FS, adminDomain string, adminHandler http.Handler) *Router {
+func New(ch *config.Holder, logSink proxy.LogSink, transport http.RoundTripper, hm *health.Manager, inspector proxy.Inspector, instanceTracker proxy.InstanceTracker, frontendFS fs.FS, adminDomain string, adminHandler http.Handler) *Router {
 	return &Router{
-		proxyHandler: proxy.NewHandler(ch, logSink, transport, hm, inspector),
+		proxyHandler: proxy.NewHandler(ch, logSink, transport, hm, inspector, instanceTracker),
 		configHolder: ch,
 		frontendFS:   frontendFS,
 		adminDomain:  strings.ToLower(adminDomain),

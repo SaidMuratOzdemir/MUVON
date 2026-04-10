@@ -106,7 +106,7 @@ export default function WafRules() {
     setForm({
       pattern: rule.pattern,
       is_regex: rule.is_regex,
-      category: rule.category,
+      category: CATEGORIES.includes(rule.category) ? rule.category : 'custom',
       severity: rule.severity,
       description: rule.description,
       is_active: rule.is_active,

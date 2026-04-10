@@ -208,7 +208,7 @@ export default function TLSCerts() {
         <div>
           <p className="text-foreground font-medium">Automatic TLS via Let's Encrypt</p>
           <p className="text-muted-foreground text-xs mt-0.5">
-            DiaLog automatically provisions and renews certificates for configured hosts.
+            MUVON automatically provisions and renews certificates for configured hosts.
             Manually uploaded certificates take priority over Let's Encrypt.
           </p>
         </div>

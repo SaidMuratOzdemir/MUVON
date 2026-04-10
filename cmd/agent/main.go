@@ -22,14 +22,14 @@ import (
 
 func main() {
 	var (
-		centralURL = flag.String("central", envOr("AGENT_CENTRAL_URL", ""), "Central server URL (e.g. https://central.example.com:9443)")
-		apiKey     = flag.String("api-key", envOr("AGENT_API_KEY", ""), "Agent API key from central")
-		httpAddr   = flag.String("http", envOr("AGENT_HTTP_ADDR", ":80"), "HTTP listen address")
-		httpsAddr  = flag.String("https", envOr("AGENT_HTTPS_ADDR", ":443"), "HTTPS listen address")
-		logAddr    = flag.String("log-addr", envOr("AGENT_LOG_ADDR", ""), "Central diaLOG TCP address (host:port)")
-		wafSocket  = flag.String("waf-socket", envOr("AGENT_WAF_SOCKET", "/tmp/muwaf.sock"), "Local muWAF Unix socket path")
+		centralURL  = flag.String("central", envOr("AGENT_CENTRAL_URL", ""), "Central server URL (e.g. https://central.example.com:9443)")
+		apiKey      = flag.String("api-key", envOr("AGENT_API_KEY", ""), "Agent API key from central")
+		httpAddr    = flag.String("http", envOr("AGENT_HTTP_ADDR", ":80"), "HTTP listen address")
+		httpsAddr   = flag.String("https", envOr("AGENT_HTTPS_ADDR", ":443"), "HTTPS listen address")
+		logAddr     = flag.String("log-addr", envOr("AGENT_LOG_ADDR", ""), "Central diaLOG TCP address (host:port)")
+		wafSocket   = flag.String("waf-socket", envOr("AGENT_WAF_SOCKET", "/tmp/muwaf.sock"), "Local muWAF Unix socket path")
 		tlsCacheDir = flag.String("tls-cache", envOr("AGENT_TLS_CACHE", "/var/lib/agent/tls"), "Directory for ACME cert cache")
-		logLevel   = flag.String("log-level", envOr("AGENT_LOG_LEVEL", "info"), "Log level")
+		logLevel    = flag.String("log-level", envOr("AGENT_LOG_LEVEL", "info"), "Log level")
 	)
 	flag.Parse()
 	setupLogger(*logLevel)
@@ -106,7 +106,7 @@ func main() {
 
 	// Transport + Router
 	transport := proxy.NewTransport()
-	rt := router.New(ch, logSink, transport, hm, inspector, nil, "", nil)
+	rt := router.New(ch, logSink, transport, hm, inspector, nil, nil, "", nil)
 
 	// HTTP server — ACME + redirect
 	httpServer := &http.Server{

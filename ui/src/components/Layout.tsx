@@ -3,7 +3,7 @@ import { useState } from 'react'
 import {
   LayoutDashboard, Server, FileText, Settings, Shield,
   LogOut, Menu, X, Activity, ChevronRight, ClipboardList,
-  ShieldAlert, Network, ScrollText, Cpu, Route,
+  ShieldAlert, Network, ScrollText, Cpu, Route, Rocket,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -16,6 +16,7 @@ const mainNav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/hosts', label: 'Hosts', icon: Server },
   { to: '/routes', label: 'Routes', icon: Route },
+  { to: '/apps', label: 'Apps', icon: Rocket },
   { to: '/logs', label: 'SIEM / Logs', icon: FileText },
   { to: '/audit', label: 'Audit Log', icon: ClipboardList },
   { to: '/tls', label: 'TLS Certs', icon: Shield },
@@ -60,7 +61,7 @@ export default function Layout() {
             <Activity className="h-4 w-4 text-primary" />
           </div>
           <div>
-            <span className="font-semibold text-foreground tracking-tight">DiaLog</span>
+            <span className="font-semibold text-foreground tracking-tight">MUVON</span>
             <p className="text-xs text-muted-foreground leading-none mt-0.5">Reverse Proxy + SIEM</p>
           </div>
           <button
@@ -73,9 +74,6 @@ export default function Layout() {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto py-3 px-2">
-          <p className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Navigation
-          </p>
           <ul className="space-y-0.5">
             {mainNav.map(({ to, label, icon: Icon, end }) => (
               <li key={to}>
@@ -177,7 +175,7 @@ export default function Layout() {
           </button>
           <div className="flex items-center gap-2">
             <Activity className="h-4 w-4 text-primary" />
-            <span className="font-semibold text-sm">DiaLog</span>
+            <span className="font-semibold text-sm">MUVON</span>
           </div>
         </header>
 

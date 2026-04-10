@@ -66,7 +66,11 @@ func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, 
 
 	// Sonra autocert (Let's Encrypt)
 	slog.Info("requesting certificate from Let's Encrypt", "domain", domain)
-	return m.autocertMgr.GetCertificate(hello)
+	cert, err = m.autocertMgr.GetCertificate(hello)
+	if err != nil {
+		slog.Error("autocert GetCertificate failed", "domain", domain, "error", err)
+	}
+	return cert, err
 }
 
 func (m *Manager) HTTPHandler(fallback http.Handler) http.Handler {

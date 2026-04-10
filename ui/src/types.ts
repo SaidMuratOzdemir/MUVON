@@ -15,6 +15,7 @@ export interface Route {
   route_type: "proxy" | "static" | "redirect";
   backend_url?: string;
   backend_urls?: string[];
+  managed_component_id?: number;
   static_root?: string;
   redirect_url?: string;
   strip_prefix: boolean;
@@ -49,7 +50,7 @@ export interface Route {
 }
 
 export interface LogEntry {
-  id: number;
+  id: string;
   timestamp: string;
   host: string;
   client_ip: string;
@@ -69,6 +70,8 @@ export interface LogEntry {
   request_id?: string;
   is_starred?: boolean;
   note?: string;
+  country?: string;
+  city?: string;
 }
 
 export interface AuditEntry {
@@ -91,9 +94,11 @@ export interface LogBody {
 
 export interface LogStats {
   total_requests: number;
+  total_errors: number;
   status_counts: Record<string, number>;
   top_hosts: { host: string; count: number }[];
   top_paths: { path: string; count: number }[];
+  top_countries: { country: string; count: number }[];
   avg_response_ms: number;
   requests_per_min: number;
 }
@@ -205,4 +210,91 @@ export interface ServiceHealth {
     waf: string;
     logging: string;
   };
+}
+
+export interface DeployProject {
+  id: number;
+  slug: string;
+  name: string;
+  source_repo: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeployComponent {
+  id: number;
+  project_id: number;
+  project_slug?: string;
+  slug: string;
+  name: string;
+  source_repo: string;
+  image_repo: string;
+  internal_port: number;
+  health_path: string;
+  health_expected_status: number;
+  migration_command: string[];
+  restart_retries: number;
+  drain_timeout_seconds: number;
+  long_drain_timeout_seconds: number;
+  networks: string[];
+  env_file_path: string;
+  env: Record<string, string>;
+  is_routable: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeployInstance {
+  id: string;
+  component_id: number;
+  project_slug?: string;
+  component_slug?: string;
+  release_uuid?: string;
+  release_id?: string;
+  container_id: string;
+  container_name: string;
+  backend_url: string;
+  state: "warming" | "active" | "draining" | "unhealthy" | "stopped";
+  health_status: string;
+  in_flight: number;
+  last_error: string;
+  started_at?: string;
+  drain_started_at?: string;
+  stopped_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeployProjectSummary {
+  project: DeployProject;
+  components: DeployComponent[];
+  instances: DeployInstance[];
+}
+
+export interface Deployment {
+  id: string;
+  project_id: number;
+  project_slug?: string;
+  release_uuid: string;
+  release_id: string;
+  repo?: string;
+  branch?: string;
+  commit_sha?: string;
+  trigger: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "rolled_back";
+  error: string;
+  started_at?: string;
+  finished_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeploymentEvent {
+  id: number;
+  deployment_id: string;
+  event_type: string;
+  message: string;
+  detail: Record<string, unknown>;
+  created_at: string;
 }

@@ -123,6 +123,36 @@ services:
     volumes:
       - tls_cache:/var/lib/app/tls
       - sockets:/run/muvon
+    networks:
+      - default
+      - muvon-edge
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Managed Deploy Worker ───────────────────────────────────────────────
+  muvon-deployer:
+    image: ghcr.io/${GITHUB_REPO}/muvon-deployer:${VERSION:-latest}
+    build:
+      context: .
+      args:
+        SERVICE: muvon-deployer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MUVON_DSN: "postgres://muvon:${POSTGRES_PASSWORD}@postgres:5432/muvon?sslmode=disable"
+      MUVON_DOCKER_HOST: "unix:///var/run/docker.sock"
+      MUVON_DEPLOYER_POLL_INTERVAL: ${MUVON_DEPLOYER_POLL_INTERVAL:-5s}
+      MUVON_LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - muvon-edge
     logging:
       driver: json-file
       options:
@@ -138,3 +168,7 @@ volumes:
     driver_opts:
       type: tmpfs
       device: tmpfs
+
+networks:
+  muvon-edge:
+    name: muvon-edge

@@ -24,8 +24,9 @@ type HostConfig struct {
 }
 
 type RouteRule struct {
-	Route      db.Route
-	PathPrefix string
+	Route           db.Route
+	PathPrefix      string
+	ManagedBackends []db.ManagedBackend
 }
 
 type GlobalConfig struct {
@@ -42,23 +43,23 @@ type GlobalConfig struct {
 	WafTimeoutMs       int    // deprecated: kept for migration compatibility
 
 	// WAF Engine settings
-	WafEnabledGlobal          bool
-	WafDetectionOnly          bool
-	WafScoreThresholdLog      int
+	WafEnabledGlobal           bool
+	WafDetectionOnly           bool
+	WafScoreThresholdLog       int
 	WafScoreThresholdRateLimit int
-	WafScoreThresholdBlock    int
-	WafScoreThresholdTempBan  int
-	WafScoreThresholdBan      int
-	WafIPScoreDecayPerHour    float64
-	WafIPScoreWindowHours     int
-	WafTempBanDurationMinutes int
-	WafPatternCacheTTLSeconds int
-	WafVTApiKey               string
-	WafVTTimeoutSeconds       int
-	WafVTCacheTTLHours        int
-	WafVTScoreContribution    int
-	WafMaxBodyInspectBytes    int
-	WafNormalizationMaxIter   int
+	WafScoreThresholdBlock     int
+	WafScoreThresholdTempBan   int
+	WafScoreThresholdBan       int
+	WafIPScoreDecayPerHour     float64
+	WafIPScoreWindowHours      int
+	WafTempBanDurationMinutes  int
+	WafPatternCacheTTLSeconds  int
+	WafVTApiKey                string
+	WafVTTimeoutSeconds        int
+	WafVTCacheTTLHours         int
+	WafVTScoreContribution     int
+	WafMaxBodyInspectBytes     int
+	WafNormalizationMaxIter    int
 
 	// JWT Identity settings
 	JWTIdentityEnabled bool
@@ -92,13 +93,22 @@ func LoadFromDB(ctx context.Context, database *db.DB, box *secret.Box) (*Config,
 		Hosts: make(map[string]*HostConfig, len(hosts)),
 	}
 
+	managedBackends, err := database.ListActiveManagedBackends(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("config: load managed backends: %w", err)
+	}
+
 	for _, h := range hosts {
 		hc := &HostConfig{Host: h}
 		for _, r := range routeMap[h.ID] {
-			hc.Routes = append(hc.Routes, RouteRule{
+			rule := RouteRule{
 				Route:      r,
 				PathPrefix: r.PathPrefix,
-			})
+			}
+			if r.ManagedComponentID != nil {
+				rule.ManagedBackends = managedBackends[*r.ManagedComponentID]
+			}
+			hc.Routes = append(hc.Routes, rule)
 		}
 		cfg.Hosts[h.Domain] = hc
 	}

@@ -16,3 +16,7 @@ type Inspector interface {
 type LogSink interface {
 	Send(entry logger.Entry)
 }
+
+type InstanceTracker interface {
+	AdjustDeployInstanceInFlight(ctx context.Context, instanceID string, delta int)
+}

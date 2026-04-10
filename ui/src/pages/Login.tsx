@@ -70,7 +70,7 @@ export default function Login() {
             <Activity className="h-7 w-7 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-foreground tracking-tight glow-green">DiaLog</h1>
+            <h1 className="text-2xl font-bold text-foreground tracking-tight glow-green">MUVON</h1>
             <p className="text-sm text-muted-foreground mt-1">Reverse Proxy + SIEM Platform</p>
           </div>
         </div>
@@ -201,7 +201,7 @@ export default function Login() {
         </Tabs>
 
         <p className="text-center text-xs text-muted-foreground">
-          DiaLog &mdash; Production Reverse Proxy &amp; SIEM
+          MUVON &mdash; Production Reverse Proxy &amp; SIEM
         </p>
       </div>
     </div>

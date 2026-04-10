@@ -93,7 +93,6 @@ CREATE OR REPLACE FUNCTION gen_uuidv7() RETURNS UUID AS $$ SELECT uuidv7(); $$ L
 	{
 		name: "create_hosts", product: "muvon",
 		sql: `
-DROP TABLE IF EXISTS hosts CASCADE;
 CREATE TABLE IF NOT EXISTS hosts (
     id          SERIAL PRIMARY KEY,
     domain      TEXT NOT NULL UNIQUE,
@@ -106,7 +105,6 @@ CREATE TABLE IF NOT EXISTS hosts (
 	{
 		name: "create_routes", product: "muvon",
 		sql: `
-DROP TABLE IF EXISTS routes CASCADE;
 CREATE TABLE IF NOT EXISTS routes (
     id                  SERIAL PRIMARY KEY,
     host_id             INTEGER REFERENCES hosts(id) ON DELETE CASCADE,
@@ -139,22 +137,21 @@ CREATE INDEX IF NOT EXISTS idx_routes_host_id ON routes (host_id, priority DESC)
 	{
 		name: "create_tls_certificates", product: "muvon",
 		sql: `
-DROP TABLE IF EXISTS tls_certificates CASCADE;
 CREATE TABLE IF NOT EXISTS tls_certificates (
     id          SERIAL PRIMARY KEY,
     domain      TEXT NOT NULL,
     cert_pem    BYTEA NOT NULL,
     key_pem     BYTEA NOT NULL,
-    issuer      TEXT DEFAULT 'letsencrypt',
+    issuer      TEXT NOT NULL DEFAULT 'letsencrypt',
     expires_at  TIMESTAMPTZ NOT NULL,
-    created_at  TIMESTAMPTZ DEFAULT now()
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    CONSTRAINT tls_certificates_domain_issuer_key UNIQUE (domain, issuer)
 );
 CREATE INDEX IF NOT EXISTS idx_tls_certificates_domain ON tls_certificates (domain);`,
 	},
 	{
 		name: "create_admin_users", product: "muvon",
 		sql: `
-DROP TABLE IF EXISTS admin_users CASCADE;
 CREATE TABLE IF NOT EXISTS admin_users (
     id            SERIAL PRIMARY KEY,
     username      TEXT NOT NULL UNIQUE,
@@ -166,7 +163,6 @@ CREATE TABLE IF NOT EXISTS admin_users (
 	{
 		name: "create_acme_cache", product: "muvon",
 		sql: `
-DROP TABLE IF EXISTS acme_cache CASCADE;
 CREATE TABLE IF NOT EXISTS acme_cache (
     key        TEXT PRIMARY KEY,
     data       BYTEA NOT NULL,
@@ -176,7 +172,6 @@ CREATE TABLE IF NOT EXISTS acme_cache (
 	{
 		name: "create_admin_audit_log", product: "muvon",
 		sql: `
-DROP TABLE IF EXISTS admin_audit_log CASCADE;
 CREATE TABLE IF NOT EXISTS admin_audit_log (
     id          BIGSERIAL PRIMARY KEY,
     timestamp   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -189,11 +184,10 @@ CREATE TABLE IF NOT EXISTS admin_audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON admin_audit_log (timestamp DESC);`,
 	},
-	// ── Shared Settings ──
+	// ── Central Settings (stored in muvon schema) ──
 	{
-		name: "create_settings", product: "",
+		name: "create_settings", product: "muvon",
 		sql: `
-DROP TABLE IF EXISTS settings CASCADE;
 CREATE TABLE IF NOT EXISTS settings (
     key         TEXT PRIMARY KEY,
     value       JSONB NOT NULL,
@@ -204,9 +198,6 @@ CREATE TABLE IF NOT EXISTS settings (
 	{
 		name: "create_http_logs_hypertable", product: "dialog",
 		sql: `
-DROP TABLE IF EXISTS log_notes CASCADE;
-DROP TABLE IF EXISTS http_log_bodies CASCADE;
-DROP TABLE IF EXISTS http_logs CASCADE;
 CREATE TABLE IF NOT EXISTS http_logs (
     id                UUID DEFAULT gen_uuidv7() NOT NULL,
     timestamp         TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -230,7 +221,7 @@ CREATE TABLE IF NOT EXISTS http_logs (
     waf_action        TEXT,
     PRIMARY KEY (id, timestamp)
 );
-SELECT create_hypertable('http_logs', by_range('timestamp', INTERVAL '1 day'));`,
+SELECT create_hypertable('http_logs', by_range('timestamp', INTERVAL '1 day'), if_not_exists => true);`,
 	},
 	{
 		name: "create_http_log_bodies_hypertable", product: "dialog",
@@ -245,7 +236,7 @@ CREATE TABLE IF NOT EXISTS http_log_bodies (
     is_response_truncated BOOLEAN DEFAULT false,
     PRIMARY KEY (id, timestamp)
 );
-SELECT create_hypertable('http_log_bodies', by_range('timestamp', INTERVAL '1 day'));`,
+SELECT create_hypertable('http_log_bodies', by_range('timestamp', INTERVAL '1 day'), if_not_exists => true);`,
 	},
 	{
 		name: "create_log_notes", product: "dialog",
@@ -299,9 +290,6 @@ SELECT add_compression_policy('http_log_bodies', INTERVAL '7 days', if_not_exist
 	{
 		name: "create_waf_rules", product: "muwaf",
 		sql: `
-DROP TABLE IF EXISTS waf_exclusions CASCADE;
-DROP TABLE IF EXISTS waf_events CASCADE;
-DROP TABLE IF EXISTS waf_rules CASCADE;
 CREATE TABLE IF NOT EXISTS waf_rules (
     id          SERIAL PRIMARY KEY,
     pattern     TEXT NOT NULL,
@@ -322,7 +310,6 @@ CREATE INDEX IF NOT EXISTS idx_waf_rules_category ON waf_rules (category) WHERE 
 	{
 		name: "create_waf_ip_state", product: "muwaf",
 		sql: `
-DROP TABLE IF EXISTS waf_ip_state CASCADE;
 CREATE TABLE IF NOT EXISTS waf_ip_state (
     ip               TEXT PRIMARY KEY,
     status           TEXT NOT NULL DEFAULT 'clean',
@@ -352,7 +339,7 @@ CREATE TABLE IF NOT EXISTS waf_events (
     detection_mode  BOOLEAN NOT NULL DEFAULT false,
     PRIMARY KEY (id, timestamp)
 );
-SELECT create_hypertable('waf_events', by_range('timestamp', INTERVAL '1 day'));
+SELECT create_hypertable('waf_events', by_range('timestamp', INTERVAL '1 day'), if_not_exists => true);
 CREATE INDEX IF NOT EXISTS idx_waf_events_ip_ts ON waf_events (client_ip, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_waf_events_action ON waf_events (action, timestamp DESC);
 SELECT add_retention_policy('waf_events', INTERVAL '30 days', if_not_exists => true);
@@ -380,7 +367,6 @@ CREATE INDEX IF NOT EXISTS idx_waf_exclusions_route ON waf_exclusions (route_id)
 	{
 		name: "create_waf_vt_cache", product: "muwaf",
 		sql: `
-DROP TABLE IF EXISTS waf_vt_cache CASCADE;
 CREATE TABLE IF NOT EXISTS waf_vt_cache (
     ip              TEXT PRIMARY KEY,
     is_malicious    BOOLEAN NOT NULL DEFAULT false,
@@ -461,7 +447,7 @@ INSERT INTO settings (key, value) VALUES
 ON CONFLICT (key) DO NOTHING;`,
 	},
 	{
-		name: "seed_waf_settings", product: "muwaf",
+		name: "seed_waf_settings", product: "muvon",
 		sql: `
 INSERT INTO settings (key, value) VALUES
     ('waf_enabled_global', 'true'),
@@ -482,6 +468,79 @@ INSERT INTO settings (key, value) VALUES
     ('waf_max_body_inspect_bytes', '65536'),
     ('waf_normalization_max_iterations', '3')
 ON CONFLICT (key) DO NOTHING;`,
+	},
+	{
+		name: "backfill_waf_settings_from_muwaf_schema", product: "muvon",
+		sql: `
+DO $$
+BEGIN
+    IF to_regclass('muwaf.settings') IS NULL THEN
+        RETURN;
+    END IF;
+
+    INSERT INTO settings (key, value)
+    SELECT key, value
+    FROM muwaf.settings
+    WHERE key IN (
+        'waf_enabled_global',
+        'waf_detection_only',
+        'waf_score_threshold_log',
+        'waf_score_threshold_ratelimit',
+        'waf_score_threshold_block',
+        'waf_score_threshold_tempban',
+        'waf_score_threshold_ban',
+        'waf_ip_score_decay_per_hour',
+        'waf_ip_score_window_hours',
+        'waf_tempban_duration_minutes',
+        'waf_pattern_cache_ttl_seconds',
+        'waf_vt_api_key',
+        'waf_vt_timeout_seconds',
+        'waf_vt_cache_ttl_hours',
+        'waf_vt_score_contribution',
+        'waf_max_body_inspect_bytes',
+        'waf_normalization_max_iterations'
+    )
+    ON CONFLICT (key) DO NOTHING;
+END $$;`,
+	},
+	{
+		name: "fix_tls_certificates_uniqueness", product: "muvon",
+		sql: `
+UPDATE tls_certificates
+SET domain = lower(domain)
+WHERE domain <> lower(domain);
+
+DELETE FROM tls_certificates t
+USING (
+    SELECT id
+    FROM (
+        SELECT id,
+               row_number() OVER (
+                   PARTITION BY domain, issuer
+                   ORDER BY expires_at DESC, created_at DESC, id DESC
+               ) AS rn
+        FROM tls_certificates
+    ) ranked
+    WHERE rn > 1
+) dupes
+WHERE t.id = dupes.id;
+
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'tls_certificates'::regclass
+          AND contype = 'u'
+          AND conname = 'tls_certificates_domain_issuer_key'
+    ) THEN
+        RETURN;
+    END IF;
+
+    IF to_regclass('idx_tls_certificates_domain_issuer_unique') IS NULL THEN
+        EXECUTE 'CREATE UNIQUE INDEX idx_tls_certificates_domain_issuer_unique ON tls_certificates (domain, issuer)';
+    END IF;
+END $$;`,
 	},
 	// ── X-Accel-Redirect support ──
 	{
@@ -523,6 +582,144 @@ ALTER TABLE routes ADD COLUMN IF NOT EXISTS error_page_5xx TEXT;`,
 	{
 		name: "add_hosts_trusted_proxies", product: "muvon",
 		sql: `ALTER TABLE hosts ADD COLUMN IF NOT EXISTS trusted_proxies TEXT[] NOT NULL DEFAULT '{}';`,
+	},
+	// ── Managed application deploys ──
+	{
+		name: "create_deploy_projects", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS deploy_projects (
+    id             SERIAL PRIMARY KEY,
+    slug           TEXT NOT NULL UNIQUE,
+    name           TEXT NOT NULL,
+    source_repo    TEXT NOT NULL DEFAULT '',
+    webhook_secret TEXT NOT NULL DEFAULT '',
+    is_active      BOOLEAN NOT NULL DEFAULT true,
+    created_at     TIMESTAMPTZ DEFAULT now(),
+    updated_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_projects_slug ON deploy_projects (slug) WHERE is_active;`,
+	},
+	{
+		name: "create_deploy_components", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS deploy_components (
+    id                         SERIAL PRIMARY KEY,
+    project_id                 INTEGER NOT NULL REFERENCES deploy_projects(id) ON DELETE CASCADE,
+    slug                       TEXT NOT NULL,
+    name                       TEXT NOT NULL,
+    source_repo                TEXT NOT NULL DEFAULT '',
+    image_repo                 TEXT NOT NULL,
+    internal_port              INTEGER NOT NULL,
+    health_path                TEXT NOT NULL DEFAULT '/',
+    health_expected_status     INTEGER NOT NULL DEFAULT 200,
+    migration_command          TEXT[] NOT NULL DEFAULT '{}',
+    restart_retries            INTEGER NOT NULL DEFAULT 1,
+    drain_timeout_seconds      INTEGER NOT NULL DEFAULT 30,
+    long_drain_timeout_seconds INTEGER NOT NULL DEFAULT 300,
+    networks                   TEXT[] NOT NULL DEFAULT '{}',
+    env_file_path              TEXT NOT NULL DEFAULT '',
+    env                        JSONB NOT NULL DEFAULT '{}',
+    is_routable                BOOLEAN NOT NULL DEFAULT true,
+    created_at                 TIMESTAMPTZ DEFAULT now(),
+    updated_at                 TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (project_id, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_components_project ON deploy_components (project_id);`,
+	},
+	{
+		name: "create_deploy_releases", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS deploy_releases (
+    id          UUID PRIMARY KEY DEFAULT gen_uuidv7(),
+    project_id  INTEGER NOT NULL REFERENCES deploy_projects(id) ON DELETE CASCADE,
+    release_id  TEXT NOT NULL,
+    repo        TEXT NOT NULL DEFAULT '',
+    branch      TEXT NOT NULL DEFAULT '',
+    commit_sha  TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','succeeded','failed','rolled_back')),
+    created_at  TIMESTAMPTZ DEFAULT now(),
+    updated_at  TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (project_id, release_id)
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_releases_project_created ON deploy_releases (project_id, created_at DESC);`,
+	},
+	{
+		name: "create_deploy_release_components", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS deploy_release_components (
+    release_uuid UUID NOT NULL REFERENCES deploy_releases(id) ON DELETE CASCADE,
+    component_id INTEGER NOT NULL REFERENCES deploy_components(id) ON DELETE CASCADE,
+    image_ref    TEXT NOT NULL,
+    image_digest TEXT NOT NULL DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','succeeded','failed')),
+    created_at   TIMESTAMPTZ DEFAULT now(),
+    updated_at   TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (release_uuid, component_id)
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_release_components_component ON deploy_release_components (component_id);`,
+	},
+	{
+		name: "create_deploy_instances", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS deploy_instances (
+    id               UUID PRIMARY KEY DEFAULT gen_uuidv7(),
+    component_id     INTEGER NOT NULL REFERENCES deploy_components(id) ON DELETE CASCADE,
+    release_uuid     UUID REFERENCES deploy_releases(id) ON DELETE SET NULL,
+    container_id     TEXT NOT NULL DEFAULT '',
+    container_name   TEXT NOT NULL DEFAULT '',
+    backend_url      TEXT NOT NULL DEFAULT '',
+    state            TEXT NOT NULL DEFAULT 'warming' CHECK (state IN ('warming','active','draining','unhealthy','stopped')),
+    health_status    TEXT NOT NULL DEFAULT 'unknown',
+    in_flight        INTEGER NOT NULL DEFAULT 0,
+    last_error       TEXT NOT NULL DEFAULT '',
+    started_at       TIMESTAMPTZ,
+    drain_started_at TIMESTAMPTZ,
+    stopped_at       TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ DEFAULT now(),
+    updated_at       TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_deploy_instances_component_state ON deploy_instances (component_id, state);
+CREATE INDEX IF NOT EXISTS idx_deploy_instances_release ON deploy_instances (release_uuid);`,
+	},
+	{
+		name: "create_deployments", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS deployments (
+    id           UUID PRIMARY KEY DEFAULT gen_uuidv7(),
+    project_id   INTEGER NOT NULL REFERENCES deploy_projects(id) ON DELETE CASCADE,
+    release_uuid UUID NOT NULL REFERENCES deploy_releases(id) ON DELETE CASCADE,
+    release_id   TEXT NOT NULL,
+    trigger      TEXT NOT NULL DEFAULT 'webhook',
+    status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','succeeded','failed','rolled_back')),
+    payload      JSONB NOT NULL DEFAULT '{}',
+    error        TEXT NOT NULL DEFAULT '',
+    started_at   TIMESTAMPTZ,
+    finished_at  TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ DEFAULT now(),
+    updated_at   TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (project_id, release_uuid)
+);
+CREATE INDEX IF NOT EXISTS idx_deployments_status_created ON deployments (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_deployments_project_created ON deployments (project_id, created_at DESC);`,
+	},
+	{
+		name: "create_deployment_events", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS deployment_events (
+    id            BIGSERIAL PRIMARY KEY,
+    deployment_id UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+    event_type    TEXT NOT NULL,
+    message       TEXT NOT NULL DEFAULT '',
+    detail        JSONB NOT NULL DEFAULT '{}',
+    created_at    TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_deployment_events_deployment ON deployment_events (deployment_id, created_at);`,
+	},
+	{
+		name: "add_routes_managed_component", product: "muvon",
+		sql: `
+ALTER TABLE routes ADD COLUMN IF NOT EXISTS managed_component_id INTEGER REFERENCES deploy_components(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_routes_managed_component ON routes (managed_component_id) WHERE managed_component_id IS NOT NULL;`,
 	},
 	// ── Agents (shared — both muvon and dialog need this) ──
 	{

@@ -20,6 +20,6 @@ func HardenedTLSConfig(getCert func(*tls.ClientHelloInfo) (*tls.Certificate, err
 			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
 		},
 		GetCertificate: getCert,
-		NextProtos:     []string{"h2", "http/1.1"},
+		NextProtos:     []string{"h2", "http/1.1", "acme-tls/1"},
 	}
 }

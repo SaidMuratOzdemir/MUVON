@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -96,6 +97,12 @@ func (s *Server) SearchLogs(ctx context.Context, req *pb.SearchLogsRequest) (*pb
 		if l.UserAgent != nil {
 			summary.UserAgent = *l.UserAgent
 		}
+		if l.Country != nil {
+			summary.Country = *l.Country
+		}
+		if l.City != nil {
+			summary.City = *l.City
+		}
 		resp.Logs = append(resp.Logs, summary)
 	}
 	return resp, nil
@@ -139,9 +146,13 @@ func (s *Server) GetLogStats(ctx context.Context, req *pb.GetLogStatsRequest) (*
 	}
 	for k, v := range stats.StatusCounts {
 		resp.StatusDistribution[k] = v
-		// Count 4xx and 5xx as errors
 		if len(k) > 0 && (k[0] == '4' || k[0] == '5') {
 			resp.TotalErrors += v
+		}
+	}
+	if len(stats.TopCountries) > 0 {
+		if b, err := json.Marshal(stats.TopCountries); err == nil {
+			resp.TopCountriesJson = string(b)
 		}
 	}
 	return resp, nil
@@ -272,14 +283,16 @@ func entryToProto(e logger.Entry) *pb.LogEntry {
 
 func dbEntryToProto(l db.LogEntry, body db.LogBody) *pb.LogEntry {
 	p := &pb.LogEntry{
-		RequestId:      l.ID,
-		Timestamp:      l.Timestamp.Format(time.RFC3339Nano),
-		Host:           l.Host,
-		ClientIp:       l.ClientIP,
-		Method:         l.Method,
-		Path:           l.Path,
-		ResponseStatus: int32(l.ResponseStatus),
-		WafBlocked:     l.WafBlocked,
+		RequestId:       l.ID,
+		Timestamp:       l.Timestamp.Format(time.RFC3339Nano),
+		Host:            l.Host,
+		ClientIp:        l.ClientIP,
+		Method:          l.Method,
+		Path:            l.Path,
+		RequestHeaders:  rawJSONToStringMap(l.RequestHeaders),
+		ResponseStatus:  int32(l.ResponseStatus),
+		ResponseHeaders: rawJSONToStringMap(l.ResponseHeaders),
+		WafBlocked:      l.WafBlocked,
 	}
 	if l.QueryString != nil {
 		p.QueryString = *l.QueryString
@@ -287,11 +300,26 @@ func dbEntryToProto(l db.LogEntry, body db.LogBody) *pb.LogEntry {
 	if l.ResponseTimeMs != nil {
 		p.ResponseTimeMs = int32(*l.ResponseTimeMs)
 	}
+	if l.RequestSize != nil {
+		p.RequestSize = int32(*l.RequestSize)
+	}
+	if l.ResponseSize != nil {
+		p.ResponseSize = int32(*l.ResponseSize)
+	}
 	if l.UserAgent != nil {
 		p.UserAgent = *l.UserAgent
 	}
+	if l.Error != nil {
+		p.Error = *l.Error
+	}
 	if l.WafBlockReason != nil {
 		p.WafBlockReason = *l.WafBlockReason
+	}
+	if l.Country != nil {
+		p.Country = *l.Country
+	}
+	if l.City != nil {
+		p.City = *l.City
 	}
 	if body.RequestBody != nil {
 		p.RequestBody = []byte(*body.RequestBody)
@@ -302,4 +330,18 @@ func dbEntryToProto(l db.LogEntry, body db.LogBody) *pb.LogEntry {
 	p.IsRequestTruncated = body.IsRequestTruncated
 	p.IsResponseTruncated = body.IsResponseTruncated
 	return p
+}
+
+func rawJSONToStringMap(raw json.RawMessage) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

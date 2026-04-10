@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
+  BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
@@ -8,7 +8,7 @@ import {
   Globe, RefreshCw, Server, Shield, TrendingUp, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -24,13 +24,6 @@ const STATUS_COLORS = {
   '5xx': 'hsl(0 72% 51%)',
 }
 
-// Simulated sparkline data (last 12 points)
-function generateSparkline(base: number, variance: number, count = 12) {
-  return Array.from({ length: count }, (_, i) => ({
-    i,
-    v: Math.max(0, base + (Math.random() - 0.5) * variance),
-  }))
-}
 
 function StatCard({
   title, value, sub, icon: Icon, trend, loading, color = 'primary',
@@ -127,11 +120,6 @@ export default function Dashboard() {
       }))
     : []
 
-  // Sparkline data
-  const sparkline = stats && (stats.requests_per_min ?? 0) > 0
-    ? generateSparkline(stats.requests_per_min, stats.requests_per_min * 0.4)
-    : generateSparkline(10, 5)
-
   const hasErrors = stats
     ? ((stats.status_counts?.['4xx'] ?? 0) + (stats.status_counts?.['5xx'] ?? 0)) > 0
     : false
@@ -174,7 +162,7 @@ export default function Dashboard() {
             {hasErrors ? 'Errors detected in recent traffic' : 'All systems operational'}
           </span>
           <span className="ml-auto text-muted-foreground font-mono text-xs">
-            v{sys.go_version} &bull; {sys.goroutines} goroutines
+            {new Date().toLocaleDateString()}
           </span>
         </div>
       )}
@@ -184,7 +172,6 @@ export default function Dashboard() {
         <StatCard
           title="Total Requests"
           value={stats ? formatNumber(stats.total_requests) : '—'}
-          sub={`${stats?.requests_per_min?.toFixed(1) ?? '—'} req/min`}
           icon={Activity}
           loading={loading}
           color="primary"
@@ -206,7 +193,6 @@ export default function Dashboard() {
         <StatCard
           title="Memory Usage"
           value={sys ? formatBytes(sys.memory.alloc_mb * 1024 * 1024) : '—'}
-          sub={`GC: ${sys?.memory.gc_cycles ?? 0} cycles`}
           icon={Cpu}
           loading={loading}
           color="blue"
@@ -225,7 +211,6 @@ export default function Dashboard() {
         <StatCard
           title="Log Queue"
           value={sys?.log_pipeline ? String(sys.log_pipeline.queue_len) : '—'}
-          sub={`Dropped: ${sys?.log_pipeline?.dropped ?? 0}`}
           icon={Database}
           loading={loading}
           color={sys?.log_pipeline && sys.log_pipeline.dropped > 0 ? 'warning' : 'primary'}
@@ -276,35 +261,31 @@ export default function Dashboard() {
 
       {/* Charts Row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Requests sparkline */}
+        {/* Req/min + errors summary */}
         <Card className="lg:col-span-2 border-border bg-card">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-foreground">Request Rate (req/min)</CardTitle>
-            <CardDescription className="text-xs">Rolling window — auto-refreshes every 15s</CardDescription>
+            <CardTitle className="text-sm font-medium text-foreground">Traffic Summary</CardTitle>
           </CardHeader>
           <CardContent className="pb-4">
             {loading ? (
               <Skeleton className="h-48 w-full" />
             ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <AreaChart data={sparkline} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="reqGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="hsl(142 71% 45%)" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="hsl(142 71% 45%)" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(217 33% 17%)" />
-                  <XAxis dataKey="i" hide />
-                  <YAxis tick={{ fontSize: 10, fill: 'hsl(215 20% 55%)' }} />
-                  <Tooltip
-                    contentStyle={{ background: 'hsl(222 47% 7%)', border: '1px solid hsl(217 33% 17%)', borderRadius: 6, fontSize: 12 }}
-                    labelFormatter={() => 'req/min'}
-                    formatter={(v) => [Number(v).toFixed(1), 'req/min']}
-                  />
-                  <Area type="monotone" dataKey="v" stroke="hsl(142 71% 45%)" fill="url(#reqGrad)" strokeWidth={2} dot={false} />
-                </AreaChart>
-              </ResponsiveContainer>
+              <div className="grid grid-cols-3 gap-4 h-48 content-center">
+                <div className="flex flex-col items-center justify-center gap-1">
+                  <p className="text-3xl font-bold font-mono text-foreground">{stats?.requests_per_min?.toFixed(1) ?? '0'}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">req / min</p>
+                </div>
+                <div className="flex flex-col items-center justify-center gap-1">
+                  <p className="text-3xl font-bold font-mono text-foreground">{stats ? `${stats.avg_response_ms.toFixed(0)}ms` : '—'}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">avg latency</p>
+                </div>
+                <div className="flex flex-col items-center justify-center gap-1">
+                  <p className={`text-3xl font-bold font-mono ${stats && stats.total_errors > 0 ? 'text-destructive' : 'text-foreground'}`}>
+                    {stats ? formatNumber(stats.total_errors) : '—'}
+                  </p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">errors</p>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -313,7 +294,6 @@ export default function Dashboard() {
         <Card className="border-border bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-foreground">Status Distribution</CardTitle>
-            <CardDescription className="text-xs">HTTP response codes</CardDescription>
           </CardHeader>
           <CardContent className="pb-4">
             {loading ? (
@@ -357,12 +337,41 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      {/* Top Countries */}
+      {stats?.top_countries?.length ? (
+        <Card className="border-border bg-card">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-foreground">Top Ülkeler</CardTitle>
+          </CardHeader>
+          <CardContent className="pb-4">
+            <div className="space-y-1.5">
+              {stats.top_countries.slice(0, 8).map((c, i) => (
+                <div key={i} className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground w-4 text-right shrink-0">{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="relative h-6 rounded overflow-hidden bg-muted/30">
+                      <div
+                        className="absolute inset-y-0 left-0 bg-primary/20 rounded"
+                        style={{ width: `${(c.count / stats.top_countries[0].count) * 100}%` }}
+                      />
+                      <span className="relative px-2 text-xs text-foreground font-mono leading-6 truncate block">{c.country}</span>
+                    </div>
+                  </div>
+                  <Badge variant="secondary" className="shrink-0 font-mono text-xs">
+                    {formatNumber(c.count)}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {/* Top Hosts & Paths */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card className="border-border bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-foreground">Top Hosts</CardTitle>
-            <CardDescription className="text-xs">By request count</CardDescription>
           </CardHeader>
           <CardContent className="pb-4">
             {loading ? (
@@ -389,7 +398,6 @@ export default function Dashboard() {
         <Card className="border-border bg-card">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-foreground">Top Paths</CardTitle>
-            <CardDescription className="text-xs">Most requested URL paths</CardDescription>
           </CardHeader>
           <CardContent className="pb-4">
             {loading ? (

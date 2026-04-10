@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -29,16 +30,17 @@ import (
 
 func main() {
 	var (
-		dsn       = flag.String("dsn", envOr("MUVON_DSN", "postgres://dialog:dialog@localhost:5432/dialog?sslmode=disable"), "PostgreSQL connection string")
-		httpAddr  = flag.String("http", envOr("MUVON_HTTP_ADDR", ":80"), "HTTP listen address")
-		httpsAddr = flag.String("https", envOr("MUVON_HTTPS_ADDR", ":443"), "HTTPS listen address")
-		adminAddr = flag.String("admin", envOr("MUVON_ADMIN_ADDR", ":9443"), "Admin API listen address (used only when admin-domain is not set)")
-		adminDomain = flag.String("admin-domain", envOr("MUVON_ADMIN_DOMAIN", ""), "Serve admin panel on this domain via :443 (e.g. muvon.example.com). When set, :9443 is not started.")
-		jwtSecret = flag.String("jwt-secret", envOr("MUVON_JWT_SECRET", "change-me-in-production"), "JWT signing secret")
-		wafSocket     = flag.String("waf-socket", envOr("MUVON_WAF_SOCKET", "/tmp/muwaf.sock"), "muWAF Unix socket path")
-		logSocket     = flag.String("log-socket", envOr("MUVON_LOG_SOCKET", "/tmp/dialog.sock"), "diaLOG Unix socket path")
-		logLevel      = flag.String("log-level", envOr("MUVON_LOG_LEVEL", "info"), "Log level")
-		encryptionKey = flag.String("encryption-key", envOr("MUVON_ENCRYPTION_KEY", ""), "AES-256-GCM encryption key for secrets in DB")
+		dsn                  = flag.String("dsn", envOr("MUVON_DSN", "postgres://dialog:dialog@localhost:5432/dialog?sslmode=disable"), "PostgreSQL connection string")
+		httpAddr             = flag.String("http", envOr("MUVON_HTTP_ADDR", ":80"), "HTTP listen address")
+		httpsAddr            = flag.String("https", envOr("MUVON_HTTPS_ADDR", ":443"), "HTTPS listen address")
+		adminAddr            = flag.String("admin", envOr("MUVON_ADMIN_ADDR", ":9443"), "Admin API listen address (used only when admin-domain is not set)")
+		adminDomain          = flag.String("admin-domain", envOr("MUVON_ADMIN_DOMAIN", ""), "Serve admin panel on this domain via :443 (e.g. muvon.example.com). When set, :9443 is not started.")
+		jwtSecret            = flag.String("jwt-secret", envOr("MUVON_JWT_SECRET", "change-me-in-production"), "JWT signing secret")
+		wafSocket            = flag.String("waf-socket", envOr("MUVON_WAF_SOCKET", "/tmp/muwaf.sock"), "muWAF Unix socket path")
+		logSocket            = flag.String("log-socket", envOr("MUVON_LOG_SOCKET", "/tmp/dialog.sock"), "diaLOG Unix socket path")
+		logLevel             = flag.String("log-level", envOr("MUVON_LOG_LEVEL", "info"), "Log level")
+		encryptionKey        = flag.String("encryption-key", envOr("MUVON_ENCRYPTION_KEY", ""), "AES-256-GCM encryption key for secrets in DB")
+		configReloadInterval = flag.Duration("config-reload-interval", envDuration("MUVON_CONFIG_RELOAD_INTERVAL", 5*time.Second), "Background config reload interval")
 	)
 	flag.Parse()
 	setupLogger(*logLevel)
@@ -97,6 +99,9 @@ func main() {
 			for _, u := range r.Route.BackendURLs {
 				hm.Register(u)
 			}
+			for _, b := range r.ManagedBackends {
+				hm.RegisterWithHealth(b.BackendURL, b.HealthURL)
+			}
 		}
 	}
 	hm.Start()
@@ -112,6 +117,22 @@ func main() {
 		// Re-register backends for health checking
 		hm.SyncBackends(newCfg)
 	})
+	if *configReloadInterval > 0 {
+		go func() {
+			ticker := time.NewTicker(*configReloadInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := ch.Reload(ctx); err != nil {
+						slog.Warn("background config reload failed", "error", err)
+					}
+				}
+			}
+		}()
+	}
 
 	// WAF client — connect to muWAF, graceful degradation if unavailable
 	var inspector proxy.Inspector
@@ -155,7 +176,7 @@ func main() {
 
 	// Router — main reverse proxy handler
 	// If adminDomain is set, admin panel is served on :443 for that domain; :9443 is not started.
-	rt := router.New(ch, logSink, transport, hm, inspector, frontendFS, *adminDomain, adminSrv.Handler())
+	rt := router.New(ch, logSink, transport, hm, inspector, database, frontendFS, *adminDomain, adminSrv.Handler())
 
 	connStateFn := func(_ net.Conn, state http.ConnState) {
 		_ = state
@@ -284,6 +305,20 @@ func setupLogger(level string) {
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	if d, err := time.ParseDuration(v); err == nil {
+		return d
+	}
+	if seconds, err := strconv.Atoi(v); err == nil {
+		return time.Duration(seconds) * time.Second
 	}
 	return fallback
 }

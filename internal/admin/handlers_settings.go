@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"muvon/internal/db"
 )
@@ -119,6 +120,7 @@ func (s *Server) handleUploadCert(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "domain, cert_pem and key_pem are required"})
 		return
 	}
+	req.Domain = strings.ToLower(strings.TrimSpace(req.Domain))
 
 	// Sertifikayı parse edip son kullanma tarihini bul
 	certBytes := []byte(req.CertPEM)
@@ -156,9 +158,13 @@ func (s *Server) handleDeleteCert(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.db.DeleteCert(r.Context(), id); err != nil {
+	domain, err := s.db.DeleteCert(r.Context(), id)
+	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "certificate not found"})
 		return
+	}
+	if s.tlsManager != nil {
+		s.tlsManager.InvalidateCache(domain)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

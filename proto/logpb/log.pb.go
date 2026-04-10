@@ -622,6 +622,8 @@ type LogSummary struct {
 	WafBlocked     bool                   `protobuf:"varint,10,opt,name=waf_blocked,json=wafBlocked,proto3" json:"waf_blocked,omitempty"`
 	WafAction      string                 `protobuf:"bytes,11,opt,name=waf_action,json=wafAction,proto3" json:"waf_action,omitempty"`
 	Starred        bool                   `protobuf:"varint,12,opt,name=starred,proto3" json:"starred,omitempty"`
+	Country        string                 `protobuf:"bytes,13,opt,name=country,proto3" json:"country,omitempty"`
+	City           string                 `protobuf:"bytes,14,opt,name=city,proto3" json:"city,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -738,6 +740,20 @@ func (x *LogSummary) GetStarred() bool {
 		return x.Starred
 	}
 	return false
+}
+
+func (x *LogSummary) GetCountry() string {
+	if x != nil {
+		return x.Country
+	}
+	return ""
+}
+
+func (x *LogSummary) GetCity() string {
+	if x != nil {
+		return x.City
+	}
+	return ""
 }
 
 type GetLogRequest struct {
@@ -912,6 +928,7 @@ type LogStatsResponse struct {
 	P95ResponseMs      float64                `protobuf:"fixed64,4,opt,name=p95_response_ms,json=p95ResponseMs,proto3" json:"p95_response_ms,omitempty"`
 	P99ResponseMs      float64                `protobuf:"fixed64,5,opt,name=p99_response_ms,json=p99ResponseMs,proto3" json:"p99_response_ms,omitempty"`
 	StatusDistribution map[string]int64       `protobuf:"bytes,6,rep,name=status_distribution,json=statusDistribution,proto3" json:"status_distribution,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	TopCountriesJson   string                 `protobuf:"bytes,7,opt,name=top_countries_json,json=topCountriesJson,proto3" json:"top_countries_json,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -986,6 +1003,13 @@ func (x *LogStatsResponse) GetStatusDistribution() map[string]int64 {
 		return x.StatusDistribution
 	}
 	return nil
+}
+
+func (x *LogStatsResponse) GetTopCountriesJson() string {
+	if x != nil {
+		return x.TopCountriesJson
+	}
+	return ""
 }
 
 type StreamLogsRequest struct {

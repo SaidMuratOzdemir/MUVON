@@ -48,6 +48,10 @@ const emptyFilters = (): Filters => ({
   response_time_min: '', status_group: '',
 })
 
+function getLogID(log: Pick<LogEntry, 'id' | 'request_id'> | null | undefined) {
+  return log?.id || log?.request_id || ''
+}
+
 function hasFilters(f: Filters) {
   return (
     f.search !== '' || f.host !== '' || f.method !== '' || f.path !== '' ||
@@ -152,7 +156,12 @@ function LogDetailSheet({
     setNote('')
     setStarred(log.is_starred ?? false)
     setLoadingDetail(true)
-    api.getLogDetail(log.id)
+    const id = getLogID(log)
+    if (!id) {
+      setLoadingDetail(false)
+      return
+    }
+    api.getLogDetail(id)
       .then(d => {
         setDetail(d)
         setNote(d.note ?? '')
@@ -166,16 +175,19 @@ function LogDetailSheet({
     setNote(val)
     if (noteTimer) clearTimeout(noteTimer)
     const t = setTimeout(() => {
-      if (log) api.upsertLogNote(log.id, val).catch(() => {})
+      const id = getLogID(log)
+      if (id) api.upsertLogNote(id, val).catch(() => {})
     }, 800)
     setNoteTimer(t)
   }
 
   async function handleToggleStar() {
-    if (!log) return
+    const id = getLogID(log)
+    if (!id) return
     try {
-      const res = await api.toggleLogStar(log.id)
-      setStarred(res.is_starred)
+      const next = !starred
+      const res = await api.toggleLogStar(id)
+      setStarred(res.is_starred ?? next)
     } catch {
       toast.error('Failed to toggle star')
     }
@@ -240,7 +252,7 @@ function LogDetailSheet({
             </div>
           </SheetTitle>
           <SheetDescription className="font-mono text-xs">
-            {new Date(entry.timestamp).toLocaleString()} &bull; ID: {entry.id}
+            {new Date(entry.timestamp).toLocaleString()} &bull; ID: {getLogID(entry)}
           </SheetDescription>
         </SheetHeader>
 
@@ -256,6 +268,7 @@ function LogDetailSheet({
                   ['Request Size', entry.request_size != null ? formatBytes(entry.request_size) : '—'],
                   ['Response Size', entry.response_size != null ? formatBytes(entry.response_size) : '—'],
                   ['Query String', entry.query_string || '—'],
+                  ['Konum', entry.country ? (entry.city ? `${entry.city}, ${entry.country}` : entry.country) : '—'],
                 ].map(([k, v]) => (
                   <div key={k} className="rounded-md bg-background border border-border px-3 py-2">
                     <p className="text-xs text-muted-foreground">{k}</p>
@@ -383,30 +396,38 @@ function LogDetailSheet({
             {/* Bodies */}
             {loadingDetail ? (
               <Skeleton className="h-24 w-full" />
-            ) : detail?.body ? (
+            ) : detail ? (
               <>
-                {detail.body.request_body && (
-                  <section className="space-y-2">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                      Request Body
-                      {detail.body.is_request_truncated && <Badge variant="outline" className="text-[10px]">Truncated</Badge>}
-                    </h3>
+                <section className="space-y-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                    Request Body
+                    {detail.body?.is_request_truncated && <Badge variant="outline" className="text-[10px]">Truncated</Badge>}
+                  </h3>
+                  {detail.body?.request_body ? (
                     <pre className="rounded-md bg-background border border-border px-3 py-2 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap break-all">
                       {detail.body.request_body}
                     </pre>
-                  </section>
-                )}
-                {detail.body.response_body && (
-                  <section className="space-y-2">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                      Response Body
-                      {detail.body.is_response_truncated && <Badge variant="outline" className="text-[10px]">Truncated</Badge>}
-                    </h3>
+                  ) : (
+                    <div className="rounded-md bg-background border border-border px-3 py-2 text-xs font-mono text-muted-foreground">
+                      No request body captured
+                    </div>
+                  )}
+                </section>
+                <section className="space-y-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                    Response Body
+                    {detail.body?.is_response_truncated && <Badge variant="outline" className="text-[10px]">Truncated</Badge>}
+                  </h3>
+                  {detail.body?.response_body ? (
                     <pre className="rounded-md bg-background border border-border px-3 py-2 text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap break-all">
                       {detail.body.response_body}
                     </pre>
-                  </section>
-                )}
+                  ) : (
+                    <div className="rounded-md bg-background border border-border px-3 py-2 text-xs font-mono text-muted-foreground">
+                      No response body captured
+                    </div>
+                  )}
+                </section>
               </>
             ) : null}
 
@@ -750,15 +771,16 @@ export default function Logs() {
           ) : <>
           {/* Header */}
           <div className="sticky top-0 z-10 bg-card border-b border-border">
-            <div className="grid grid-cols-[80px_120px_90px_1fr_100px_80px_90px_80px] gap-2 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <div className="grid grid-cols-[80px_120px_90px_1fr_100px_60px_80px_90px_80px] gap-2 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               <span>Status</span>
               <span>Time</span>
               <span>Method</span>
               <span>Path</span>
               <span>Client IP</span>
+              <span>Ülke</span>
               <span>Host</span>
-              <span>Duration</span>
-              <span>Size</span>
+              <span>Süre</span>
+              <span>Boyut</span>
             </div>
           </div>
 
@@ -780,9 +802,9 @@ export default function Logs() {
             <div className="divide-y divide-border/50">
               {logs.map(log => (
                 <div
-                  key={log.id}
+                  key={getLogID(log)}
                   onClick={() => setSelectedLog(log)}
-                  className="grid grid-cols-[80px_120px_90px_1fr_100px_80px_90px_80px] gap-2 px-4 py-2 hover:bg-muted/10 cursor-pointer transition-colors group"
+                  className="grid grid-cols-[80px_120px_90px_1fr_100px_60px_80px_90px_80px] gap-2 px-4 py-2 hover:bg-muted/10 cursor-pointer transition-colors group"
                 >
                   <span className={cn('text-xs font-mono font-semibold flex items-center gap-1', statusClass(log.response_status))}>
                     {log.response_status}
@@ -799,6 +821,9 @@ export default function Logs() {
                     {log.path}{log.query_string ? `?${log.query_string}` : ''}
                   </span>
                   <span className="text-xs font-mono text-muted-foreground truncate">{log.client_ip}</span>
+                  <span className="text-xs font-mono text-muted-foreground truncate" title={log.city ? `${log.city}, ${log.country}` : undefined}>
+                    {log.country || '—'}
+                  </span>
                   <span className="text-xs text-muted-foreground truncate font-mono">{log.host}</span>
                   <span className="text-xs font-mono text-muted-foreground">
                     {log.response_time_ms != null ? `${log.response_time_ms}ms` : '—'}

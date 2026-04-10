@@ -1,6 +1,6 @@
 # MUVON
 
-An edge gateway and security platform composed of four independent Go services: a central reverse proxy with identity and geolocation enrichment, a web application firewall, a SIEM engine with real-time correlation and alerting, and a lightweight edge agent that deploys on client servers.
+An edge gateway, security, and deploy platform composed of five independent Go services: a central reverse proxy with identity and geolocation enrichment, a web application firewall, a SIEM engine with real-time correlation and alerting, a Docker-based managed deploy worker, and a lightweight edge agent that deploys on client servers.
 
 ### Standalone Mode (single server)
 
@@ -27,6 +27,11 @@ An edge gateway and security platform composed of four independent Go services: 
                    +---+----------------+---+
                    |       PostgreSQL 16     |
                    |    (Docker, internal)   |
+                   +------------------------+
+                               |
+                   +-----------+-----------+
+                   |    muvon-deployer      |
+                   | /var/run/docker.sock   |
                    +------------------------+
 ```
 
@@ -63,6 +68,7 @@ Each service is a standalone binary with its own database schema. They share a s
 | **agent** | Lightweight edge binary deployed on client servers. Pulls config from central MUVON on startup, watches for changes via SSE (hot reload). Proxies traffic using the central-managed host/route config. Sends logs to central diaLOG over TCP gRPC. Optionally connects to a co-located muWAF. No database, no admin panel — zero local state except ACME cert cache. |
 | **muWAF** | Receives request metadata from MUVON (or agent) via gRPC, runs it through a regex/string-match rule engine covering 14 attack categories (SQLi, XSS, RCE, SSRF, etc.), maintains a cumulative IP threat score with decay, and returns an allow/block decision. Graduated response: `log` -> `rate_limit` -> `block` -> `temp_ban` -> `ban`. |
 | **diaLOG** | Receives structured log entries from MUVON or remote agents via gRPC (Unix socket for local, TCP for agents), buffers them in a Go channel, and flushes in batches using PostgreSQL `COPY FROM` for throughput. Stores logs in TimescaleDB Hypertables with UUIDv7 primary keys. Provides BM25 full-text search (via pg_search/Tantivy) across path, host, user-agent, and IP fields. Exposes SSE live tail for real-time monitoring. Runs a **correlation engine** that detects attack patterns (brute force, scanning, error spikes) in real time and triggers **alerts** via Slack and email. |
+| **muvon-deployer** | A separate worker process that owns the Docker socket. Polls the database for pending deployment jobs and executes the full deploy lifecycle: image pull → one-off migration container → candidate container start → health check with restart retries → atomic promote (old active → draining, candidate → active) → graceful drain. Isolates host-level Docker access from the proxy and admin processes. |
 
 ---
 
@@ -97,7 +103,7 @@ make deps && make ui-install
 
 # Tüm servisler (admin UI dahil)
 make build
-# build/muvon, build/muwaf, build/dialog-siem, build/agent
+# build/muvon, build/muwaf, build/dialog-siem, build/agent, build/muvon-deployer
 
 # Sadece muvon + agent (WAF/SIEM olmadan)
 make build-minimal
@@ -175,7 +181,7 @@ Three isolated schemas on a single PostgreSQL 18 instance. Each service touches 
 
 | Schema | Owner | Contains |
 |--------|-------|----------|
-| `muvon` | MUVON | Hosts, routes, TLS certificates, ACME cache, settings, admin users, audit log |
+| `muvon` | MUVON | Hosts, routes, TLS certificates, ACME cache, settings, admin users, audit log, deploy projects/components/releases/instances/deployments |
 | `muwaf` | muWAF | WAF rules, IP score tracking, detection events (Hypertable), exclusions, VT cache |
 | `dialog` | diaLOG | HTTP access logs (Hypertable, UUIDv7 PK) with identity/geo enrichment, request/response bodies (Hypertable), BM25 search index, log notes/stars, correlation alerts (Hypertable) |
 
@@ -202,6 +208,7 @@ TimescaleDB handles chunking, compression (7-day policy), and retention (30-day 
 | Hot Reload | Configuration changes apply atomically, zero-downtime. JWT secret, GeoIP DB, and alerting config all hot-reloadable. Agents receive config updates via SSE push. |
 | Agent Management | Admin panel manages per-agent API keys. Agents authenticate to diaLOG TCP and the config/watch endpoints using these keys. |
 | Admin Panel | React + shadcn/ui SPA, JWT auth, first-run setup wizard. Served on `:443` via `MUVON_ADMIN_DOMAIN`; falls back to `:9443` for local dev. |
+| Managed Deploy | Routes can be bound to a managed component. Proxy selects only `active` instances; traffic never hits a warming or draining container. Deploy webhook accepts HMAC-SHA256 signed payloads from CI. |
 
 ### muWAF (Web Application Firewall)
 
@@ -246,6 +253,8 @@ Browser https://<MUVON_ADMIN_DOMAIN>
     +-- /api/waf/*           --> muWAF (gRPC proxy)
     +-- /api/logs/*          --> diaLOG (gRPC proxy)
     +-- /api/health          --> Aggregated health (DB + WAF + Log)
+    +-- /api/deploy/webhook  --> Deploy webhook (HMAC-SHA256, no JWT)
+    +-- /api/deploy/*        --> Managed deploy management
 ```
 
 If muWAF is down, WAF management pages show a service-offline banner. If diaLOG is down, log pages show a service-offline banner. Everything else keeps working.
@@ -267,6 +276,16 @@ If muWAF is down, WAF management pages show a service-offline banner. If diaLOG 
 | `-waf-socket` | `MUVON_WAF_SOCKET` | `/tmp/muwaf.sock` | muWAF Unix socket path |
 | `-log-socket` | `MUVON_LOG_SOCKET` | `/tmp/dialog.sock` | diaLOG Unix socket path |
 | `-encryption-key` | `MUVON_ENCRYPTION_KEY` | `""` | AES-256-GCM key for encrypting secrets in DB |
+| `-config-reload-interval` | `MUVON_CONFIG_RELOAD_INTERVAL` | `5s` | Background config reload interval |
+| `-log-level` | `MUVON_LOG_LEVEL` | `info` | Log level |
+
+### muvon-deployer
+
+| Flag | Env | Default | Description |
+|------|-----|---------|-------------|
+| `-dsn` | `MUVON_DSN` | `postgres://...` | PostgreSQL connection string |
+| `-docker-host` | `MUVON_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker API endpoint |
+| `-poll` | `MUVON_DEPLOYER_POLL_INTERVAL` | `5s` | Deployment job poll interval |
 | `-log-level` | `MUVON_LOG_LEVEL` | `info` | Log level |
 
 ### agent

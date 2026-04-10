@@ -15,6 +15,9 @@ import type {
   WafStats,
   WafExclusion,
   Agent,
+  DeployProjectSummary,
+  Deployment,
+  DeploymentEvent,
 } from "./types";
 
 const API_BASE = "";
@@ -58,6 +61,69 @@ async function request<T>(
     return undefined as T;
   }
   return res.json();
+}
+
+type WireLogEntry = Partial<LogEntry> & {
+  starred?: boolean;
+  request_body?: string;
+  response_body?: string;
+  is_request_truncated?: boolean;
+  is_response_truncated?: boolean;
+};
+
+type WireLogDetail = Partial<LogEntry> & {
+  entry?: WireLogEntry;
+  body?: LogBody;
+  note?: string;
+  starred?: boolean;
+};
+
+function logIdentifier(entry: WireLogEntry): string {
+  return String(entry.id ?? entry.request_id ?? "");
+}
+
+function decodeProtoBody(value: unknown): string | undefined {
+  if (typeof value !== "string" || value === "") return undefined;
+  try {
+    const binary = atob(value);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeLogEntry(entry: WireLogEntry): LogEntry {
+  const id = logIdentifier(entry);
+  return {
+    ...entry,
+    id,
+    request_id: entry.request_id ?? id,
+    is_starred: entry.is_starred ?? entry.starred,
+  } as LogEntry;
+}
+
+function normalizeLogDetail(detail: WireLogDetail): LogEntry & { body?: LogBody } {
+  const entry = (detail.entry ?? detail) as WireLogEntry;
+  const normalized = normalizeLogEntry(entry);
+  const requestBody = detail.body?.request_body ?? decodeProtoBody(entry.request_body);
+  const responseBody = detail.body?.response_body ?? decodeProtoBody(entry.response_body);
+  const body: LogBody | undefined =
+    requestBody !== undefined || responseBody !== undefined
+      ? {
+          request_body: requestBody,
+          response_body: responseBody,
+          is_request_truncated: detail.body?.is_request_truncated ?? entry.is_request_truncated ?? false,
+          is_response_truncated: detail.body?.is_response_truncated ?? entry.is_response_truncated ?? false,
+        }
+      : detail.body;
+
+  return {
+    ...normalized,
+    note: detail.note ?? normalized.note,
+    is_starred: detail.is_starred ?? detail.starred ?? normalized.is_starred,
+    body,
+  };
 }
 
 export class ApiError extends Error {
@@ -196,16 +262,21 @@ export async function searchLogs(
     }
   }
   const query = qs.toString();
-  return request<PaginatedResponse<LogEntry>>(
+  const response = await request<PaginatedResponse<LogEntry>>(
     "GET",
     `/api/logs${query ? `?${query}` : ""}`,
   );
+  return {
+    ...response,
+    data: (response.data ?? []).map(normalizeLogEntry),
+  };
 }
 
 export async function getLogDetail(
-  id: number,
+  id: string | number,
 ): Promise<LogEntry & { body?: LogBody }> {
-  return request<LogEntry & { body?: LogBody }>("GET", `/api/logs/${id}`);
+  const detail = await request<WireLogDetail>("GET", `/api/logs/${id}`);
+  return normalizeLogDetail(detail);
 }
 
 export async function getLogStats(
@@ -274,14 +345,53 @@ export async function getBackendHealth(): Promise<Record<string, string>> {
 }
 
 // ---------------------------------------------------------------------------
+// Managed app deploys
+// ---------------------------------------------------------------------------
+
+export async function listDeployProjects(): Promise<DeployProjectSummary[]> {
+  return request<DeployProjectSummary[]>("GET", "/api/deploy/projects");
+}
+
+export async function updateDeployProject(
+  slug: string,
+  data: { name?: string; source_repo?: string; webhook_secret?: string },
+): Promise<DeployProjectSummary["project"]> {
+  return request<DeployProjectSummary["project"]>("PUT", `/api/deploy/projects/${slug}`, data);
+}
+
+export async function listDeployments(limit = 50): Promise<Deployment[]> {
+  return request<Deployment[]>("GET", `/api/deploy/deployments?limit=${limit}`);
+}
+
+export async function listDeploymentEvents(id: string): Promise<DeploymentEvent[]> {
+  return request<DeploymentEvent[]>("GET", `/api/deploy/deployments/${id}/events`);
+}
+
+export async function manualDeploy(
+  projectSlug: string,
+  data: {
+    release_id: string;
+    repo?: string;
+    branch?: string;
+    commit_sha?: string;
+    components: Record<string, { image_ref: string; image_digest?: string }>;
+  },
+): Promise<{ deployment: Deployment; idempotent: boolean }> {
+  return request<{ deployment: Deployment; idempotent: boolean }>("POST", `/api/deploy/projects/${projectSlug}/deploy`, {
+    project: projectSlug,
+    ...data,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Log star / note
 // ---------------------------------------------------------------------------
 
-export async function toggleLogStar(id: number): Promise<{ is_starred: boolean }> {
+export async function toggleLogStar(id: string | number): Promise<{ is_starred?: boolean }> {
   return request<{ is_starred: boolean }>("POST", `/api/logs/${id}/star`);
 }
 
-export async function upsertLogNote(id: number, note: string): Promise<void> {
+export async function upsertLogNote(id: string | number, note: string): Promise<void> {
   return request<void>("PUT", `/api/logs/${id}/note`, { note });
 }
 
@@ -329,7 +439,7 @@ export function createLogStream(
   es.onmessage = (e) => {
     try {
       const entry = JSON.parse(e.data) as LogEntry;
-      onEntry(entry);
+      onEntry(normalizeLogEntry(entry));
     } catch {
       // ignore malformed events
     }

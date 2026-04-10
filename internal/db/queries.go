@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,13 +14,13 @@ import (
 // --- Host Queries ---
 
 type Host struct {
-	ID              int       `json:"id"`
-	Domain          string    `json:"domain"`
-	IsActive        bool      `json:"is_active"`
-	ForceHTTPS      bool      `json:"force_https"`
-	TrustedProxies  []string  `json:"trusted_proxies"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID             int       `json:"id"`
+	Domain         string    `json:"domain"`
+	IsActive       bool      `json:"is_active"`
+	ForceHTTPS     bool      `json:"force_https"`
+	TrustedProxies []string  `json:"trusted_proxies"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 const hostSelectCols = `id, domain, is_active, force_https, trusted_proxies, created_at, updated_at`
@@ -109,46 +110,47 @@ func (d *DB) DeleteHost(ctx context.Context, id int) error {
 // --- Route Queries ---
 
 type Route struct {
-	ID              int               `json:"id"`
-	HostID          int               `json:"host_id"`
-	PathPrefix      string            `json:"path_prefix"`
-	RouteType       string            `json:"route_type"`
-	BackendURL      *string           `json:"backend_url,omitempty"`
-	BackendURLs     []string          `json:"backend_urls"`
-	StaticRoot      *string           `json:"static_root,omitempty"`
-	RedirectURL     *string           `json:"redirect_url,omitempty"`
-	StripPrefix     bool              `json:"strip_prefix"`
-	RewritePattern  *string           `json:"rewrite_pattern,omitempty"`
-	RewriteTo       *string           `json:"rewrite_to,omitempty"`
-	Priority        int               `json:"priority"`
-	IsActive        bool              `json:"is_active"`
-	LogEnabled      bool              `json:"log_enabled"`
-	WafEnabled      bool              `json:"waf_enabled"`
-	WafExcludePaths  []string          `json:"waf_exclude_paths"`
-	WafDetectionOnly bool              `json:"waf_detection_only"`
-	RateLimitRPS     int               `json:"rate_limit_rps"`
-	RateLimitBurst  int               `json:"rate_limit_burst"`
-	ReqHeadersAdd   map[string]string `json:"req_headers_add"`
-	ReqHeadersDel   []string          `json:"req_headers_del"`
-	RespHeadersAdd  map[string]string `json:"resp_headers_add"`
-	RespHeadersDel  []string          `json:"resp_headers_del"`
-	AccelRoot         *string           `json:"accel_root,omitempty"`
-	AccelSignedSecret *string           `json:"accel_signed_secret,omitempty"`
-	MaxBodyBytes      int64             `json:"max_body_bytes"`
-	TimeoutSeconds    int               `json:"timeout_seconds"`
-	CORSEnabled       bool              `json:"cors_enabled"`
-	CORSOrigins       string            `json:"cors_origins"`
-	CORSMethods       string            `json:"cors_methods"`
-	CORSHeaders       string            `json:"cors_headers"`
-	CORSMaxAge        int               `json:"cors_max_age"`
-	CORSCredentials   bool              `json:"cors_credentials"`
-	ErrorPage4xx      *string           `json:"error_page_4xx,omitempty"`
-	ErrorPage5xx      *string           `json:"error_page_5xx,omitempty"`
-	CreatedAt         time.Time         `json:"created_at"`
-	UpdatedAt         time.Time         `json:"updated_at"`
+	ID                 int               `json:"id"`
+	HostID             int               `json:"host_id"`
+	PathPrefix         string            `json:"path_prefix"`
+	RouteType          string            `json:"route_type"`
+	BackendURL         *string           `json:"backend_url,omitempty"`
+	BackendURLs        []string          `json:"backend_urls"`
+	ManagedComponentID *int              `json:"managed_component_id,omitempty"`
+	StaticRoot         *string           `json:"static_root,omitempty"`
+	RedirectURL        *string           `json:"redirect_url,omitempty"`
+	StripPrefix        bool              `json:"strip_prefix"`
+	RewritePattern     *string           `json:"rewrite_pattern,omitempty"`
+	RewriteTo          *string           `json:"rewrite_to,omitempty"`
+	Priority           int               `json:"priority"`
+	IsActive           bool              `json:"is_active"`
+	LogEnabled         bool              `json:"log_enabled"`
+	WafEnabled         bool              `json:"waf_enabled"`
+	WafExcludePaths    []string          `json:"waf_exclude_paths"`
+	WafDetectionOnly   bool              `json:"waf_detection_only"`
+	RateLimitRPS       int               `json:"rate_limit_rps"`
+	RateLimitBurst     int               `json:"rate_limit_burst"`
+	ReqHeadersAdd      map[string]string `json:"req_headers_add"`
+	ReqHeadersDel      []string          `json:"req_headers_del"`
+	RespHeadersAdd     map[string]string `json:"resp_headers_add"`
+	RespHeadersDel     []string          `json:"resp_headers_del"`
+	AccelRoot          *string           `json:"accel_root,omitempty"`
+	AccelSignedSecret  *string           `json:"accel_signed_secret,omitempty"`
+	MaxBodyBytes       int64             `json:"max_body_bytes"`
+	TimeoutSeconds     int               `json:"timeout_seconds"`
+	CORSEnabled        bool              `json:"cors_enabled"`
+	CORSOrigins        string            `json:"cors_origins"`
+	CORSMethods        string            `json:"cors_methods"`
+	CORSHeaders        string            `json:"cors_headers"`
+	CORSMaxAge         int               `json:"cors_max_age"`
+	CORSCredentials    bool              `json:"cors_credentials"`
+	ErrorPage4xx       *string           `json:"error_page_4xx,omitempty"`
+	ErrorPage5xx       *string           `json:"error_page_5xx,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
-const routeSelectCols = `id, host_id, path_prefix, route_type, backend_url, backend_urls, static_root, redirect_url,
+const routeSelectCols = `id, host_id, path_prefix, route_type, backend_url, backend_urls, managed_component_id, static_root, redirect_url,
 	strip_prefix, rewrite_pattern, rewrite_to, priority, is_active, log_enabled, waf_enabled,
 	waf_exclude_paths, waf_detection_only, rate_limit_rps, rate_limit_burst,
 	req_headers_add, req_headers_del, resp_headers_add, resp_headers_del,
@@ -164,7 +166,7 @@ func scanRoute(scan func(...any) error) (Route, error) {
 	var reqDel, respDel, backendURLs, wafExclude []string
 	err := scan(
 		&r.ID, &r.HostID, &r.PathPrefix, &r.RouteType,
-		&r.BackendURL, &backendURLs, &r.StaticRoot, &r.RedirectURL,
+		&r.BackendURL, &backendURLs, &r.ManagedComponentID, &r.StaticRoot, &r.RedirectURL,
 		&r.StripPrefix, &r.RewritePattern, &r.RewriteTo,
 		&r.Priority, &r.IsActive, &r.LogEnabled, &r.WafEnabled,
 		&wafExclude, &r.WafDetectionOnly, &r.RateLimitRPS, &r.RateLimitBurst,
@@ -199,7 +201,7 @@ func scanRoute(scan func(...any) error) (Route, error) {
 
 func (d *DB) ListRoutesByHost(ctx context.Context, hostID int) ([]Route, error) {
 	rows, err := d.Pool.Query(ctx,
-		`SELECT `+routeSelectCols+` FROM routes WHERE host_id = $1 ORDER BY priority DESC, path_prefix`, hostID)
+		`SELECT `+routeSelectCols+` FROM muvon.routes WHERE host_id = $1 ORDER BY priority DESC, path_prefix`, hostID)
 	if err != nil {
 		return nil, fmt.Errorf("list routes: %w", err)
 	}
@@ -242,7 +244,7 @@ func (d *DB) CreateRoute(ctx context.Context, r Route) (Route, error) {
 	reqAdd, _ := json.Marshal(r.ReqHeadersAdd)
 	respAdd, _ := json.Marshal(r.RespHeadersAdd)
 	row := d.Pool.QueryRow(ctx,
-		`INSERT INTO routes (host_id, path_prefix, route_type, backend_url, backend_urls, static_root, redirect_url,
+		`INSERT INTO routes (host_id, path_prefix, route_type, backend_url, backend_urls, managed_component_id, static_root, redirect_url,
 		                     strip_prefix, rewrite_pattern, rewrite_to, priority, is_active, log_enabled, waf_enabled,
 		                     waf_exclude_paths, waf_detection_only, rate_limit_rps, rate_limit_burst,
 		                     req_headers_add, req_headers_del, resp_headers_add, resp_headers_del,
@@ -250,9 +252,9 @@ func (d *DB) CreateRoute(ctx context.Context, r Route) (Route, error) {
 		                     max_body_bytes, timeout_seconds,
 		                     cors_enabled, cors_origins, cors_methods, cors_headers, cors_max_age, cors_credentials,
 		                     error_page_4xx, error_page_5xx)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
 		 RETURNING `+routeSelectCols,
-		r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.StaticRoot, r.RedirectURL,
+		r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.ManagedComponentID, r.StaticRoot, r.RedirectURL,
 		r.StripPrefix, r.RewritePattern, r.RewriteTo, r.Priority, r.IsActive, r.LogEnabled, r.WafEnabled,
 		r.WafExcludePaths, r.WafDetectionOnly, r.RateLimitRPS, r.RateLimitBurst,
 		reqAdd, r.ReqHeadersDel, respAdd, r.RespHeadersDel,
@@ -285,18 +287,18 @@ func (d *DB) UpdateRoute(ctx context.Context, r Route) (Route, error) {
 	respAdd, _ := json.Marshal(r.RespHeadersAdd)
 	row := d.Pool.QueryRow(ctx,
 		`UPDATE routes SET host_id=$2, path_prefix=$3, route_type=$4, backend_url=$5, backend_urls=$6,
-		        static_root=$7, redirect_url=$8, strip_prefix=$9, rewrite_pattern=$10, rewrite_to=$11,
-		        priority=$12, is_active=$13, log_enabled=$14, waf_enabled=$15,
-		        waf_exclude_paths=$16, waf_detection_only=$17, rate_limit_rps=$18, rate_limit_burst=$19,
-		        req_headers_add=$20, req_headers_del=$21, resp_headers_add=$22, resp_headers_del=$23,
-		        accel_root=$24, accel_signed_secret=$25,
-		        max_body_bytes=$26, timeout_seconds=$27,
-		        cors_enabled=$28, cors_origins=$29, cors_methods=$30, cors_headers=$31, cors_max_age=$32, cors_credentials=$33,
-		        error_page_4xx=$34, error_page_5xx=$35,
+		        managed_component_id=$7, static_root=$8, redirect_url=$9, strip_prefix=$10, rewrite_pattern=$11, rewrite_to=$12,
+		        priority=$13, is_active=$14, log_enabled=$15, waf_enabled=$16,
+		        waf_exclude_paths=$17, waf_detection_only=$18, rate_limit_rps=$19, rate_limit_burst=$20,
+		        req_headers_add=$21, req_headers_del=$22, resp_headers_add=$23, resp_headers_del=$24,
+		        accel_root=$25, accel_signed_secret=$26,
+		        max_body_bytes=$27, timeout_seconds=$28,
+		        cors_enabled=$29, cors_origins=$30, cors_methods=$31, cors_headers=$32, cors_max_age=$33, cors_credentials=$34,
+		        error_page_4xx=$35, error_page_5xx=$36,
 		        updated_at=now()
 		 WHERE id=$1
 		 RETURNING `+routeSelectCols,
-		r.ID, r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.StaticRoot, r.RedirectURL,
+		r.ID, r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.ManagedComponentID, r.StaticRoot, r.RedirectURL,
 		r.StripPrefix, r.RewritePattern, r.RewriteTo, r.Priority, r.IsActive, r.LogEnabled, r.WafEnabled,
 		r.WafExcludePaths, r.WafDetectionOnly, r.RateLimitRPS, r.RateLimitBurst,
 		reqAdd, r.ReqHeadersDel, respAdd, r.RespHeadersDel,
@@ -326,7 +328,7 @@ func (d *DB) DeleteRoute(ctx context.Context, id int) error {
 // --- All active hosts+routes for router config ---
 
 func (d *DB) LoadActiveRoutes(ctx context.Context) ([]Host, map[int][]Route, error) {
-	hosts, err := d.Pool.Query(ctx, `SELECT id, domain, is_active, force_https, created_at, updated_at FROM hosts WHERE is_active = true ORDER BY domain`)
+	hosts, err := d.Pool.Query(ctx, `SELECT id, domain, is_active, force_https, created_at, updated_at FROM muvon.hosts WHERE is_active = true ORDER BY domain`)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load active hosts: %w", err)
 	}
@@ -366,7 +368,7 @@ func (d *DB) LoadActiveRoutes(ctx context.Context) ([]Host, map[int][]Route, err
 
 func (d *DB) GetSetting(ctx context.Context, key string) (string, error) {
 	var val string
-	err := d.Pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = $1`, key).Scan(&val)
+	err := d.Pool.QueryRow(ctx, `SELECT value FROM muvon.settings WHERE key = $1`, key).Scan(&val)
 	if err != nil {
 		return "", fmt.Errorf("get setting %s: %w", key, err)
 	}
@@ -374,7 +376,7 @@ func (d *DB) GetSetting(ctx context.Context, key string) (string, error) {
 }
 
 func (d *DB) GetAllSettings(ctx context.Context) (map[string]json.RawMessage, error) {
-	rows, err := d.Pool.Query(ctx, `SELECT key, value FROM settings ORDER BY key`)
+	rows, err := d.Pool.Query(ctx, `SELECT key, value FROM muvon.settings ORDER BY key`)
 	if err != nil {
 		return nil, fmt.Errorf("get all settings: %w", err)
 	}
@@ -394,7 +396,7 @@ func (d *DB) GetAllSettings(ctx context.Context) (map[string]json.RawMessage, er
 
 func (d *DB) SetSetting(ctx context.Context, key string, value json.RawMessage) error {
 	_, err := d.Pool.Exec(ctx,
-		`INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())
+		`INSERT INTO muvon.settings (key, value, updated_at) VALUES ($1, $2, now())
 		 ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
 		key, value)
 	if err != nil {
@@ -415,11 +417,22 @@ type TLSCert struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+const tlsCertificatePreferenceOrder = `
+CASE WHEN expires_at > NOW() THEN 0 ELSE 1 END,
+CASE WHEN issuer = 'manual' THEN 0 ELSE 1 END,
+expires_at DESC,
+created_at DESC,
+id DESC`
+
 func (d *DB) GetCertByDomain(ctx context.Context, domain string) (TLSCert, error) {
 	var c TLSCert
+	domain = strings.ToLower(strings.TrimSpace(domain))
 	err := d.Pool.QueryRow(ctx,
 		`SELECT id, domain, cert_pem, key_pem, issuer, expires_at, created_at
-		 FROM tls_certificates WHERE domain = $1 ORDER BY expires_at DESC LIMIT 1`, domain,
+		 FROM tls_certificates
+		 WHERE lower(domain) = $1
+		 ORDER BY `+tlsCertificatePreferenceOrder+`
+		 LIMIT 1`, domain,
 	).Scan(&c.ID, &c.Domain, &c.CertPEM, &c.KeyPEM, &c.Issuer, &c.ExpiresAt, &c.CreatedAt)
 	if err != nil {
 		return c, fmt.Errorf("get cert: %w", err)
@@ -428,9 +441,14 @@ func (d *DB) GetCertByDomain(ctx context.Context, domain string) (TLSCert, error
 }
 
 func (d *DB) UpsertCert(ctx context.Context, domain string, certPEM, keyPEM []byte, issuer string, expiresAt time.Time) error {
+	domain = strings.ToLower(strings.TrimSpace(domain))
 	_, err := d.Pool.Exec(ctx,
 		`INSERT INTO tls_certificates (domain, cert_pem, key_pem, issuer, expires_at)
-		 VALUES ($1, $2, $3, $4, $5)`,
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (domain, issuer) DO UPDATE
+		 SET cert_pem = EXCLUDED.cert_pem,
+		     key_pem = EXCLUDED.key_pem,
+		     expires_at = EXCLUDED.expires_at`,
 		domain, certPEM, keyPEM, issuer, expiresAt)
 	if err != nil {
 		return fmt.Errorf("upsert cert: %w", err)
@@ -441,7 +459,8 @@ func (d *DB) UpsertCert(ctx context.Context, domain string, certPEM, keyPEM []by
 func (d *DB) ListCerts(ctx context.Context) ([]TLSCert, error) {
 	rows, err := d.Pool.Query(ctx,
 		`SELECT DISTINCT ON (domain) id, domain, issuer, expires_at, created_at
-		 FROM tls_certificates ORDER BY domain, expires_at DESC`)
+		 FROM tls_certificates
+		 ORDER BY domain, `+tlsCertificatePreferenceOrder)
 	if err != nil {
 		return nil, fmt.Errorf("list certs: %w", err)
 	}
@@ -458,15 +477,13 @@ func (d *DB) ListCerts(ctx context.Context) ([]TLSCert, error) {
 	return certs, rows.Err()
 }
 
-func (d *DB) DeleteCert(ctx context.Context, id int) error {
-	ct, err := d.Pool.Exec(ctx, `DELETE FROM tls_certificates WHERE id = $1`, id)
+func (d *DB) DeleteCert(ctx context.Context, id int) (string, error) {
+	var domain string
+	err := d.Pool.QueryRow(ctx, `DELETE FROM tls_certificates WHERE id = $1 RETURNING domain`, id).Scan(&domain)
 	if err != nil {
-		return fmt.Errorf("delete cert: %w", err)
+		return "", fmt.Errorf("delete cert: %w", err)
 	}
-	if ct.RowsAffected() == 0 {
-		return pgx.ErrNoRows
-	}
-	return nil
+	return domain, nil
 }
 
 // --- ACME Cache ---
@@ -579,13 +596,15 @@ type LogEntry struct {
 	WafBlockReason  *string         `json:"waf_block_reason,omitempty"`
 	IsStarred       bool            `json:"is_starred"`
 	Note            *string         `json:"note,omitempty"`
+	Country         *string         `json:"country,omitempty"`
+	City            *string         `json:"city,omitempty"`
 }
 
 type LogBody struct {
-	RequestBody          *string `json:"request_body,omitempty"`
-	ResponseBody         *string `json:"response_body,omitempty"`
-	IsRequestTruncated   bool    `json:"is_request_truncated"`
-	IsResponseTruncated  bool    `json:"is_response_truncated"`
+	RequestBody         *string `json:"request_body,omitempty"`
+	ResponseBody        *string `json:"response_body,omitempty"`
+	IsRequestTruncated  bool    `json:"is_request_truncated"`
+	IsResponseTruncated bool    `json:"is_response_truncated"`
 }
 
 func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int, error) {
@@ -674,7 +693,7 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		`SELECT l.id::text, l.timestamp, l.host, l.client_ip, l.method, l.path, l.query_string,
 		        l.request_headers, l.response_status, l.response_headers, l.response_time_ms,
 		        l.request_size, l.response_size, l.user_agent, l.error, l.waf_blocked, l.waf_block_reason,
-		        l.is_starred, n.note
+		        l.is_starred, n.note, l.country, l.city
 		 FROM http_logs l
 		 LEFT JOIN log_notes n ON n.log_id = l.id
 		 %s ORDER BY l.timestamp DESC LIMIT $%d OFFSET $%d`,
@@ -693,7 +712,7 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		if err := rows.Scan(&e.ID, &e.Timestamp, &e.Host, &e.ClientIP, &e.Method, &e.Path,
 			&e.QueryString, &e.RequestHeaders, &e.ResponseStatus, &e.ResponseHeaders,
 			&e.ResponseTimeMs, &e.RequestSize, &e.ResponseSize, &e.UserAgent, &e.Error,
-			&e.WafBlocked, &e.WafBlockReason, &e.IsStarred, &e.Note); err != nil {
+			&e.WafBlocked, &e.WafBlockReason, &e.IsStarred, &e.Note, &e.Country, &e.City); err != nil {
 			return nil, 0, fmt.Errorf("search logs scan: %w", err)
 		}
 		entries = append(entries, e)
@@ -708,14 +727,14 @@ func (d *DB) GetLogDetail(ctx context.Context, id string) (LogEntry, LogBody, er
 		`SELECT l.id::text, l.timestamp, l.host, l.client_ip, l.method, l.path, l.query_string,
 		        l.request_headers, l.response_status, l.response_headers, l.response_time_ms,
 		        l.request_size, l.response_size, l.user_agent, l.error, l.waf_blocked, l.waf_block_reason,
-		        l.is_starred, n.note
+		        l.is_starred, n.note, l.country, l.city
 		 FROM http_logs l
 		 LEFT JOIN log_notes n ON n.log_id = l.id
 		 WHERE l.id = $1`, id,
 	).Scan(&e.ID, &e.Timestamp, &e.Host, &e.ClientIP, &e.Method, &e.Path,
 		&e.QueryString, &e.RequestHeaders, &e.ResponseStatus, &e.ResponseHeaders,
 		&e.ResponseTimeMs, &e.RequestSize, &e.ResponseSize, &e.UserAgent, &e.Error,
-		&e.WafBlocked, &e.WafBlockReason, &e.IsStarred, &e.Note)
+		&e.WafBlocked, &e.WafBlockReason, &e.IsStarred, &e.Note, &e.Country, &e.City)
 	if err != nil {
 		return e, LogBody{}, fmt.Errorf("get log detail: %w", err)
 	}
@@ -849,8 +868,14 @@ type LogStats struct {
 	StatusCounts   map[string]int64 `json:"status_counts"`
 	TopHosts       []HostCount      `json:"top_hosts"`
 	TopPaths       []PathCount      `json:"top_paths"`
+	TopCountries   []CountryCount   `json:"top_countries"`
 	AvgResponseMs  float64          `json:"avg_response_ms"`
 	RequestsPerMin float64          `json:"requests_per_min"`
+}
+
+type CountryCount struct {
+	Country string `json:"country"`
+	Count   int64  `json:"count"`
 }
 
 type HostCount struct {
@@ -954,6 +979,25 @@ func (d *DB) GetLogStats(ctx context.Context, from, to time.Time) (LogStats, err
 		return stats, fmt.Errorf("log stats rpm: %w", err)
 	}
 
+	// Top countries
+	rows, err = d.Pool.Query(ctx,
+		fmt.Sprintf(`SELECT COALESCE(country, 'Unknown'), COUNT(*) as cnt FROM http_logs %s
+		 AND country IS NOT NULL AND country != ''
+		 GROUP BY country ORDER BY cnt DESC LIMIT 10`, where),
+		args...)
+	if err != nil {
+		return stats, fmt.Errorf("log stats countries: %w", err)
+	}
+	for rows.Next() {
+		var cc CountryCount
+		if err := rows.Scan(&cc.Country, &cc.Count); err != nil {
+			rows.Close()
+			return stats, err
+		}
+		stats.TopCountries = append(stats.TopCountries, cc)
+	}
+	rows.Close()
+
 	return stats, nil
 }
 
@@ -981,4 +1025,3 @@ func (d *DB) InsertAlert(ctx context.Context, a AlertRecord) error {
 	}
 	return nil
 }
-

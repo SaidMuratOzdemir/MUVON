@@ -31,25 +31,27 @@ var routeLimiters sync.Map
 var routeCounters sync.Map
 
 type Handler struct {
-	configHolder  *config.Holder
-	logSink       LogSink
-	transport     http.RoundTripper
-	maxBodySize   int
-	enableCapture bool
-	inspector     Inspector
-	healthMgr     *health.Manager
+	configHolder    *config.Holder
+	logSink         LogSink
+	transport       http.RoundTripper
+	maxBodySize     int
+	enableCapture   bool
+	inspector       Inspector
+	healthMgr       *health.Manager
+	instanceTracker InstanceTracker
 }
 
-func NewHandler(ch *config.Holder, logSink LogSink, transport http.RoundTripper, hm *health.Manager, inspector Inspector) *Handler {
+func NewHandler(ch *config.Holder, logSink LogSink, transport http.RoundTripper, hm *health.Manager, inspector Inspector, instanceTracker InstanceTracker) *Handler {
 	cfg := ch.Get()
 	return &Handler{
-		configHolder:  ch,
-		logSink:       logSink,
-		transport:     transport,
-		maxBodySize:   cfg.Global.MaxBodyCaptureSize,
-		enableCapture: cfg.Global.EnableBodyCapture,
-		inspector:     inspector,
-		healthMgr:     hm,
+		configHolder:    ch,
+		logSink:         logSink,
+		transport:       transport,
+		maxBodySize:     cfg.Global.MaxBodyCaptureSize,
+		enableCapture:   cfg.Global.EnableBodyCapture,
+		inspector:       inspector,
+		healthMgr:       hm,
+		instanceTracker: instanceTracker,
 	}
 }
 
@@ -89,6 +91,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *config.RouteRule, hc *config.HostConfig, start time.Time) {
+	cfg := h.configHolder.Get()
+	enableCapture := cfg.Global.EnableBodyCapture
+	maxBodySize := cfg.Global.MaxBodyCaptureSize
+
 	// CORS — handle before any other processing so preflight returns immediately.
 	if route.Route.CORSEnabled {
 		if applyCORSHeaders(w, r, route.Route) {
@@ -119,13 +125,18 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	reqID := uuid.Must(uuid.NewV7()).String()
 	r.Header.Set("X-Request-ID", reqID)
 
-	backendURL := pickBackend(route)
-	if backendURL == "" {
+	backend := pickBackend(route)
+	if backend.URL == "" {
 		http.Error(w, "no backend configured", http.StatusBadGateway)
 		return
 	}
+	if backend.InstanceID != "" && h.instanceTracker != nil {
+		r.Header.Set("X-Muvon-Deploy-Instance", backend.InstanceID)
+		h.instanceTracker.AdjustDeployInstanceInFlight(r.Context(), backend.InstanceID, 1)
+		defer h.instanceTracker.AdjustDeployInstanceInFlight(context.Background(), backend.InstanceID, -1)
+	}
 
-	target, err := url.Parse(backendURL)
+	target, err := url.Parse(backend.URL)
 	if err != nil {
 		http.Error(w, "invalid backend URL", http.StatusBadGateway)
 		return
@@ -142,9 +153,9 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	// - POST/PUT/PATCH → body oku (max 64KB WAF için, enableCapture limiti SIEM için)
 	var reqCapture *CapturedBody
 	wafNeedsBody := route.Route.WafEnabled && h.inspector != nil && methodCarriesBody(r.Method)
-	needBody := h.enableCapture || wafNeedsBody
+	needBody := enableCapture || wafNeedsBody
 	if needBody {
-		r, reqCapture = CaptureRequestBody(r, h.maxBodySize)
+		r, reqCapture = CaptureRequestBody(r, maxBodySize)
 	}
 
 	// Per-route rate limiting
@@ -187,21 +198,26 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 				http.Error(w, "Forbidden", http.StatusForbidden)
 				if route.Route.LogEnabled && h.logSink != nil {
 					wafEntry := logger.Entry{
-						RequestID:       reqID,
-						Timestamp:       start,
-						Host:            stripPort(r.Host),
-						ClientIP:        ip,
-						Method:          r.Method,
-						Path:            r.URL.Path,
-						QueryString:     r.URL.RawQuery,
-						RequestHeaders:  reqHeaders,
-						ResponseStatus:  http.StatusForbidden,
-						ResponseTimeMs:  int(time.Since(start).Milliseconds()),
-						UserAgent:       r.UserAgent(),
-						WafBlocked:      true,
-						WafBlockReason:  wafResult.BlockReason,
-						WafScore:        wafResult.RequestScore,
-						WafAction:       string(wafResult.Action),
+						RequestID:      reqID,
+						Timestamp:      start,
+						Host:           stripPort(r.Host),
+						ClientIP:       ip,
+						Method:         r.Method,
+						Path:           r.URL.Path,
+						QueryString:    r.URL.RawQuery,
+						RequestHeaders: reqHeaders,
+						ResponseStatus: http.StatusForbidden,
+						ResponseTimeMs: int(time.Since(start).Milliseconds()),
+						UserAgent:      r.UserAgent(),
+						WafBlocked:     true,
+						WafBlockReason: wafResult.BlockReason,
+						WafScore:       wafResult.RequestScore,
+						WafAction:      string(wafResult.Action),
+					}
+					if reqCapture != nil {
+						wafEntry.RequestBody = reqCapture.Data
+						wafEntry.RequestSize = reqCapture.Size
+						wafEntry.IsRequestTruncated = reqCapture.Truncated
 					}
 					h.logSink.Send(wafEntry)
 				}
@@ -211,7 +227,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	}
 
 	// Circuit breaker check
-	if h.healthMgr != nil && !h.healthMgr.Allow(backendURL) {
+	if h.healthMgr != nil && !h.healthMgr.Allow(backend.URL) {
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -222,8 +238,8 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 
 	// Response capture
 	var rc *ResponseCapture
-	if h.enableCapture && !skipResponseCapture {
-		rc = NewResponseCapture(w, h.maxBodySize, false)
+	if enableCapture && !skipResponseCapture {
+		rc = NewResponseCapture(w, maxBodySize, false)
 		w = rc
 	}
 
@@ -246,7 +262,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 		FlushInterval: -1, // SSE desteği: anında flush
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if hm != nil {
-				hm.RecordFailure(backendURL)
+				hm.RecordFailure(backend.URL)
 			}
 			if routeSnapshot.ErrorPage5xx != nil {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -263,7 +279,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 
 	// Record backend success for circuit breaker
 	if hm != nil {
-		hm.RecordSuccess(backendURL)
+		hm.RecordSuccess(backend.URL)
 	}
 
 	// Log kaydı — route log_enabled=false ise pipeline'a gönderme
@@ -273,16 +289,16 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 
 	elapsed := time.Since(start)
 	entry := logger.Entry{
-		RequestID:       reqID,
-		Timestamp:       start,
-		Host:            stripPort(r.Host),
-		ClientIP:        ip,
-		Method:          r.Method,
-		Path:            r.URL.Path,
-		QueryString:     r.URL.RawQuery,
-		RequestHeaders:  reqHeaders,
-		ResponseTimeMs:  int(elapsed.Milliseconds()),
-		UserAgent:       r.UserAgent(),
+		RequestID:      reqID,
+		Timestamp:      start,
+		Host:           stripPort(r.Host),
+		ClientIP:       ip,
+		Method:         r.Method,
+		Path:           r.URL.Path,
+		QueryString:    r.URL.RawQuery,
+		RequestHeaders: reqHeaders,
+		ResponseTimeMs: int(elapsed.Milliseconds()),
+		UserAgent:      r.UserAgent(),
 	}
 
 	if reqCapture != nil {
@@ -455,19 +471,31 @@ func captureHeaders(h http.Header) map[string]string {
 	return out
 }
 
+type selectedBackend struct {
+	URL        string
+	InstanceID string
+}
+
 // pickBackend selects a backend URL for the route.
-// If backend_urls is non-empty, uses round-robin; otherwise falls back to backend_url.
-func pickBackend(route *config.RouteRule) string {
+// Managed routes only use active deployment instances. Legacy routes keep
+// the existing backend_urls/backend_url behavior.
+func pickBackend(route *config.RouteRule) selectedBackend {
+	if len(route.ManagedBackends) > 0 {
+		v, _ := routeCounters.LoadOrStore(route.Route.ID, new(atomic.Uint64))
+		idx := v.(*atomic.Uint64).Add(1) % uint64(len(route.ManagedBackends))
+		backend := route.ManagedBackends[idx]
+		return selectedBackend{URL: backend.BackendURL, InstanceID: backend.InstanceID}
+	}
 	urls := route.Route.BackendURLs
 	if len(urls) == 0 {
 		if route.Route.BackendURL == nil {
-			return ""
+			return selectedBackend{}
 		}
-		return *route.Route.BackendURL
+		return selectedBackend{URL: *route.Route.BackendURL}
 	}
 	v, _ := routeCounters.LoadOrStore(route.Route.ID, new(atomic.Uint64))
 	idx := v.(*atomic.Uint64).Add(1) % uint64(len(urls))
-	return urls[idx]
+	return selectedBackend{URL: urls[idx]}
 }
 
 // getRouteLimiter returns (or creates) a per-route RateLimiter.

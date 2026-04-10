@@ -12,6 +12,7 @@ import WafIPs from './pages/WafIPs'
 import WafEvents from './pages/WafEvents'
 import Agents from './pages/Agents'
 import RoutesPage from './pages/Routes'
+import Apps from './pages/Apps'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('dialog_token')
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="waf/ips" element={<WafIPs />} />
           <Route path="waf/events" element={<WafEvents />} />
           <Route path="agents" element={<Agents />} />
+          <Route path="apps" element={<Apps />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
