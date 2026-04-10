@@ -19,7 +19,7 @@ jobs:
 
     strategy:
       matrix:
-        service: [muvon, dialog-siem, muwaf, agent]
+        service: [muvon, dialog-siem, muwaf, agent, muvon-deployer]
 
     steps:
       - uses: actions/checkout@v4

@@ -17,6 +17,7 @@ export interface Route {
   backend_urls?: string[];
   managed_component_id?: number;
   static_root?: string;
+  static_spa?: boolean;
   redirect_url?: string;
   strip_prefix: boolean;
   rewrite_pattern?: string;

@@ -165,6 +165,7 @@ export type RouteFormData = {
   backend_url: string
   backend_urls: string[]
   static_root: string
+  static_spa: boolean
   redirect_url: string
   strip_prefix: boolean
   rewrite_pattern: string
@@ -201,6 +202,7 @@ export const defaultRouteForm = (): RouteFormData => ({
   backend_url: '',
   backend_urls: [],
   static_root: '',
+  static_spa: false,
   redirect_url: '',
   strip_prefix: true,
   rewrite_pattern: '',
@@ -258,6 +260,7 @@ export function RouteDialog({
         backend_url: route.backend_url ?? '',
         backend_urls: route.backend_urls ?? [],
         static_root: route.static_root ?? '',
+        static_spa: route.static_spa ?? false,
         redirect_url: route.redirect_url ?? '',
         strip_prefix: route.strip_prefix,
         rewrite_pattern: route.rewrite_pattern ?? '',
@@ -319,6 +322,7 @@ export function RouteDialog({
         backend_url: form.route_type === 'proxy' ? (form.backend_url || undefined) : undefined,
         backend_urls: form.route_type === 'proxy' && form.backend_urls.length > 0 ? form.backend_urls : undefined,
         static_root: form.route_type === 'static' ? form.static_root : undefined,
+        static_spa: form.route_type === 'static' ? form.static_spa : undefined,
         redirect_url: form.route_type === 'redirect' ? form.redirect_url : undefined,
         strip_prefix: form.strip_prefix,
         rewrite_pattern: form.rewrite_pattern || undefined,
@@ -426,14 +430,23 @@ export function RouteDialog({
             </div>
           )}
           {form.route_type === 'static' && (
-            <div className="space-y-2">
-              <Label>Static Root Directory</Label>
-              <Input
-                placeholder="/var/www/html"
-                className="bg-background border-border font-mono"
-                value={form.static_root}
-                onChange={e => set('static_root', e.target.value)}
-              />
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label>Static Root Directory</Label>
+                <Input
+                  placeholder="/var/www/html"
+                  className="bg-background border-border font-mono"
+                  value={form.static_root}
+                  onChange={e => set('static_root', e.target.value)}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-sm">SPA Mode</Label>
+                  <p className="text-xs text-muted-foreground">Fall back to index.html for unknown paths (client-side routing)</p>
+                </div>
+                <Switch checked={form.static_spa} onCheckedChange={v => set('static_spa', v)} />
+              </div>
             </div>
           )}
           {form.route_type === 'redirect' && (

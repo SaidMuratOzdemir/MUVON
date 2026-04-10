@@ -118,6 +118,7 @@ type Route struct {
 	BackendURLs        []string          `json:"backend_urls"`
 	ManagedComponentID *int              `json:"managed_component_id,omitempty"`
 	StaticRoot         *string           `json:"static_root,omitempty"`
+	StaticSPA          bool              `json:"static_spa"`
 	RedirectURL        *string           `json:"redirect_url,omitempty"`
 	StripPrefix        bool              `json:"strip_prefix"`
 	RewritePattern     *string           `json:"rewrite_pattern,omitempty"`
@@ -150,7 +151,7 @@ type Route struct {
 	UpdatedAt          time.Time         `json:"updated_at"`
 }
 
-const routeSelectCols = `id, host_id, path_prefix, route_type, backend_url, backend_urls, managed_component_id, static_root, redirect_url,
+const routeSelectCols = `id, host_id, path_prefix, route_type, backend_url, backend_urls, managed_component_id, static_root, static_spa, redirect_url,
 	strip_prefix, rewrite_pattern, rewrite_to, priority, is_active, log_enabled, waf_enabled,
 	waf_exclude_paths, waf_detection_only, rate_limit_rps, rate_limit_burst,
 	req_headers_add, req_headers_del, resp_headers_add, resp_headers_del,
@@ -166,7 +167,7 @@ func scanRoute(scan func(...any) error) (Route, error) {
 	var reqDel, respDel, backendURLs, wafExclude []string
 	err := scan(
 		&r.ID, &r.HostID, &r.PathPrefix, &r.RouteType,
-		&r.BackendURL, &backendURLs, &r.ManagedComponentID, &r.StaticRoot, &r.RedirectURL,
+		&r.BackendURL, &backendURLs, &r.ManagedComponentID, &r.StaticRoot, &r.StaticSPA, &r.RedirectURL,
 		&r.StripPrefix, &r.RewritePattern, &r.RewriteTo,
 		&r.Priority, &r.IsActive, &r.LogEnabled, &r.WafEnabled,
 		&wafExclude, &r.WafDetectionOnly, &r.RateLimitRPS, &r.RateLimitBurst,
@@ -244,7 +245,7 @@ func (d *DB) CreateRoute(ctx context.Context, r Route) (Route, error) {
 	reqAdd, _ := json.Marshal(r.ReqHeadersAdd)
 	respAdd, _ := json.Marshal(r.RespHeadersAdd)
 	row := d.Pool.QueryRow(ctx,
-		`INSERT INTO routes (host_id, path_prefix, route_type, backend_url, backend_urls, managed_component_id, static_root, redirect_url,
+		`INSERT INTO routes (host_id, path_prefix, route_type, backend_url, backend_urls, managed_component_id, static_root, static_spa, redirect_url,
 		                     strip_prefix, rewrite_pattern, rewrite_to, priority, is_active, log_enabled, waf_enabled,
 		                     waf_exclude_paths, waf_detection_only, rate_limit_rps, rate_limit_burst,
 		                     req_headers_add, req_headers_del, resp_headers_add, resp_headers_del,
@@ -252,9 +253,9 @@ func (d *DB) CreateRoute(ctx context.Context, r Route) (Route, error) {
 		                     max_body_bytes, timeout_seconds,
 		                     cors_enabled, cors_origins, cors_methods, cors_headers, cors_max_age, cors_credentials,
 		                     error_page_4xx, error_page_5xx)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
 		 RETURNING `+routeSelectCols,
-		r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.ManagedComponentID, r.StaticRoot, r.RedirectURL,
+		r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.ManagedComponentID, r.StaticRoot, r.StaticSPA, r.RedirectURL,
 		r.StripPrefix, r.RewritePattern, r.RewriteTo, r.Priority, r.IsActive, r.LogEnabled, r.WafEnabled,
 		r.WafExcludePaths, r.WafDetectionOnly, r.RateLimitRPS, r.RateLimitBurst,
 		reqAdd, r.ReqHeadersDel, respAdd, r.RespHeadersDel,
@@ -287,18 +288,18 @@ func (d *DB) UpdateRoute(ctx context.Context, r Route) (Route, error) {
 	respAdd, _ := json.Marshal(r.RespHeadersAdd)
 	row := d.Pool.QueryRow(ctx,
 		`UPDATE routes SET host_id=$2, path_prefix=$3, route_type=$4, backend_url=$5, backend_urls=$6,
-		        managed_component_id=$7, static_root=$8, redirect_url=$9, strip_prefix=$10, rewrite_pattern=$11, rewrite_to=$12,
-		        priority=$13, is_active=$14, log_enabled=$15, waf_enabled=$16,
-		        waf_exclude_paths=$17, waf_detection_only=$18, rate_limit_rps=$19, rate_limit_burst=$20,
-		        req_headers_add=$21, req_headers_del=$22, resp_headers_add=$23, resp_headers_del=$24,
-		        accel_root=$25, accel_signed_secret=$26,
-		        max_body_bytes=$27, timeout_seconds=$28,
-		        cors_enabled=$29, cors_origins=$30, cors_methods=$31, cors_headers=$32, cors_max_age=$33, cors_credentials=$34,
-		        error_page_4xx=$35, error_page_5xx=$36,
+		        managed_component_id=$7, static_root=$8, static_spa=$9, redirect_url=$10, strip_prefix=$11, rewrite_pattern=$12, rewrite_to=$13,
+		        priority=$14, is_active=$15, log_enabled=$16, waf_enabled=$17,
+		        waf_exclude_paths=$18, waf_detection_only=$19, rate_limit_rps=$20, rate_limit_burst=$21,
+		        req_headers_add=$22, req_headers_del=$23, resp_headers_add=$24, resp_headers_del=$25,
+		        accel_root=$26, accel_signed_secret=$27,
+		        max_body_bytes=$28, timeout_seconds=$29,
+		        cors_enabled=$30, cors_origins=$31, cors_methods=$32, cors_headers=$33, cors_max_age=$34, cors_credentials=$35,
+		        error_page_4xx=$36, error_page_5xx=$37,
 		        updated_at=now()
 		 WHERE id=$1
 		 RETURNING `+routeSelectCols,
-		r.ID, r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.ManagedComponentID, r.StaticRoot, r.RedirectURL,
+		r.ID, r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.ManagedComponentID, r.StaticRoot, r.StaticSPA, r.RedirectURL,
 		r.StripPrefix, r.RewritePattern, r.RewriteTo, r.Priority, r.IsActive, r.LogEnabled, r.WafEnabled,
 		r.WafExcludePaths, r.WafDetectionOnly, r.RateLimitRPS, r.RateLimitBurst,
 		reqAdd, r.ReqHeadersDel, respAdd, r.RespHeadersDel,

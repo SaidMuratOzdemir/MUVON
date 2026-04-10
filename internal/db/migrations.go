@@ -1142,4 +1142,8 @@ INSERT INTO waf_rules (pattern, is_regex, category, severity, description) VALUE
 ON CONFLICT DO NOTHING;
 `,
 	},
+	{
+		name: "add_routes_static_spa", product: "muvon",
+		sql: `ALTER TABLE routes ADD COLUMN IF NOT EXISTS static_spa BOOLEAN NOT NULL DEFAULT false;`,
+	},
 }

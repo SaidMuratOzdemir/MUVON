@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -348,8 +349,12 @@ func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request, route *con
 		r = r2
 	}
 
-	fs := noListFS{http.Dir(*route.Route.StaticRoot)}
-	http.FileServer(fs).ServeHTTP(w, r)
+	base := noListFS{http.Dir(*route.Route.StaticRoot)}
+	var fileSystem http.FileSystem = base
+	if route.Route.StaticSPA {
+		fileSystem = spaFS{base}
+	}
+	http.FileServer(fileSystem).ServeHTTP(w, r)
 }
 
 // noListFS wraps http.FileSystem to disable directory listing.
@@ -375,6 +380,18 @@ func (fs noListFS) Open(name string) (http.File, error) {
 		idx.Close()
 	}
 	return f, nil
+}
+
+// spaFS wraps noListFS and falls back to /index.html for missing files.
+// This enables client-side routing for single-page applications.
+type spaFS struct{ noListFS }
+
+func (fs spaFS) Open(name string) (http.File, error) {
+	f, err := fs.noListFS.Open(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return fs.noListFS.FileSystem.Open("/index.html")
+	}
+	return f, err
 }
 
 func matchRoute(routes []config.RouteRule, path string) *config.RouteRule {
