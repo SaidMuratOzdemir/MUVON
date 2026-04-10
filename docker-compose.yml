@@ -150,6 +150,7 @@ services:
       MUVON_LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/envfiles:/opt/envfiles:ro
     networks:
       - default
       - muvon-edge
