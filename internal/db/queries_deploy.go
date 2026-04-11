@@ -725,6 +725,53 @@ func (d *DB) MarkDeployInstanceStopped(ctx context.Context, instanceID string) e
 	return nil
 }
 
+// ListLiveManagedContainerIDs returns the set of container IDs that Muvon
+// considers alive. A container is live when:
+//   - its instance is 'active' or 'draining' (already promoted or being drained), OR
+//   - its instance is 'warming' AND the associated deployment is still 'running'
+//     (i.e. actively being health-checked right now).
+//
+// Containers NOT in this set are orphans: they were created during a
+// deployment that crashed before completing and should be removed.
+func (d *DB) ListLiveManagedContainerIDs(ctx context.Context) (map[string]struct{}, error) {
+	rows, err := d.Pool.Query(ctx,
+		`SELECT container_id FROM deploy_instances
+		 WHERE state IN ('active', 'draining') AND container_id != ''
+		 UNION
+		 SELECT di.container_id
+		 FROM deploy_instances di
+		 JOIN deployments dep ON dep.release_uuid = di.release_uuid
+		 WHERE di.state = 'warming' AND di.container_id != '' AND dep.status = 'running'`)
+	if err != nil {
+		return nil, fmt.Errorf("list live managed container ids: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]struct{}{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("list live managed container ids scan: %w", err)
+		}
+		out[id] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+// ResetStaleRunningDeployments resets deployments that got stuck in the
+// "running" state (deployer crashed mid-flight) back to "pending" so they
+// are retried on the next tick. Returns the number of deployments reset.
+func (d *DB) ResetStaleRunningDeployments(ctx context.Context, olderThan time.Duration) (int, error) {
+	cutoff := time.Now().Add(-olderThan)
+	tag, err := d.Pool.Exec(ctx,
+		`UPDATE deployments
+		 SET status = 'pending', started_at = NULL, updated_at = now()
+		 WHERE status = 'running' AND updated_at < $1`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("reset stale running deployments: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (d *DB) ListDeployInstancesByProject(ctx context.Context, projectID int) ([]DeployInstance, error) {
 	rows, err := d.Pool.Query(ctx,
 		`SELECT i.id::text, i.component_id, p.slug, c.slug, COALESCE(i.release_uuid::text, ''), COALESCE(r.release_id, ''),

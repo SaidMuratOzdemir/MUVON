@@ -34,6 +34,14 @@ func NewService(database *db.DB, docker *DockerClient, pollInterval time.Duratio
 }
 
 func (s *Service) Run(ctx context.Context) error {
+	// On startup, reset any deployments stuck in "running" state from a
+	// previous crash so they are retried on the next tick.
+	if n, err := s.db.ResetStaleRunningDeployments(ctx, 10*time.Minute); err != nil {
+		slog.Warn("failed to reset stale running deployments", "error", err)
+	} else if n > 0 {
+		slog.Info("reset stale running deployments to pending", "count", n)
+	}
+
 	ticker := time.NewTicker(s.pollInterval)
 	defer ticker.Stop()
 
@@ -52,6 +60,9 @@ func (s *Service) Run(ctx context.Context) error {
 func (s *Service) tick(ctx context.Context) error {
 	if err := s.cleanupDraining(ctx); err != nil {
 		slog.Warn("drain cleanup failed", "error", err)
+	}
+	if err := s.reconcileOrphanContainers(ctx); err != nil {
+		slog.Warn("orphan container reconcile failed", "error", err)
 	}
 
 	deployment, ok, err := s.db.ClaimNextDeployment(ctx)
@@ -120,14 +131,14 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 					Name: "unless-stopped",
 				},
 			},
-			NetworkingConfig: networkConfig(component.Networks),
+			NetworkingConfig: networkConfig(component.Networks, component.Slug),
 		}
 		containerID, err := s.docker.ContainerCreate(ctx, containerName, createReq)
 		if err != nil {
 			return fmt.Errorf("create candidate %s: %w", component.Slug, err)
 		}
 		createdContainers = append(createdContainers, containerID)
-		if err := s.connectExtraNetworks(ctx, component.Networks, containerID); err != nil {
+		if err := s.connectExtraNetworks(ctx, component.Networks, containerID, component.Slug); err != nil {
 			return fmt.Errorf("connect networks for %s: %w", component.Slug, err)
 		}
 		if err := s.docker.ContainerStart(ctx, containerID); err != nil {
@@ -173,14 +184,14 @@ func (s *Service) runMigration(ctx context.Context, deploymentID string, plan db
 			"muvon.job":        "migration",
 		},
 		HostConfig:       hostConfig{NetworkMode: firstNetwork(component.Networks)},
-		NetworkingConfig: networkConfig(component.Networks),
+		NetworkingConfig: networkConfig(component.Networks, component.Slug+"-migration"),
 	}
 	containerID, err := s.docker.ContainerCreate(ctx, name, req)
 	if err != nil {
 		return fmt.Errorf("create migration container: %w", err)
 	}
 	defer s.docker.ContainerRemove(context.Background(), containerID, true)
-	if err := s.connectExtraNetworks(ctx, component.Networks, containerID); err != nil {
+	if err := s.connectExtraNetworks(ctx, component.Networks, containerID, component.Slug+"-migration"); err != nil {
 		return fmt.Errorf("connect migration networks: %w", err)
 	}
 	if err := s.docker.ContainerStart(ctx, containerID); err != nil {
@@ -280,6 +291,36 @@ func (s *Service) cleanupDraining(ctx context.Context) error {
 	return nil
 }
 
+// reconcileOrphanContainers removes Docker containers that carry the
+// muvon.managed=true label but are no longer tracked as live (warming /
+// active / draining) in the database.  This happens when the deployer
+// crashes mid-deployment and leaves containers behind that were never
+// properly registered or whose cleanup code never ran.
+func (s *Service) reconcileOrphanContainers(ctx context.Context) error {
+	liveIDs, err := s.db.ListLiveManagedContainerIDs(ctx)
+	if err != nil {
+		return err
+	}
+	containers, err := s.docker.ContainerList(ctx, "muvon.managed=true")
+	if err != nil {
+		return err
+	}
+	for _, c := range containers {
+		if _, alive := liveIDs[c.ID]; alive {
+			continue
+		}
+		project := c.Labels["muvon.project"]
+		component := c.Labels["muvon.component"]
+		release := c.Labels["muvon.release_id"]
+		slog.Info("removing orphan container", "id", c.ID[:12], "project", project, "component", component, "release", release)
+		_ = s.docker.ContainerStop(ctx, c.ID, 10)
+		if err := s.docker.ContainerRemove(ctx, c.ID, false); err != nil {
+			slog.Warn("failed to remove orphan container", "id", c.ID[:12], "error", err)
+		}
+	}
+	return nil
+}
+
 func (s *Service) ensureNetworks(ctx context.Context, networks []string) error {
 	for _, network := range networks {
 		if err := s.docker.EnsureNetwork(ctx, network); err != nil {
@@ -289,12 +330,12 @@ func (s *Service) ensureNetworks(ctx context.Context, networks []string) error {
 	return nil
 }
 
-func (s *Service) connectExtraNetworks(ctx context.Context, networks []string, containerID string) error {
+func (s *Service) connectExtraNetworks(ctx context.Context, networks []string, containerID, alias string) error {
 	if len(networks) <= 1 {
 		return nil
 	}
 	for _, network := range networks[1:] {
-		if err := s.docker.NetworkConnect(ctx, network, containerID); err != nil {
+		if err := s.docker.NetworkConnect(ctx, network, containerID, alias); err != nil {
 			return err
 		}
 	}
@@ -363,9 +404,13 @@ func firstNetwork(networks []string) string {
 	return "muvon-edge"
 }
 
-func networkConfig(networks []string) networkingConfig {
+func networkConfig(networks []string, alias string) networkingConfig {
 	first := firstNetwork(networks)
-	return networkingConfig{EndpointsConfig: map[string]endpointSettings{first: {}}}
+	ep := endpointSettings{}
+	if alias != "" {
+		ep.Aliases = []string{alias}
+	}
+	return networkingConfig{EndpointsConfig: map[string]endpointSettings{first: ep}}
 }
 
 func containerName(project, component, releaseID string) string {
