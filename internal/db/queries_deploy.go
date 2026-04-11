@@ -355,7 +355,10 @@ func (d *DB) EnqueueDeployment(ctx context.Context, in EnqueueDeploymentInput) (
 		`WITH ins AS (
 		    INSERT INTO deployments (project_id, release_uuid, release_id, trigger, status, payload)
 		    VALUES ($1, $2, $3, $4, 'pending', $5)
-		    ON CONFLICT (project_id, release_uuid) DO NOTHING
+		    ON CONFLICT (project_id, release_uuid) DO UPDATE
+		      SET status = 'pending', started_at = NULL, finished_at = NULL,
+		          updated_at = now(), payload = EXCLUDED.payload
+		      WHERE deployments.status IN ('succeeded', 'failed')
 		    RETURNING id::text, project_id, release_uuid::text, release_id, trigger, status, payload, error, started_at, finished_at, created_at, updated_at, true AS inserted
 		 )
 		 SELECT id, project_id, release_uuid, release_id, trigger, status, payload, error, started_at, finished_at, created_at, updated_at, inserted
@@ -450,7 +453,7 @@ func (d *DB) LoadDeploymentPlan(ctx context.Context, deploymentID string) (Deplo
 		 FROM deploy_release_components rc
 		 JOIN deploy_components c ON c.id = rc.component_id
 		 JOIN deploy_projects p ON p.id = c.project_id
-		 WHERE rc.release_uuid = $1
+		 WHERE rc.release_uuid = $1 AND rc.status = 'pending'
 		 ORDER BY c.slug`, plan.Release.ID)
 	if err != nil {
 		return plan, fmt.Errorf("load deployment components: %w", err)
