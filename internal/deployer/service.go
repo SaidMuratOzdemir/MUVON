@@ -64,6 +64,11 @@ func (s *Service) tick(ctx context.Context) error {
 	if err := s.reconcileOrphanContainers(ctx); err != nil {
 		slog.Warn("orphan container reconcile failed", "error", err)
 	}
+	if n, err := s.db.CleanupStaleWarmingInstances(ctx); err != nil {
+		slog.Warn("stale warming instance cleanup failed", "error", err)
+	} else if n > 0 {
+		slog.Info("cleaned up stale warming instances", "count", n)
+	}
 
 	deployment, ok, err := s.db.ClaimNextDeployment(ctx)
 	if err != nil {

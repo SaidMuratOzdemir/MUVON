@@ -775,6 +775,20 @@ func (d *DB) ResetStaleRunningDeployments(ctx context.Context, olderThan time.Du
 	return int(tag.RowsAffected()), nil
 }
 
+func (d *DB) CleanupStaleWarmingInstances(ctx context.Context) (int, error) {
+	tag, err := d.Pool.Exec(ctx,
+		`UPDATE deploy_instances
+		 SET state = 'unhealthy', health_status = 'deployment terminated'
+		 FROM deployments dep
+		 WHERE deploy_instances.state = 'warming'
+		   AND deploy_instances.release_uuid = dep.release_uuid
+		   AND dep.status IN ('failed', 'succeeded')`)
+	if err != nil {
+		return 0, fmt.Errorf("cleanup stale warming instances: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (d *DB) ListDeployInstancesByProject(ctx context.Context, projectID int) ([]DeployInstance, error) {
 	rows, err := d.Pool.Query(ctx,
 		`SELECT i.id::text, i.component_id, p.slug, c.slug, COALESCE(i.release_uuid::text, ''), COALESCE(r.release_id, ''),
