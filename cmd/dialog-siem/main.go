@@ -50,8 +50,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Database
-	database, err := db.New(ctx, *dsn, "dialog")
+	// Database — dialog is the primary schema for reads/writes, but config
+	// also pulls from the muvon schema (hosts, routes, deploy_*) so we add
+	// it to search_path rather than qualifying every config query.
+	database, err := db.New(ctx, *dsn, "dialog", "muvon")
 	if err != nil {
 		slog.Error("database connection failed", "error", err)
 		os.Exit(1)

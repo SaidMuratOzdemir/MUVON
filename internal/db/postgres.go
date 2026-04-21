@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,9 +16,15 @@ type DB struct {
 }
 
 // New creates a database connection pool.
-// schema sets the PostgreSQL search_path so each product uses its own namespace.
-// Pass "" for the default public schema (legacy/monolithic mode).
-func New(ctx context.Context, dsn string, schema string) (*DB, error) {
+//
+// The primary schema is always first in search_path, so writes land where
+// the caller expects. Additional schemas go after — dialog-siem uses this
+// to read the shared muvon config tables (hosts, routes, deploy_*) without
+// qualifying every query. public remains last so pg extensions live in
+// their canonical place.
+//
+// Passing "" as primary falls back to the default search_path (legacy).
+func New(ctx context.Context, dsn string, primary string, additional ...string) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("db: parse config: %w", err)
@@ -29,9 +36,18 @@ func New(ctx context.Context, dsn string, schema string) (*DB, error) {
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 30 * time.Second
 
-	// Set search_path so all queries use the product's schema by default
-	if schema != "" {
-		cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+	if primary != "" {
+		parts := append([]string{primary}, additional...)
+		parts = append(parts, "public")
+		seen := make(map[string]bool, len(parts))
+		uniq := parts[:0]
+		for _, p := range parts {
+			if p != "" && !seen[p] {
+				seen[p] = true
+				uniq = append(uniq, p)
+			}
+		}
+		cfg.ConnConfig.RuntimeParams["search_path"] = strings.Join(uniq, ",")
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -44,16 +60,26 @@ func New(ctx context.Context, dsn string, schema string) (*DB, error) {
 		return nil, fmt.Errorf("db: ping: %w", err)
 	}
 
-	// Create schema if it doesn't exist
-	if schema != "" {
-		if _, err := pool.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", schema)); err != nil {
+	// Create every schema we declared in search_path. We only own the
+	// primary one (writes), but it's harmless to ensure the extras are
+	// there too — they usually are, since some other binary created them,
+	// but a fresh install where services start in any order needs this.
+	for _, s := range append([]string{primary}, additional...) {
+		if s == "" {
+			continue
+		}
+		if _, err := pool.Exec(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s", s)); err != nil {
 			pool.Close()
-			return nil, fmt.Errorf("db: create schema %s: %w", schema, err)
+			return nil, fmt.Errorf("db: create schema %s: %w", s, err)
 		}
 	}
 
-	slog.Info("database connected", "host", cfg.ConnConfig.Host, "database", cfg.ConnConfig.Database, "schema", schema)
-	return &DB{Pool: pool, Schema: schema}, nil
+	slog.Info("database connected",
+		"host", cfg.ConnConfig.Host,
+		"database", cfg.ConnConfig.Database,
+		"schema", primary,
+		"search_path", cfg.ConnConfig.RuntimeParams["search_path"])
+	return &DB{Pool: pool, Schema: primary}, nil
 }
 
 func (d *DB) Close() {
