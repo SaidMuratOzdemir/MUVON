@@ -17,12 +17,19 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+	// `search` is the SPA's param name and also the most natural label.
+	// `q` stays as a fallback so anything hand-crafting URLs against the
+	// old name keeps working.
+	searchTerm := q.Get("search")
+	if searchTerm == "" {
+		searchTerm = q.Get("q")
+	}
 	req := &pb.SearchLogsRequest{
 		Host:     q.Get("host"),
 		Path:     q.Get("path"),
 		Method:   q.Get("method"),
 		ClientIp: q.Get("client_ip"),
-		Search:   q.Get("q"),
+		Search:   searchTerm,
 		User:     q.Get("user"),
 	}
 

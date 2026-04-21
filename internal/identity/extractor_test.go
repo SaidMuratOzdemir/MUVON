@@ -94,6 +94,37 @@ func TestExtractWrongSecretFallsBackToDecode(t *testing.T) {
 	}
 }
 
+// When the operator enables JWT identity but has not provisioned a secret
+// (or is fronting multiple apps with different secrets), we still want the
+// enricher to surface claims via the decode path — flagged as unverified.
+// Previously this returned nil, which silently hid the actor from every
+// downstream surface.
+func TestExtractEnabledWithoutSecretDecodes(t *testing.T) {
+	ex := &Extractor{}
+	tok := makeToken(t, "any-secret", jwt.MapClaims{
+		"sub":   "user-9",
+		"email": "nine@example.com",
+		"exp":   time.Now().Add(time.Hour).Unix(),
+	})
+	id := ex.ExtractFromBearer(tok, Config{
+		Enabled: true,
+		Secret:  "",
+		Claims:  []string{"sub", "email"},
+	})
+	if id == nil {
+		t.Fatal("expected decoded identity even without a secret")
+	}
+	if id.Verified {
+		t.Error("no-secret decode must set Verified=false")
+	}
+	if id.Source != "jwt_decode" {
+		t.Errorf("source = %q, want jwt_decode", id.Source)
+	}
+	if id.Claims["email"] != "nine@example.com" {
+		t.Errorf("claims not extracted: %+v", id.Claims)
+	}
+}
+
 func TestExtractDisabledReturnsNil(t *testing.T) {
 	ex := &Extractor{}
 	tok := makeToken(t, "s3cret", jwt.MapClaims{"sub": "u"})

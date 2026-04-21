@@ -373,7 +373,31 @@ export default function Dashboard() {
               </div>
             </CardContent>
           </Card>
-        ) : null}
+        ) : (
+          // No top_users means either the SIEM hasn't enriched any logs
+          // with JWT identity yet (setting disabled) or zero traffic.
+          // Prefer surfacing the actionable case — admins confuse silent
+          // empty panels with "nothing to see here" and miss the feature.
+          <Card className="border-dashed border-border bg-card">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-foreground">Top Users</CardTitle>
+            </CardHeader>
+            <CardContent className="pb-4 text-xs text-muted-foreground space-y-2">
+              <p>
+                JWT identity enrichment is off, so incoming requests are not
+                attributed to users. Once enabled, this panel lists the most
+                active users and each entry links to that user's full log
+                timeline.
+              </p>
+              <Link
+                to="/settings"
+                className="inline-flex items-center gap-1 text-primary hover:underline"
+              >
+                Enable in Settings →
+              </Link>
+            </CardContent>
+          </Card>
+        )}
 
         {stats?.top_countries?.length ? (
           <Card className="border-border bg-card">

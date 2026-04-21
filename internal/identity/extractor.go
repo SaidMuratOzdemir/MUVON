@@ -29,10 +29,18 @@ func (ex *Extractor) Extract(r *http.Request, cfg Config) *logger.UserIdentity {
 	return ex.ExtractFromBearer(r.Header.Get("Authorization"), cfg)
 }
 
-// ExtractFromBearer extracts JWT identity from a raw Authorization header value.
-// Used by the log pipeline to enrich entries centrally without an http.Request.
+// ExtractFromBearer extracts JWT identity from a raw Authorization header
+// value. Used by the log pipeline to enrich entries centrally without an
+// http.Request.
+//
+// When Enabled is true but Secret is empty we still enrich — decode-only,
+// with Verified=false. This lets the admin surface "who was this request?"
+// across multiple upstream apps that sign with different secrets (e.g. a
+// MUVON fronting both HRS and vize360, each with its own JWT secret). The
+// admin UI should make clear that decode-only claims are observational and
+// must not be trusted for authorization.
 func (ex *Extractor) ExtractFromBearer(authHeader string, cfg Config) *logger.UserIdentity {
-	if !cfg.Enabled || cfg.Secret == "" {
+	if !cfg.Enabled {
 		return nil
 	}
 
@@ -44,26 +52,27 @@ func (ex *Extractor) ExtractFromBearer(authHeader string, cfg Config) *logger.Us
 		return nil
 	}
 
-	// Check signature first, ignoring exp — we want to report signature and
-	// expiry as separate observations. An expired-but-signed token is a
-	// different class of event (likely a stale but legitimate client) from
-	// a forged token, and collapsing both into "verify failed → fall back
-	// to decode" hides that distinction.
-	claims, err := verifyHS256Signature(raw, cfg.Secret)
-	if err == nil {
-		expired := isExpired(claims)
-		if expired {
-			return buildIdentity(claims, cfg.Claims, false, "jwt_expired", true)
+	// With a configured secret, try to verify signature first so genuine
+	// tokens come back with Verified=true. Separate the signature check
+	// from claim validation so expired-but-signed tokens still surface
+	// their (stale) identity with ExpExpired=true.
+	if cfg.Secret != "" {
+		claims, err := verifyHS256Signature(raw, cfg.Secret)
+		if err == nil {
+			expired := isExpired(claims)
+			if expired {
+				return buildIdentity(claims, cfg.Claims, false, "jwt_expired", true)
+			}
+			return buildIdentity(claims, cfg.Claims, true, "jwt_verify", false)
 		}
-		return buildIdentity(claims, cfg.Claims, true, "jwt_verify", false)
+		slog.Debug("jwt verify failed, falling back to decode", "error", err)
 	}
 
-	slog.Debug("jwt verify failed, falling back to decode", "error", err)
-
-	// Fallback: decode without verification. The claims may be forged; we
-	// still capture them (for observability) and pass exp state through so
-	// the UI can distinguish "forged" from "forged AND expired".
-	claims, err = decodeUnverified(raw)
+	// Decode-only path — either no secret configured, or signature did not
+	// match the configured secret (different issuer, multi-tenant, etc.).
+	// Claims may be forged; we still capture them and tag Source so the UI
+	// can render "not verified" prominently.
+	claims, err := decodeUnverified(raw)
 	if err != nil {
 		slog.Debug("jwt decode failed", "error", err)
 		return nil

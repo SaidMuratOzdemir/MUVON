@@ -54,6 +54,17 @@ function getLogID(log: Pick<LogEntry, 'id' | 'request_id'> | null | undefined) {
   return log?.id || log?.request_id || ''
 }
 
+// hasAuthHeader scans request headers case-insensitively for Authorization.
+// The sanitizer masks the value but keeps the key, so this still works
+// even after the pipeline redacts the token.
+function hasAuthHeader(headers: Record<string, string> | undefined): boolean {
+  if (!headers) return false
+  for (const k of Object.keys(headers)) {
+    if (k.toLowerCase() === 'authorization') return true
+  }
+  return false
+}
+
 function hasFilters(f: Filters) {
   return (
     f.search !== '' || f.host !== '' || f.method !== '' || f.path !== '' ||
@@ -333,6 +344,21 @@ function LogDetailSheet({
                       <p className="text-xs font-mono text-destructive break-all">{entry.request_id}</p>
                     </div>
                   )}
+                </div>
+              </section>
+            )}
+
+            {/* JWT present in headers but enrichment disabled — nudge the
+                admin to the setting that surfaces identities. Without this
+                hint the admin stares at a masked Authorization header and
+                wonders why the list shows no user. */}
+            {!entry.user_identity && hasAuthHeader(entry.request_headers) && (
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Identity</h3>
+                <div className="rounded-md bg-amber-500/5 border border-amber-500/30 px-3 py-2 text-xs text-amber-300/90">
+                  This request carried a JWT, but identity enrichment is
+                  disabled so no claims are extracted.{' '}
+                  <a href="/settings" className="underline hover:text-amber-200">Enable in Settings →</a>
                 </div>
               </section>
             )}
