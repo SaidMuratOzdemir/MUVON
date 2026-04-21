@@ -88,18 +88,22 @@ export default function Login() {
                 <CardDescription>Sign in to your admin account</CardDescription>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleLogin} className="space-y-4">
+                <form onSubmit={handleLogin} className="space-y-4" noValidate>
                   <div className="space-y-2">
                     <Label htmlFor="login-username">Username</Label>
                     <div className="relative">
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                       <Input
                         id="login-username"
+                        name="username"
                         placeholder="admin"
                         className="pl-9 bg-background border-border"
                         value={loginForm.username}
                         onChange={e => setLoginForm(f => ({ ...f, username: e.target.value }))}
                         autoComplete="username"
+                        required
+                        minLength={1}
+                        aria-invalid={!loginForm.username && undefined}
                       />
                     </div>
                   </div>
@@ -109,17 +113,21 @@ export default function Login() {
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                       <Input
                         id="login-password"
+                        name="password"
                         type={showPw ? 'text' : 'password'}
                         placeholder="••••••••"
                         className="pl-9 pr-9 bg-background border-border"
                         value={loginForm.password}
                         onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))}
                         autoComplete="current-password"
+                        required
+                        minLength={1}
                       />
                       <button
                         type="button"
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
                         onClick={() => setShowPw(v => !v)}
+                        aria-label={showPw ? 'Hide password' : 'Show password'}
                       >
                         {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
@@ -141,17 +149,21 @@ export default function Login() {
                 <CardDescription>Create the first admin account (one-time only)</CardDescription>
               </CardHeader>
               <CardContent>
-                <form onSubmit={handleSetup} className="space-y-4">
+                <form onSubmit={handleSetup} className="space-y-4" noValidate>
                   <div className="space-y-2">
                     <Label htmlFor="setup-username">Username</Label>
                     <div className="relative">
                       <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                       <Input
                         id="setup-username"
+                        name="username"
                         placeholder="admin"
                         className="pl-9 bg-background border-border"
                         value={setupForm.username}
                         onChange={e => setSetupForm(f => ({ ...f, username: e.target.value }))}
+                        autoComplete="username"
+                        required
+                        minLength={3}
                       />
                     </div>
                   </div>
@@ -161,16 +173,21 @@ export default function Login() {
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                       <Input
                         id="setup-password"
+                        name="new-password"
                         type={showPw ? 'text' : 'password'}
                         placeholder="Min. 8 characters"
                         className="pl-9 pr-9 bg-background border-border"
                         value={setupForm.password}
                         onChange={e => setSetupForm(f => ({ ...f, password: e.target.value }))}
+                        autoComplete="new-password"
+                        required
+                        minLength={8}
                       />
                       <button
                         type="button"
                         className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
                         onClick={() => setShowPw(v => !v)}
+                        aria-label={showPw ? 'Hide password' : 'Show password'}
                       >
                         {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
@@ -182,11 +199,16 @@ export default function Login() {
                       <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                       <Input
                         id="setup-confirm"
+                        name="confirm-password"
                         type={showPw ? 'text' : 'password'}
                         placeholder="Repeat password"
                         className="pl-9 bg-background border-border"
                         value={setupForm.confirm}
                         onChange={e => setSetupForm(f => ({ ...f, confirm: e.target.value }))}
+                        autoComplete="new-password"
+                        required
+                        minLength={8}
+                        aria-invalid={setupForm.confirm.length > 0 && setupForm.confirm !== setupForm.password}
                       />
                     </div>
                   </div>

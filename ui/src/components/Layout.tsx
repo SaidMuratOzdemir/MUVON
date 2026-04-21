@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Server, FileText, Settings, Shield,
   LogOut, Menu, X, Activity, ChevronRight, ClipboardList,
   ShieldAlert, Network, ScrollText, Cpu, Route, Rocket,
+  Bell, ShieldOff,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -19,6 +20,7 @@ const mainNav = [
   { to: '/routes', label: 'Routes', icon: Route },
   { to: '/apps', label: 'Apps', icon: Rocket },
   { to: '/logs', label: 'SIEM / Logs', icon: FileText },
+  { to: '/alerts', label: 'Alerts', icon: Bell },
   { to: '/audit', label: 'Audit Log', icon: ClipboardList },
   { to: '/tls', label: 'TLS Certs', icon: Shield },
   { to: '/agents', label: 'Agents', icon: Cpu },
@@ -29,6 +31,7 @@ const wafNav = [
   { to: '/waf/rules', label: 'WAF Rules', icon: ShieldAlert },
   { to: '/waf/ips', label: 'IP Management', icon: Network },
   { to: '/waf/events', label: 'WAF Events', icon: ScrollText },
+  { to: '/waf/exclusions', label: 'Exclusions', icon: ShieldOff },
 ]
 
 export default function Layout() {

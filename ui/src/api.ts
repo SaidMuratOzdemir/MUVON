@@ -1,5 +1,7 @@
 import type {
   AdminUser,
+  Alert,
+  AlertStats,
   Host,
   Route,
   LogEntry,
@@ -621,6 +623,59 @@ export async function searchWafEvents(
 
 export async function getWafStats(): Promise<WafStats> {
   return request<WafStats>("GET", "/api/waf/stats");
+}
+
+// ---------------------------------------------------------------------------
+// Alerts (correlation engine output)
+// ---------------------------------------------------------------------------
+
+export interface AlertSearchParams {
+  rule?: string;
+  severity?: string;
+  host?: string;
+  source_ip?: string;
+  fingerprint?: string;
+  acknowledged?: boolean;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function searchAlerts(
+  params: AlertSearchParams = {},
+): Promise<PaginatedResponse<Alert>> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      qs.set(key, String(value));
+    }
+  }
+  const query = qs.toString();
+  return request<PaginatedResponse<Alert>>(
+    "GET",
+    `/api/alerts${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function getAlert(id: string): Promise<Alert> {
+  return request<Alert>("GET", `/api/alerts/${id}`);
+}
+
+export async function acknowledgeAlert(id: string): Promise<Alert> {
+  return request<Alert>("POST", `/api/alerts/${id}/acknowledge`);
+}
+
+export async function getAlertStats(): Promise<AlertStats> {
+  return request<AlertStats>("GET", "/api/alerts/stats");
+}
+
+export async function testSlackAlert(): Promise<{ status: string }> {
+  return request<{ status: string }>("POST", "/api/alerting/test/slack");
+}
+
+export async function testSMTPAlert(): Promise<{ status: string }> {
+  return request<{ status: string }>("POST", "/api/alerting/test/smtp");
 }
 
 // ---------------------------------------------------------------------------

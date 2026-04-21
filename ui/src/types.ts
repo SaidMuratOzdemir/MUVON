@@ -57,6 +57,14 @@ export interface Route {
   updated_at: string;
 }
 
+export interface UserIdentity {
+  claims?: Record<string, string>;
+  verified: boolean;
+  /** "jwt_verify" | "jwt_decode" | "jwt_expired" */
+  source: string;
+  exp_expired?: boolean;
+}
+
 export interface LogEntry {
   id: string;
   timestamp: string;
@@ -80,6 +88,35 @@ export interface LogEntry {
   note?: string;
   country?: string;
   city?: string;
+  user_identity?: UserIdentity;
+}
+
+export interface Alert {
+  id: string;
+  timestamp: string;
+  rule: string;
+  /** "info" | "warning" | "critical" */
+  severity: string;
+  title: string;
+  detail?: Record<string, unknown>;
+  source_ip?: string;
+  host?: string;
+  fingerprint: string;
+  notified: boolean;
+  notified_at?: string;
+  occurrences: number;
+  last_seen_at: string;
+  acknowledged: boolean;
+  acknowledged_at?: string;
+  acknowledged_by?: string;
+}
+
+export interface AlertStats {
+  total_open: number;
+  total_all: number;
+  by_rule: Record<string, number>;
+  by_severity: Record<string, number>;
+  last_alert_at?: string;
 }
 
 export interface AuditEntry {

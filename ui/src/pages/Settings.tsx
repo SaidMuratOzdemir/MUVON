@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Save, RefreshCw, Loader2, HardDrive, Clock, Shield,
   Activity, AlertTriangle, Check, KeyRound, Globe, Bell,
-  Mail,
+  Mail, Send, Radar, Lock, ShieldBan, AlertOctagon, FileKey, Download,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -23,7 +23,18 @@ interface SettingDef {
   unit?: string
 }
 
-const SETTING_GROUPS: { title: string; icon: React.ElementType; settings: SettingDef[] }[] = [
+interface SettingGroup {
+  title: string
+  icon: React.ElementType
+  description?: string
+  settings: SettingDef[]
+  // testAction adds a "Send Test" button to groups that configure outbound
+  // notifications (Slack / SMTP). The button fires the corresponding
+  // /api/alerting/test/* endpoint and toasts the result.
+  testAction?: 'slack' | 'smtp'
+}
+
+const SETTING_GROUPS: SettingGroup[] = [
   {
     title: 'Log Retention',
     icon: HardDrive,
@@ -195,8 +206,9 @@ const SETTING_GROUPS: { title: string; icon: React.ElementType; settings: Settin
     ],
   },
   {
-    title: 'Alerting',
+    title: 'Alerting (Slack)',
     icon: Bell,
+    testAction: 'slack',
     settings: [
       {
         key: 'alerting_enabled',
@@ -224,6 +236,7 @@ const SETTING_GROUPS: { title: string; icon: React.ElementType; settings: Settin
   {
     title: 'Email (SMTP)',
     icon: Mail,
+    testAction: 'smtp',
     settings: [
       {
         key: 'alerting_smtp_host',
@@ -269,7 +282,112 @@ const SETTING_GROUPS: { title: string; icon: React.ElementType; settings: Settin
       },
     ],
   },
+  // ── Threat Detection Rules ──────────────────────────────────────────────
+  // Seven correlation rules, each in its own card so thresholds, windows,
+  // and path lists stay next to the rule they describe. Defaults ship with
+  // the DB migration; these fields let ops tune per-app without a restart.
+  {
+    title: 'Path Scan Detection',
+    icon: Radar,
+    description: 'Alerts when a single IP hits N distinct 404 paths in the window — classic scanner behaviour.',
+    settings: [
+      { key: 'correlation_path_scan_distinct', label: 'Distinct Paths', description: 'How many different 404 URLs an IP must touch to trip the rule.', type: 'number', placeholder: '10' },
+      { key: 'correlation_path_scan_window_seconds', label: 'Window', description: 'Rolling window size for the counter.', type: 'number', placeholder: '120', unit: 'sec' },
+    ],
+  },
+  {
+    title: 'Auth Brute Force',
+    icon: Lock,
+    description: 'Counts auth failures per IP. 401/403 always count; 400 counts only on login endpoints (Django/simplejwt emit 400 on bad credentials).',
+    settings: [
+      { key: 'correlation_auth_brute_count', label: 'Failure Count', description: 'Failures needed to fire the alert.', type: 'number', placeholder: '5' },
+      { key: 'correlation_auth_brute_window_seconds', label: 'Window', description: 'Rolling window size.', type: 'number', placeholder: '120', unit: 'sec' },
+      { key: 'correlation_auth_paths', label: 'Login Paths', description: 'Comma-separated login endpoint paths (exact match, trailing-slash insensitive). 400 on any of these counts as an auth failure.', type: 'string', placeholder: '/api/auth/login,/api/authentication/login/' },
+    ],
+  },
+  {
+    title: 'WAF Repeat Offender',
+    icon: ShieldBan,
+    description: 'IPs that muWAF keeps blocking deserve the escalation path.',
+    settings: [
+      { key: 'correlation_waf_repeat_count', label: 'Block Count', description: 'WAF blocks needed from the same IP to fire.', type: 'number', placeholder: '3' },
+      { key: 'correlation_waf_repeat_window_seconds', label: 'Window', description: 'Rolling window size.', type: 'number', placeholder: '300', unit: 'sec' },
+    ],
+  },
+  {
+    title: '5xx Error Spike',
+    icon: AlertOctagon,
+    description: 'Per-host 5xx counter. Fires once, then falls under the alert cooldown so outages do not flood Slack.',
+    settings: [
+      { key: 'correlation_error_spike_count', label: '5xx Count', description: 'Server errors needed to fire.', type: 'number', placeholder: '10' },
+      { key: 'correlation_error_spike_window_seconds', label: 'Window', description: 'Rolling window size.', type: 'number', placeholder: '60', unit: 'sec' },
+    ],
+  },
+  {
+    title: 'Traffic Anomaly',
+    icon: Activity,
+    description: 'Per-host current-RPS vs baseline-RPS. Useful for detecting sudden traffic bursts on low-to-medium-traffic hosts.',
+    settings: [
+      { key: 'correlation_anomaly_enabled', label: 'Enable', description: 'Turn the anomaly rule on/off without losing its thresholds.', type: 'boolean' },
+      { key: 'correlation_anomaly_ratio', label: 'Ratio Threshold', description: 'Current RPS must exceed baseline RPS by this factor to fire.', type: 'string', placeholder: '3.0' },
+      { key: 'correlation_anomaly_baseline_seconds', label: 'Baseline Window', description: 'Length of the rolling baseline (the non-current portion is used for the average).', type: 'number', placeholder: '600', unit: 'sec' },
+      { key: 'correlation_anomaly_current_seconds', label: 'Current Window', description: 'Recent interval compared against the baseline.', type: 'number', placeholder: '60', unit: 'sec' },
+      { key: 'correlation_anomaly_min_baseline', label: 'Min Baseline Events', description: 'Hosts with fewer than this many baseline events are skipped so tiny hosts do not trip easily.', type: 'number', placeholder: '20' },
+    ],
+  },
+  {
+    title: 'Sensitive Access',
+    icon: FileKey,
+    description: 'Fires when too many requests land on configured high-value paths from the same IP. Leave paths empty to disable the rule.',
+    settings: [
+      { key: 'correlation_sensitive_paths', label: 'Paths', description: 'Comma-separated glob patterns (use * for a single segment). E.g. /api/applications/*/generate_pdf_report/', type: 'string', placeholder: '/api/applications/*/generate_pdf_report/' },
+      { key: 'correlation_sensitive_threshold', label: 'Threshold', description: 'Hits within the window to fire.', type: 'number', placeholder: '10' },
+      { key: 'correlation_sensitive_window_seconds', label: 'Window', description: 'Rolling window size.', type: 'number', placeholder: '300', unit: 'sec' },
+    ],
+  },
+  {
+    title: 'Data Export Burst',
+    icon: Download,
+    description: 'Per-user export/download volume. Keyed by JWT identity (sub/user_id/email), falling back to IP. Rotating IPs do not split an insider footprint.',
+    settings: [
+      { key: 'correlation_export_pattern', label: 'URL Pattern', description: 'Case-insensitive regex (Go syntax). Paths that match this pattern count toward the burst.', type: 'string', placeholder: '(?i)(download|export|report|\\.pdf|\\.xlsx|\\.csv)' },
+      { key: 'correlation_export_threshold', label: 'Threshold', description: 'Matching requests within the window to fire.', type: 'number', placeholder: '5' },
+      { key: 'correlation_export_window_seconds', label: 'Window', description: 'Rolling window size.', type: 'number', placeholder: '300', unit: 'sec' },
+    ],
+  },
 ]
+
+function TestChannelButton({ channel, disabled }: { channel: 'slack' | 'smtp'; disabled: boolean }) {
+  const [sending, setSending] = useState(false)
+  async function runTest() {
+    setSending(true)
+    try {
+      if (channel === 'slack') await api.testSlackAlert()
+      else await api.testSMTPAlert()
+      toast.success(`${channel} test sent successfully`)
+    } catch (err) {
+      // Show the backend message verbatim — Slack/SMTP errors (bad URL,
+      // auth failure, unreachable host) are actionable and should not be
+      // generic-toasted.
+      toast.error(err instanceof api.ApiError ? err.message : `${channel} test failed`)
+    } finally {
+      setSending(false)
+    }
+  }
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={disabled || sending}
+      onClick={runTest}
+      className="cursor-pointer"
+      title={disabled ? 'Save pending changes before testing' : 'Send a test alert via this channel'}
+    >
+      {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" /> : <Send className="h-3.5 w-3.5 mr-2" />}
+      Send Test
+    </Button>
+  )
+}
 
 function SettingRow({
   def, value, saved, onChange, onSave, saving,
@@ -448,10 +566,21 @@ export default function Settings() {
         <div className="space-y-6">
           {SETTING_GROUPS.map(group => (
             <div key={group.title} className="rounded-lg border border-border bg-card overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-3 bg-muted/20 border-b border-border">
-                <group.icon className="h-4 w-4 text-primary" />
-                <span className="text-sm font-semibold text-foreground">{group.title}</span>
+              <div className="flex items-center justify-between gap-2 px-4 py-3 bg-muted/20 border-b border-border">
+                <div className="flex items-center gap-2 min-w-0">
+                  <group.icon className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-sm font-semibold text-foreground truncate">{group.title}</span>
+                </div>
+                {group.testAction && (
+                  <TestChannelButton
+                    channel={group.testAction}
+                    disabled={allDirtyKeys.some(s => s.key.startsWith(group.testAction === 'slack' ? 'alerting_slack' : 'alerting_smtp'))}
+                  />
+                )}
               </div>
+              {group.description && (
+                <p className="px-4 pt-3 text-xs text-muted-foreground">{group.description}</p>
+              )}
               <div className="px-4 divide-y divide-border">
                 {group.settings.map((def) => (
                   <SettingRow

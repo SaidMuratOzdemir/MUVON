@@ -1173,6 +1173,20 @@ CREATE INDEX IF NOT EXISTS        idx_admin_refresh_tokens_user    ON admin_refr
 CREATE INDEX IF NOT EXISTS        idx_admin_refresh_tokens_family  ON admin_refresh_tokens (family_id);
 CREATE INDEX IF NOT EXISTS        idx_admin_refresh_tokens_expires ON admin_refresh_tokens (expires_at);`,
 	},
+	// ── Alerts: acknowledgement metadata ──
+	// An admin clicking "Acknowledge" on an alert row stops it from showing
+	// up in the default "needs attention" view. The fingerprint cooldown
+	// already suppresses notifications; ack is a workflow signal ("we're
+	// aware, it's being handled"), not a dedup mechanism.
+	{
+		name: "add_alerts_acknowledged_columns", product: "dialog",
+		sql: `
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS acknowledged    BOOLEAN     NOT NULL DEFAULT false;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS acknowledged_by TEXT;
+CREATE INDEX IF NOT EXISTS idx_alerts_ack_timestamp
+    ON alerts (acknowledged, timestamp DESC);`,
+	},
 	// ── Alerts: grouping + DB-backed cooldown ──
 	// occurrences: how many times the same fingerprint has fired inside the
 	//              most recent cooldown window (≥1, starts at 1 on insert).

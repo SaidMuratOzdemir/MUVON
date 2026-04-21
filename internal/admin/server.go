@@ -165,6 +165,16 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	api.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
 
+	// Alerts (correlation engine output)
+	api.HandleFunc("GET /api/alerts", s.handleListAlerts)
+	api.HandleFunc("GET /api/alerts/stats", s.handleAlertStats)
+	api.HandleFunc("GET /api/alerts/{id}", s.handleGetAlert)
+	api.HandleFunc("POST /api/alerts/{id}/acknowledge", s.handleAckAlert)
+
+	// Alerting channel tests (sends a synthetic alert via the real notifier)
+	api.HandleFunc("POST /api/alerting/test/slack", s.handleTestSlackAlert)
+	api.HandleFunc("POST /api/alerting/test/smtp", s.handleTestSMTPAlert)
+
 	// Managed application deploys
 	api.HandleFunc("GET /api/deploy/projects", s.handleListDeployProjects)
 	api.HandleFunc("GET /api/deploy/projects/{slug}/secret", s.handleGetDeployProjectSecret)

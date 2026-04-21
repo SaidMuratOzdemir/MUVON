@@ -11,9 +11,11 @@ import AuditLog from './pages/AuditLog'
 import WafRules from './pages/WafRules'
 import WafIPs from './pages/WafIPs'
 import WafEvents from './pages/WafEvents'
+import WafExclusions from './pages/WafExclusions'
 import Agents from './pages/Agents'
 import RoutesPage from './pages/Routes'
 import Apps from './pages/Apps'
+import Alerts from './pages/Alerts'
 import { AuthProvider } from './context/AuthContext'
 import { useAuth } from './context/useAuth'
 
@@ -63,6 +65,8 @@ export default function App() {
             <Route path="waf/rules" element={<WafRules />} />
             <Route path="waf/ips" element={<WafIPs />} />
             <Route path="waf/events" element={<WafEvents />} />
+            <Route path="waf/exclusions" element={<WafExclusions />} />
+            <Route path="alerts" element={<Alerts />} />
             <Route path="agents" element={<Agents />} />
             <Route path="apps" element={<Apps />} />
           </Route>

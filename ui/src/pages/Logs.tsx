@@ -261,7 +261,7 @@ function LogDetailSheet({
             {/* Overview */}
             <section className="space-y-2">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Overview</h3>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {[
                   ['Host', entry.host],
                   ['Response Time', entry.response_time_ms != null ? `${entry.response_time_ms}ms` : '—'],
@@ -333,6 +333,65 @@ function LogDetailSheet({
               </section>
             )}
 
+            {/* JWT Identity */}
+            {entry.user_identity && (
+              <section className="space-y-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                  <Shield className="h-3.5 w-3.5" /> Identity
+                </h3>
+                <div className={cn(
+                  'rounded-md px-3 py-2 space-y-2 border',
+                  entry.user_identity.verified
+                    ? 'bg-emerald-500/5 border-emerald-500/30'
+                    : entry.user_identity.exp_expired
+                      ? 'bg-amber-500/5 border-amber-500/30'
+                      : 'bg-background border-border',
+                )}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        'text-[10px]',
+                        entry.user_identity.verified
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                          : 'bg-muted text-muted-foreground',
+                      )}
+                    >
+                      {entry.user_identity.verified ? 'Verified' : 'Unverified'}
+                    </Badge>
+                    <Badge variant="outline" className="text-[10px] font-mono">
+                      {entry.user_identity.source}
+                    </Badge>
+                    {entry.user_identity.exp_expired && (
+                      <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/30">
+                        exp expired
+                      </Badge>
+                    )}
+                  </div>
+                  {!entry.user_identity.verified && !entry.user_identity.exp_expired && (
+                    <p className="text-[11px] text-muted-foreground italic">
+                      Signature did not verify. Claims shown below for observation only — do not use for authorization.
+                    </p>
+                  )}
+                  {entry.user_identity.exp_expired && (
+                    <p className="text-[11px] text-amber-400/80 italic">
+                      Signature was valid, but the token's exp has passed. Treat as expired, not forged.
+                    </p>
+                  )}
+                  {entry.user_identity.claims && Object.keys(entry.user_identity.claims).length > 0 && (
+                    <div className="space-y-1">
+                      {Object.entries(entry.user_identity.claims).map(([k, v]) => (
+                        <div key={k} className="flex items-start gap-2 text-xs">
+                          <span className="text-muted-foreground font-mono shrink-0 min-w-[80px]">{k}</span>
+                          <span className="text-foreground font-mono break-all">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
             {/* Request ID (non-WAF) */}
             {entry.request_id && !entry.waf_blocked && (
               <section className="space-y-2">
@@ -369,8 +428,8 @@ function LogDetailSheet({
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Request Headers</h3>
                 <div className="rounded-md bg-background border border-border divide-y divide-border">
                   {Object.entries(entry.request_headers).map(([k, v]) => (
-                    <div key={k} className="flex gap-3 px-3 py-1.5">
-                      <span className="text-xs font-mono text-muted-foreground w-36 shrink-0 truncate">{k}</span>
+                    <div key={k} className="flex flex-col sm:flex-row sm:gap-3 px-3 py-1.5">
+                      <span className="text-xs font-mono text-muted-foreground sm:w-36 sm:shrink-0 sm:truncate">{k}</span>
                       <span className="text-xs font-mono text-foreground break-all">{v}</span>
                     </div>
                   ))}
@@ -384,8 +443,8 @@ function LogDetailSheet({
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Response Headers</h3>
                 <div className="rounded-md bg-background border border-border divide-y divide-border">
                   {Object.entries(entry.response_headers).map(([k, v]) => (
-                    <div key={k} className="flex gap-3 px-3 py-1.5">
-                      <span className="text-xs font-mono text-muted-foreground w-36 shrink-0 truncate">{k}</span>
+                    <div key={k} className="flex flex-col sm:flex-row sm:gap-3 px-3 py-1.5">
+                      <span className="text-xs font-mono text-muted-foreground sm:w-36 sm:shrink-0 sm:truncate">{k}</span>
                       <span className="text-xs font-mono text-foreground break-all">{v}</span>
                     </div>
                   ))}
