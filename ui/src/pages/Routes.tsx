@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Network, Plus, Pencil, Trash2, RefreshCw, Search,
 } from 'lucide-react'
@@ -14,6 +15,10 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import * as api from '@/api'
 import type { Host, Route } from '@/types'
@@ -24,15 +29,19 @@ interface RouteWithHost extends Route {
 }
 
 export default function Routes() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [hosts, setHosts] = useState<Host[]>([])
   const [routes, setRoutes] = useState<RouteWithHost[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [hostFilter, setHostFilter] = useState('all')
+  const [hostFilter, setHostFilter] = useState(searchParams.get('host') ?? 'all')
   const [routeDialog, setRouteDialog] = useState<{ open: boolean; route: Route | null; hostId: number }>({
     open: false, route: null, hostId: 0,
   })
   const [deleteTarget, setDeleteTarget] = useState<RouteWithHost | null>(null)
+  // Host picker: shown when user clicks Add Route while "All hosts" is selected
+  const [hostPickerOpen, setHostPickerOpen] = useState(false)
+  const [hostPickerValue, setHostPickerValue] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -52,6 +61,17 @@ export default function Routes() {
 
   useEffect(() => { load() }, [load])
 
+  // Sync hostFilter ↔ URL search param
+  useEffect(() => {
+    if (hostFilter === 'all') {
+      searchParams.delete('host')
+    } else {
+      searchParams.set('host', hostFilter)
+    }
+    setSearchParams(searchParams, { replace: true })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostFilter])
+
   async function handleDelete() {
     if (!deleteTarget) return
     try {
@@ -63,6 +83,26 @@ export default function Routes() {
     } finally {
       setDeleteTarget(null)
     }
+  }
+
+  function openAddRoute() {
+    if (hostFilter !== 'all') {
+      const host = hosts.find(h => h.domain === hostFilter)
+      if (host) {
+        setRouteDialog({ open: true, route: null, hostId: host.id })
+        return
+      }
+    }
+    // No host filter active — show picker
+    setHostPickerValue(hosts[0]?.domain ?? '')
+    setHostPickerOpen(true)
+  }
+
+  function confirmHostPicker() {
+    const host = hosts.find(h => h.domain === hostPickerValue)
+    if (!host) return
+    setHostPickerOpen(false)
+    setRouteDialog({ open: true, route: null, hostId: host.id })
   }
 
   const filtered = routes.filter(r => {
@@ -85,11 +125,19 @@ export default function Routes() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-foreground tracking-tight">Routes</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{routes.length} route{routes.length !== 1 ? 's' : ''} across {hosts.length} host{hosts.length !== 1 ? 's' : ''}</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {routes.length} route{routes.length !== 1 ? 's' : ''} across {hosts.length} host{hosts.length !== 1 ? 's' : ''}
+          </p>
         </div>
-        <Button variant="outline" size="icon" onClick={load} className="h-9 w-9 cursor-pointer border-border">
-          <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" onClick={load} className="h-9 w-9 cursor-pointer border-border">
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+          </Button>
+          <Button onClick={openAddRoute} className="gap-2 cursor-pointer" disabled={hosts.length === 0}>
+            <Plus className="h-4 w-4" />
+            Add Route
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -127,6 +175,17 @@ export default function Routes() {
           <p className="text-muted-foreground">
             {search || hostFilter !== 'all' ? 'No routes match your filters' : 'No routes configured yet'}
           </p>
+          {!search && (
+            <Button
+              onClick={openAddRoute}
+              variant="outline"
+              className="mt-4 gap-2 cursor-pointer"
+              disabled={hosts.length === 0}
+            >
+              <Plus className="h-4 w-4" />
+              {hosts.length === 0 ? 'Add a host first' : 'Add first route'}
+            </Button>
+          )}
         </div>
       ) : (
         <div className="rounded-lg border border-border overflow-hidden">
@@ -152,8 +211,10 @@ export default function Routes() {
                 <span className="text-xs font-mono text-muted-foreground truncate max-w-[140px]">{route.hostDomain}</span>
                 <Badge variant={routeTypeBadge(route.route_type)} className="text-xs">{route.route_type}</Badge>
                 <span className="text-xs text-muted-foreground font-mono hidden md:block truncate max-w-[180px]">
-                  {route.backend_url ?? (route.static_root ?? route.redirect_url ?? '—')}
-                  {(route.backend_urls?.length ?? 0) > 0 && (
+                  {route.managed_component_id
+                    ? <span className="text-primary">component:{route.managed_component_id}</span>
+                    : (route.backend_url ?? (route.static_root ?? route.redirect_url ?? '—'))}
+                  {!route.managed_component_id && (route.backend_urls?.length ?? 0) > 0 && (
                     <span className="text-primary ml-1">+{route.backend_urls!.length}</span>
                   )}
                 </span>
@@ -190,21 +251,29 @@ export default function Routes() {
         </div>
       )}
 
-      {/* Add route button — only when a host filter is active */}
-      {hostFilter !== 'all' && (() => {
-        const host = hosts.find(h => h.domain === hostFilter)
-        if (!host) return null
-        return (
-          <Button
-            onClick={() => setRouteDialog({ open: true, route: null, hostId: host.id })}
-            variant="outline"
-            className="gap-2 cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />
-            Add Route to {host.domain}
-          </Button>
-        )
-      })()}
+      {/* Host picker dialog — shown when Add Route clicked with no host filter */}
+      <Dialog open={hostPickerOpen} onOpenChange={v => !v && setHostPickerOpen(false)}>
+        <DialogContent className="bg-card border-border max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Select Host</DialogTitle>
+            <DialogDescription>Choose which host this route belongs to</DialogDescription>
+          </DialogHeader>
+          <Select value={hostPickerValue} onValueChange={setHostPickerValue}>
+            <SelectTrigger className="bg-background border-border cursor-pointer">
+              <SelectValue placeholder="Select a host" />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border">
+              {hosts.map(h => (
+                <SelectItem key={h.id} value={h.domain} className="cursor-pointer font-mono text-sm">{h.domain}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHostPickerOpen(false)} className="cursor-pointer border-border">Cancel</Button>
+            <Button onClick={confirmHostPicker} disabled={!hostPickerValue} className="cursor-pointer">Continue</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <RouteDialog
         open={routeDialog.open}

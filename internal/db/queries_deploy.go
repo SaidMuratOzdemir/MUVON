@@ -506,6 +506,25 @@ func (d *DB) AddDeploymentEvent(ctx context.Context, deploymentID, eventType, me
 	return nil
 }
 
+func (d *DB) GetDeployment(ctx context.Context, id string) (Deployment, error) {
+	var dep Deployment
+	err := d.Pool.QueryRow(ctx,
+		`SELECT d.id::text, d.project_id, p.slug, d.release_uuid::text, d.release_id,
+		        r.repo, r.branch, r.commit_sha, d.trigger, d.status, d.payload, d.error,
+		        d.started_at, d.finished_at, d.created_at, d.updated_at
+		 FROM deployments d
+		 JOIN deploy_projects p ON p.id = d.project_id
+		 JOIN deploy_releases r ON r.id = d.release_uuid
+		 WHERE d.id = $1`, id).Scan(
+		&dep.ID, &dep.ProjectID, &dep.ProjectSlug, &dep.ReleaseUUID, &dep.ReleaseID,
+		&dep.Repo, &dep.Branch, &dep.CommitSHA, &dep.Trigger, &dep.Status, &dep.Payload, &dep.Error,
+		&dep.StartedAt, &dep.FinishedAt, &dep.CreatedAt, &dep.UpdatedAt)
+	if err != nil {
+		return dep, fmt.Errorf("get deployment: %w", err)
+	}
+	return dep, nil
+}
+
 func (d *DB) ListDeployments(ctx context.Context, limit int) ([]Deployment, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50

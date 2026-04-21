@@ -3,10 +3,24 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"muvon/internal/db"
 )
+
+// validDomain kabul edilen hostname/domain formatını doğrular (RFC 1123).
+// Wildcard alan adlarına (*.) izin verilir.
+var validDomain = regexp.MustCompile(`^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$|^localhost$`)
+
+func domainError(err error) string {
+	s := err.Error()
+	if strings.Contains(s, "duplicate") || strings.Contains(s, "unique") {
+		return "A host with this domain already exists"
+	}
+	return "Failed to save host"
+}
 
 func (s *Server) handleListHosts(w http.ResponseWriter, r *http.Request) {
 	hosts, err := s.db.ListHosts(r.Context())
@@ -31,8 +45,13 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
+	req.Domain = strings.ToLower(strings.TrimSpace(req.Domain))
 	if req.Domain == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "domain is required"})
+		return
+	}
+	if !validDomain.MatchString(req.Domain) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid domain format (e.g. example.com)"})
 		return
 	}
 	isActive := true
@@ -50,7 +69,7 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 
 	host, err := s.db.CreateHost(r.Context(), req.Domain, isActive, forceHTTPS, trustedProxies)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": domainError(err)})
 		return
 	}
 
@@ -103,6 +122,11 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 
 	domain := existing.Domain
 	if req.Domain != "" {
+		req.Domain = strings.ToLower(strings.TrimSpace(req.Domain))
+		if !validDomain.MatchString(req.Domain) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid domain format (e.g. example.com)"})
+			return
+		}
 		domain = req.Domain
 	}
 	isActive := existing.IsActive
@@ -120,7 +144,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 
 	host, err := s.db.UpdateHost(r.Context(), id, domain, isActive, forceHTTPS, trustedProxies)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": domainError(err)})
 		return
 	}
 

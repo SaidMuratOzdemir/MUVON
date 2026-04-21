@@ -154,9 +154,11 @@ func (s *Server) Handler() http.Handler {
 
 	// Managed application deploys
 	api.HandleFunc("GET /api/deploy/projects", s.handleListDeployProjects)
+	api.HandleFunc("GET /api/deploy/projects/{slug}/secret", s.handleGetDeployProjectSecret)
 	api.HandleFunc("PUT /api/deploy/projects/{slug}", s.handleUpdateDeployProject)
 	api.HandleFunc("GET /api/deploy/deployments", s.handleListDeployments)
 	api.HandleFunc("GET /api/deploy/deployments/{id}/events", s.handleListDeploymentEvents)
+	api.HandleFunc("POST /api/deploy/deployments/{id}/rerun", s.handleRerunDeployment)
 	api.HandleFunc("POST /api/deploy/projects/{slug}/deploy", s.handleManualDeploy)
 
 	mux.Handle("/api/", s.authMiddleware(api))

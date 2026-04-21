@@ -288,7 +288,7 @@ SELECT add_compression_policy('http_log_bodies', INTERVAL '7 days', if_not_exist
 	},
 	// ── muWAF (WAF Engine) Tables ──
 	{
-		name: "create_waf_rules", product: "muwaf",
+		name: "create_waf_rules", product: "muvon",
 		sql: `
 CREATE TABLE IF NOT EXISTS waf_rules (
     id          SERIAL PRIMARY KEY,
@@ -308,7 +308,7 @@ CREATE TABLE IF NOT EXISTS waf_rules (
 CREATE INDEX IF NOT EXISTS idx_waf_rules_category ON waf_rules (category) WHERE is_active;`,
 	},
 	{
-		name: "create_waf_ip_state", product: "muwaf",
+		name: "create_waf_ip_state", product: "muvon",
 		sql: `
 CREATE TABLE IF NOT EXISTS waf_ip_state (
     ip               TEXT PRIMARY KEY,
@@ -322,7 +322,7 @@ CREATE TABLE IF NOT EXISTS waf_ip_state (
 );`,
 	},
 	{
-		name: "create_waf_events_hypertable", product: "muwaf",
+		name: "create_waf_events_hypertable", product: "muvon",
 		sql: `
 CREATE TABLE IF NOT EXISTS waf_events (
     id              UUID DEFAULT gen_uuidv7() NOT NULL,
@@ -351,7 +351,7 @@ ALTER TABLE waf_events SET (
 SELECT add_compression_policy('waf_events', INTERVAL '7 days', if_not_exists => true);`,
 	},
 	{
-		name: "create_waf_exclusions", product: "muwaf",
+		name: "create_waf_exclusions", product: "muvon",
 		sql: `
 CREATE TABLE IF NOT EXISTS waf_exclusions (
     id          SERIAL PRIMARY KEY,
@@ -365,7 +365,7 @@ CREATE TABLE IF NOT EXISTS waf_exclusions (
 CREATE INDEX IF NOT EXISTS idx_waf_exclusions_route ON waf_exclusions (route_id);`,
 	},
 	{
-		name: "create_waf_vt_cache", product: "muwaf",
+		name: "create_waf_vt_cache", product: "muvon",
 		sql: `
 CREATE TABLE IF NOT EXISTS waf_vt_cache (
     ip              TEXT PRIMARY KEY,
@@ -741,7 +741,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_api_key ON agents (api_key) WHERE is_activ
 	},
 	// ── Default WAF Rules ──
 	{
-		name: "seed_default_waf_rules", product: "muwaf",
+		name: "seed_default_waf_rules", product: "muvon",
 		sql: `
 -- =============================================
 -- Default WAF Rules — Seed Data

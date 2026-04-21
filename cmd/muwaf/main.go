@@ -36,7 +36,7 @@ func main() {
 	defer cancel()
 
 	// Database
-	database, err := db.New(ctx, *dsn, "muwaf")
+	database, err := db.New(ctx, *dsn, "muvon")
 	if err != nil {
 		slog.Error("database connection failed", "error", err)
 		os.Exit(1)

@@ -85,3 +85,21 @@ ui-build:
 	else \
 		echo "UI directory not found, skipping UI build"; \
 	fi
+
+# ── Deploy to VPS ───────────────────────────────────────────
+
+deploy: build-linux
+	@echo "Deploying muvon to VPS..."
+	@scp build/muvon-linux-amd64 vps:/opt/muvon/muvon
+	@ssh vps "docker cp /opt/muvon/muvon muvon-muvon-1:/usr/local/bin/app && cd /opt/muvon && docker compose restart muvon"
+	@echo "Done."
+
+deploy-all: build-linux
+	@echo "Deploying all services to VPS..."
+	@scp build/muvon-linux-amd64 vps:/opt/muvon/muvon
+	@scp build/muwaf-linux-amd64 vps:/opt/muvon/muwaf
+	@ssh vps " \
+		docker cp /opt/muvon/muvon muvon-muvon-1:/usr/local/bin/app && \
+		docker cp /opt/muvon/muwaf muvon-muwaf-1:/usr/local/bin/app && \
+		cd /opt/muvon && docker compose restart muwaf muvon"
+	@echo "Done."

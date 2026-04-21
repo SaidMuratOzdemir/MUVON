@@ -3,10 +3,25 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"muvon/internal/db"
 )
+
+var rewritePatternValid = regexp.MustCompile(`^$|^[^\x00-\x1f]*$`)
+
+func routeError(err error) string {
+	s := err.Error()
+	if strings.Contains(s, "duplicate") || strings.Contains(s, "unique") {
+		return "A route with this path prefix already exists on this host"
+	}
+	if strings.Contains(s, "foreign key") || strings.Contains(s, "violates") {
+		return "Referenced host or component does not exist"
+	}
+	return "Failed to save route"
+}
 
 func (s *Server) handleListRoutes(w http.ResponseWriter, r *http.Request) {
 	hostID, err := strconv.Atoi(r.PathValue("id"))
@@ -48,15 +63,32 @@ func (s *Server) handleCreateRoute(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "backend_url, backend_urls, or managed_component_id is required for proxy routes"})
 		return
 	}
+	if req.RouteType == "static" && (req.StaticRoot == nil || *req.StaticRoot == "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "static_root is required for static routes"})
+		return
+	}
+	if req.RouteType == "redirect" && (req.RedirectURL == nil || *req.RedirectURL == "") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "redirect_url is required for redirect routes"})
+		return
+	}
 	if req.PathPrefix == "" {
 		req.PathPrefix = "/"
 	}
+	if !strings.HasPrefix(req.PathPrefix, "/") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path prefix must start with /"})
+		return
+	}
+	if req.RewritePattern != nil && *req.RewritePattern != "" {
+		if _, err := regexp.Compile(*req.RewritePattern); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rewrite_pattern is not a valid regular expression: " + err.Error()})
+			return
+		}
+	}
 	req.IsActive = true
-	// log_enabled: UI her zaman gönderir; JSON decode doğrudan req.LogEnabled'ı doldurur.
 
 	route, err := s.db.CreateRoute(r.Context(), req)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": routeError(err)})
 		return
 	}
 
@@ -110,13 +142,23 @@ func (s *Server) handleUpdateRoute(w http.ResponseWriter, r *http.Request) {
 	if req.PathPrefix == "" {
 		req.PathPrefix = existing.PathPrefix
 	}
+	if !strings.HasPrefix(req.PathPrefix, "/") {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "path prefix must start with /"})
+		return
+	}
 	if req.RouteType == "" {
 		req.RouteType = existing.RouteType
+	}
+	if req.RewritePattern != nil && *req.RewritePattern != "" {
+		if _, err := regexp.Compile(*req.RewritePattern); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rewrite_pattern is not a valid regular expression: " + err.Error()})
+			return
+		}
 	}
 
 	route, err := s.db.UpdateRoute(r.Context(), req)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": routeError(err)})
 		return
 	}
 

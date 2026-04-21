@@ -1,7 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Globe, Plus, Pencil, Trash2, ChevronDown, ChevronRight,
   ArrowUpRight, RefreshCw, Loader2, Network, ToggleLeft, ToggleRight,
+  ExternalLink,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -44,12 +46,13 @@ function HealthDot({ state }: { state?: string }) {
 // ─── Host Row ───────────────────────────────────────────────────────────────────
 
 function HostRow({
-  host, onEdit, onDelete, onToggle,
+  host, onEdit, onDelete, onToggle, onViewRoutes,
 }: {
   host: Host
   onEdit: () => void
   onDelete: () => void
   onToggle: () => void
+  onViewRoutes: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const [routes, setRoutes] = useState<Route[]>([])
@@ -149,6 +152,13 @@ function HostRow({
                 : <ToggleLeft className="h-5 w-5" />
               }
             </button>
+            <Button
+              variant="ghost" size="icon" className="h-8 w-8 cursor-pointer hover:text-primary"
+              onClick={onViewRoutes}
+              title="View all routes for this host"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 cursor-pointer hover:text-primary" onClick={onEdit}>
               <Pencil className="h-3.5 w-3.5" />
             </Button>
@@ -267,6 +277,7 @@ function HostRow({
 // ─── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function Hosts() {
+  const navigate = useNavigate()
   const [hosts, setHosts] = useState<Host[]>([])
   const [loading, setLoading] = useState(true)
   const [hostDialog, setHostDialog] = useState<{ open: boolean; host: Host | null }>({ open: false, host: null })
@@ -396,6 +407,7 @@ export default function Hosts() {
               onEdit={() => openEditHost(h)}
               onDelete={() => setDeleteTarget(h)}
               onToggle={() => handleToggleHost(h)}
+              onViewRoutes={() => navigate(`/routes?host=${encodeURIComponent(h.domain)}`)}
             />
           ))}
         </div>

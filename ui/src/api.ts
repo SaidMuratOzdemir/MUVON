@@ -367,6 +367,14 @@ export async function listDeploymentEvents(id: string): Promise<DeploymentEvent[
   return request<DeploymentEvent[]>("GET", `/api/deploy/deployments/${id}/events`);
 }
 
+export async function rerunDeployment(id: string): Promise<{ deployment: Deployment; idempotent: boolean }> {
+  return request<{ deployment: Deployment; idempotent: boolean }>("POST", `/api/deploy/deployments/${id}/rerun`);
+}
+
+export async function getDeployProjectSecret(slug: string): Promise<{ secret: string }> {
+  return request<{ secret: string }>("GET", `/api/deploy/projects/${slug}/secret`);
+}
+
 export async function manualDeploy(
   projectSlug: string,
   data: {

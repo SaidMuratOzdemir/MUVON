@@ -175,6 +175,39 @@ func (s *Server) handleManualDeploy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"deployment": deployment, "idempotent": idempotent})
 }
 
+func (s *Server) handleGetDeployProjectSecret(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	project, err := s.db.GetDeployProjectBySlug(r.Context(), slug)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "project not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"secret": project.WebhookSecret})
+}
+
+func (s *Server) handleRerunDeployment(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	dep, err := s.db.GetDeployment(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "deployment not found"})
+		return
+	}
+	req, err := parseDeployRequest(dep.Payload)
+	if err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": "original payload is malformed: " + err.Error()})
+		return
+	}
+	req.Project = dep.ProjectSlug
+	normalized, _ := json.Marshal(req)
+	deployment, idempotent, err := s.enqueueDeployRequest(r, req, normalized, "manual")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	s.auditLog(r, "deployment.rerun", "deployment", deployment.ID, map[string]any{"original_id": id, "project": req.Project, "release_id": req.ReleaseID, "idempotent": idempotent})
+	writeJSON(w, http.StatusAccepted, map[string]any{"deployment": deployment, "idempotent": idempotent})
+}
+
 func parseDeployRequest(raw []byte) (deployRequest, error) {
 	var req deployRequest
 	if err := json.Unmarshal(raw, &req); err != nil {
