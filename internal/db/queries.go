@@ -613,6 +613,10 @@ type LogEntry struct {
 	Note            *string         `json:"note,omitempty"`
 	Country         *string         `json:"country,omitempty"`
 	City            *string         `json:"city,omitempty"`
+	// JSONB column populated by the log pipeline's identity enricher.
+	// Kept as RawMessage so the admin panel receives the exact shape the
+	// enricher produced (claims, verified, source, exp_expired).
+	UserIdentity    json.RawMessage `json:"user_identity,omitempty"`
 }
 
 type LogBody struct {
@@ -708,7 +712,7 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		`SELECT l.id::text, l.timestamp, l.host, l.client_ip, l.method, l.path, l.query_string,
 		        l.request_headers, l.response_status, l.response_headers, l.response_time_ms,
 		        l.request_size, l.response_size, l.user_agent, l.error, l.waf_blocked, l.waf_block_reason,
-		        l.is_starred, n.note, l.country, l.city
+		        l.is_starred, n.note, l.country, l.city, l.user_identity
 		 FROM http_logs l
 		 LEFT JOIN log_notes n ON n.log_id = l.id
 		 %s ORDER BY l.timestamp DESC LIMIT $%d OFFSET $%d`,
@@ -727,7 +731,8 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		if err := rows.Scan(&e.ID, &e.Timestamp, &e.Host, &e.ClientIP, &e.Method, &e.Path,
 			&e.QueryString, &e.RequestHeaders, &e.ResponseStatus, &e.ResponseHeaders,
 			&e.ResponseTimeMs, &e.RequestSize, &e.ResponseSize, &e.UserAgent, &e.Error,
-			&e.WafBlocked, &e.WafBlockReason, &e.IsStarred, &e.Note, &e.Country, &e.City); err != nil {
+			&e.WafBlocked, &e.WafBlockReason, &e.IsStarred, &e.Note, &e.Country, &e.City,
+			&e.UserIdentity); err != nil {
 			return nil, 0, fmt.Errorf("search logs scan: %w", err)
 		}
 		entries = append(entries, e)
@@ -742,14 +747,15 @@ func (d *DB) GetLogDetail(ctx context.Context, id string) (LogEntry, LogBody, er
 		`SELECT l.id::text, l.timestamp, l.host, l.client_ip, l.method, l.path, l.query_string,
 		        l.request_headers, l.response_status, l.response_headers, l.response_time_ms,
 		        l.request_size, l.response_size, l.user_agent, l.error, l.waf_blocked, l.waf_block_reason,
-		        l.is_starred, n.note, l.country, l.city
+		        l.is_starred, n.note, l.country, l.city, l.user_identity
 		 FROM http_logs l
 		 LEFT JOIN log_notes n ON n.log_id = l.id
 		 WHERE l.id = $1`, id,
 	).Scan(&e.ID, &e.Timestamp, &e.Host, &e.ClientIP, &e.Method, &e.Path,
 		&e.QueryString, &e.RequestHeaders, &e.ResponseStatus, &e.ResponseHeaders,
 		&e.ResponseTimeMs, &e.RequestSize, &e.ResponseSize, &e.UserAgent, &e.Error,
-		&e.WafBlocked, &e.WafBlockReason, &e.IsStarred, &e.Note, &e.Country, &e.City)
+		&e.WafBlocked, &e.WafBlockReason, &e.IsStarred, &e.Note, &e.Country, &e.City,
+		&e.UserIdentity)
 	if err != nil {
 		return e, LogBody{}, fmt.Errorf("get log detail: %w", err)
 	}

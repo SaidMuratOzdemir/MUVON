@@ -36,6 +36,18 @@ const API_BASE = "";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+// Endpoints where a 401 must NOT trigger an automatic refresh+retry:
+// calling them IS the refresh / login / logout, so looping back would be
+// meaningless (login: wrong password; refresh: expired refresh token;
+// logout: no session anyway). /api/auth/me is deliberately absent — a
+// stale access cookie there should transparently rotate.
+const NO_REFRESH_PATHS = new Set([
+  "/api/auth/login",
+  "/api/auth/setup",
+  "/api/auth/refresh",
+  "/api/auth/logout",
+]);
+
 function readCSRF(): string {
   const m = document.cookie.match(/(?:^|;\s*)muvon_csrf=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : "";
@@ -92,13 +104,14 @@ async function request<T>(
 
   let res = await fetch(`${API_BASE}${path}`, init);
 
-  // On 401, try to refresh the session once and replay the request. Skip the
-  // dance for auth endpoints themselves — a 401 on /api/auth/login means bad
-  // credentials, not an expired session.
-  if (res.status === 401 && !path.startsWith("/api/auth/")) {
+  // On 401, try to refresh the session once and replay the request. A 401 on
+  // login/setup/refresh/logout is NOT an expired session — it means the call
+  // itself failed (bad credentials, bad refresh token, etc.) so we must not
+  // loop back into doRefresh. Everything else — including /api/auth/me — IS
+  // allowed to refresh, so stale access cookies heal transparently.
+  if (res.status === 401 && !NO_REFRESH_PATHS.has(path)) {
     try {
       await doRefresh();
-      // Refresh rotates the CSRF cookie — rebuild headers before retrying.
       init.headers = buildHeaders(method, body !== undefined);
       res = await fetch(`${API_BASE}${path}`, init);
     } catch {

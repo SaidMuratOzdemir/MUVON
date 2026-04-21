@@ -87,6 +87,11 @@ func (s *Server) Handler() http.Handler {
 	authMux.HandleFunc("POST /api/auth/setup", s.handleSetup)
 	authMux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
 	authMux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	// GET /api/auth/me lives here because the /api/auth/ prefix match takes
+	// precedence over /api/ in Go 1.22 mux — registering `me` on the `api`
+	// sub-mux would make it unreachable (shadowed by authMux, 404). Wrap it
+	// in the auth middleware so the access cookie is validated.
+	authMux.Handle("GET /api/auth/me", s.authMiddleware(http.HandlerFunc(s.handleMe)))
 	mux.Handle("/api/auth/", rl.Middleware(csrfMW(authMux)))
 
 	// Deploy webhook — HMAC-authenticated by project secret, no admin JWT.
@@ -94,7 +99,9 @@ func (s *Server) Handler() http.Handler {
 
 	// Protected API endpoints
 	api := http.NewServeMux()
-	api.HandleFunc("GET /api/auth/me", s.handleMe)
+	// NOTE: GET /api/auth/me is registered on authMux above — Go's mux picks
+	// the more specific /api/auth/ prefix, so registering it here would be
+	// unreachable.
 
 	// Hosts
 	api.HandleFunc("GET /api/hosts", s.handleListHosts)
