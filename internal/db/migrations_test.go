@@ -66,6 +66,27 @@ func TestCentralSettingsLiveInMuvonSchema(t *testing.T) {
 	}
 }
 
+// TimescaleDB rejects ALTER TABLE ... ADD COLUMN ... DEFAULT now() on a
+// compressed hypertable with SQLSTATE 0A000. The alerts table is a
+// compressed hypertable; a previous version of this migration tripped
+// that exact error in production. The fix is to add columns nullable,
+// backfill, then enforce NOT NULL with a constant default if needed.
+func TestAlertsGroupingMigrationAvoidsNonConstantDefault(t *testing.T) {
+	var sql string
+	for _, m := range migrations {
+		if m.name == "add_alerts_grouping_columns" {
+			sql = m.sql
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("add_alerts_grouping_columns migration missing")
+	}
+	if strings.Contains(sql, "DEFAULT now()") {
+		t.Error("migration must not add columns with DEFAULT now() — alerts is a compressed hypertable")
+	}
+}
+
 func TestAdminRefreshTokensMigrationShape(t *testing.T) {
 	var sql string
 	for _, m := range migrations {

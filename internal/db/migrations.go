@@ -1196,12 +1196,25 @@ CREATE INDEX IF NOT EXISTS idx_alerts_ack_timestamp
 	//              below lets the alert manager answer "did we notify this
 	//              fingerprint in the last N seconds?" in O(log n) across every
 	//              node — this is how multi-node cooldown stays consistent.
+	//
+	// TimescaleDB hypertables with compression enabled reject ADD COLUMN when
+	// the default expression is non-constant (SQLSTATE 0A000). `now()` counts
+	// as non-constant. The workaround is to add the column nullable, backfill
+	// existing rows, then enforce NOT NULL + a constant default.
 	{
 		name: "add_alerts_grouping_columns", product: "dialog",
 		sql: `
-ALTER TABLE alerts ADD COLUMN IF NOT EXISTS occurrences  INTEGER     NOT NULL DEFAULT 1;
-ALTER TABLE alerts ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now();
-ALTER TABLE alerts ADD COLUMN IF NOT EXISTS notified_at  TIMESTAMPTZ;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS occurrences INTEGER;
+UPDATE alerts SET occurrences = 1 WHERE occurrences IS NULL;
+ALTER TABLE alerts ALTER COLUMN occurrences SET DEFAULT 1;
+ALTER TABLE alerts ALTER COLUMN occurrences SET NOT NULL;
+
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+UPDATE alerts SET last_seen_at = COALESCE(last_seen_at, timestamp, now());
+ALTER TABLE alerts ALTER COLUMN last_seen_at SET NOT NULL;
+
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS idx_alerts_fingerprint_notified
     ON alerts (fingerprint, notified_at DESC)
     WHERE notified_at IS NOT NULL;`,
