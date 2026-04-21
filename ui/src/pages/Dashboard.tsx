@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -337,35 +338,72 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Top Countries */}
-      {stats?.top_countries?.length ? (
-        <Card className="border-border bg-card">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-foreground">Top Ülkeler</CardTitle>
-          </CardHeader>
-          <CardContent className="pb-4">
-            <div className="space-y-1.5">
-              {stats.top_countries.slice(0, 8).map((c, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <span className="text-xs text-muted-foreground w-4 text-right shrink-0">{i + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="relative h-6 rounded overflow-hidden bg-muted/30">
-                      <div
-                        className="absolute inset-y-0 left-0 bg-primary/20 rounded"
-                        style={{ width: `${(c.count / stats.top_countries[0].count) * 100}%` }}
-                      />
-                      <span className="relative px-2 text-xs text-foreground font-mono leading-6 truncate block">{c.country}</span>
+      {/* Top Users & Top Countries — side by side when both have data */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {stats?.top_users?.length ? (
+          <Card className="border-border bg-card">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-foreground">Top Users</CardTitle>
+            </CardHeader>
+            <CardContent className="pb-4">
+              <div className="space-y-1.5">
+                {stats.top_users.slice(0, 8).map((u, i) => (
+                  <div key={u.query} className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground w-4 text-right shrink-0">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="relative h-6 rounded overflow-hidden bg-muted/30">
+                        <div
+                          className="absolute inset-y-0 left-0 bg-primary/20 rounded"
+                          style={{ width: `${(u.count / stats.top_users[0].count) * 100}%` }}
+                        />
+                        <Link
+                          to={`/logs?user=${encodeURIComponent(u.query)}`}
+                          className="relative px-2 text-xs text-foreground hover:text-primary font-mono leading-6 truncate block"
+                          title={`View all logs for ${u.display}`}
+                        >
+                          {u.display}
+                        </Link>
+                      </div>
                     </div>
+                    <Badge variant="secondary" className="shrink-0 font-mono text-xs">
+                      {formatNumber(u.count)}
+                    </Badge>
                   </div>
-                  <Badge variant="secondary" className="shrink-0 font-mono text-xs">
-                    {formatNumber(c.count)}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {stats?.top_countries?.length ? (
+          <Card className="border-border bg-card">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-foreground">Top Ülkeler</CardTitle>
+            </CardHeader>
+            <CardContent className="pb-4">
+              <div className="space-y-1.5">
+                {stats.top_countries.slice(0, 8).map((c, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground w-4 text-right shrink-0">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="relative h-6 rounded overflow-hidden bg-muted/30">
+                        <div
+                          className="absolute inset-y-0 left-0 bg-primary/20 rounded"
+                          style={{ width: `${(c.count / stats.top_countries[0].count) * 100}%` }}
+                        />
+                        <span className="relative px-2 text-xs text-foreground font-mono leading-6 truncate block">{c.country}</span>
+                      </div>
+                    </div>
+                    <Badge variant="secondary" className="shrink-0 font-mono text-xs">
+                      {formatNumber(c.count)}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+      </div>
 
       {/* Top Hosts & Paths */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

@@ -156,7 +156,7 @@ func (e *Engine) process(entry logger.Entry) {
 				Rule:        "path_scan",
 				Severity:    "warning",
 				Title:       "Path enumeration detected",
-				Detail:      map[string]any{"ip": ip, "distinct_paths": len(w.paths404), "count": len(w.notFound)},
+				Detail:      attachIdentity(map[string]any{"ip": ip, "distinct_paths": len(w.paths404), "count": len(w.notFound)}, entry),
 				SourceIP:    ip,
 				Host:        host,
 				Fingerprint: "path_scan:" + ip,
@@ -184,7 +184,7 @@ func (e *Engine) process(entry logger.Entry) {
 					Rule:        "auth_brute_force",
 					Severity:    "critical",
 					Title:       "Authentication brute force detected",
-					Detail:      map[string]any{"ip": ip, "count": len(w.authFail), "status": status, "path": reqPath},
+					Detail:      attachIdentity(map[string]any{"ip": ip, "count": len(w.authFail), "status": status, "path": reqPath}, entry),
 					SourceIP:    ip,
 					Host:        host,
 					Fingerprint: "auth_brute_force:" + ip,
@@ -204,7 +204,7 @@ func (e *Engine) process(entry logger.Entry) {
 				Rule:        "error_spike",
 				Severity:    "critical",
 				Title:       "5xx error spike detected",
-				Detail:      map[string]any{"host": host, "count": len(w.fiveXX), "window_seconds": int(cfg.ErrorSpikeWindow.Seconds())},
+				Detail:      attachIdentity(map[string]any{"host": host, "count": len(w.fiveXX), "window_seconds": int(cfg.ErrorSpikeWindow.Seconds())}, entry),
 				Host:        host,
 				Fingerprint: "error_spike:" + host,
 			})
@@ -221,7 +221,7 @@ func (e *Engine) process(entry logger.Entry) {
 				Rule:        "waf_repeat_offender",
 				Severity:    "warning",
 				Title:       "Repeated WAF violations from same IP",
-				Detail:      map[string]any{"ip": ip, "count": len(w.wafBlocks)},
+				Detail:      attachIdentity(map[string]any{"ip": ip, "count": len(w.wafBlocks)}, entry),
 				SourceIP:    ip,
 				Host:        host,
 				Fingerprint: "waf_repeat:" + ip,
@@ -259,12 +259,12 @@ func (e *Engine) process(entry logger.Entry) {
 						Rule:     "traffic_anomaly",
 						Severity: "warning",
 						Title:    "Traffic volume anomaly",
-						Detail: map[string]any{
+						Detail: attachIdentity(map[string]any{
 							"host":         host,
 							"baseline_rps": round2(baselineRPS),
 							"current_rps":  round2(currentRPS),
 							"ratio":        round2(currentRPS / baselineRPS),
-						},
+						}, entry),
 						Host:        host,
 						Fingerprint: "traffic_anomaly:" + host,
 					})
@@ -284,11 +284,11 @@ func (e *Engine) process(entry logger.Entry) {
 				Rule:     "sensitive_access",
 				Severity: "warning",
 				Title:    "Heavy access to sensitive endpoints",
-				Detail: map[string]any{
+				Detail: attachIdentity(map[string]any{
 					"ip":          ip,
 					"count":       len(w.sensitive),
 					"sample_paths": w.sensitiveSamplePaths,
-				},
+				}, entry),
 				SourceIP:    ip,
 				Host:        host,
 				Fingerprint: "sensitive_access:" + ip,
@@ -312,11 +312,11 @@ func (e *Engine) process(entry logger.Entry) {
 					Rule:     "data_export_burst",
 					Severity: "warning",
 					Title:    "Burst of data export / download",
-					Detail: map[string]any{
+					Detail: attachIdentity(map[string]any{
 						"actor":        actor,
 						"count":        len(w.exports),
 						"sample_paths": w.exportSamplePaths,
-					},
+					}, entry),
 					SourceIP:    ip,
 					Host:        host,
 					Fingerprint: "data_export_burst:" + actor,
@@ -362,6 +362,35 @@ func (e *Engine) emit(alert Alert) {
 	if e.sink != nil {
 		e.sink.HandleAlert(context.Background(), alert)
 	}
+}
+
+// attachIdentity merges the request's JWT identity claims into an alert
+// detail map so the UI can render "alice@foo.com" next to the IP instead of
+// making the admin click through to a single log to find out who did it.
+// No-op when the request is anonymous; non-destructive otherwise (never
+// overwrites keys already set by the rule).
+func attachIdentity(detail map[string]any, entry logger.Entry) map[string]any {
+	if entry.UserIdentity == nil || len(entry.UserIdentity.Claims) == 0 {
+		return detail
+	}
+	if detail == nil {
+		detail = make(map[string]any)
+	}
+	setIf := func(key, claim string) {
+		if _, exists := detail[key]; exists {
+			return
+		}
+		if v := entry.UserIdentity.Claims[claim]; v != "" {
+			detail[key] = v
+		}
+	}
+	setIf("actor_email", "email")
+	setIf("actor_name", "name")
+	setIf("actor_sub", "sub")
+	if _, ok := detail["actor_verified"]; !ok {
+		detail["actor_verified"] = entry.UserIdentity.Verified
+	}
+	return detail
 }
 
 // cleanup bounds engine memory by dropping windows that have not seen an

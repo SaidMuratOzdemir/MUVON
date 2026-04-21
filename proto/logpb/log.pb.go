@@ -409,21 +409,23 @@ func (*Ack) Descriptor() ([]byte, []int) {
 }
 
 type SearchLogsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
-	Path          string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	Method        string                 `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
-	ClientIp      string                 `protobuf:"bytes,4,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
-	StatusMin     int32                  `protobuf:"varint,5,opt,name=status_min,json=statusMin,proto3" json:"status_min,omitempty"`
-	StatusMax     int32                  `protobuf:"varint,6,opt,name=status_max,json=statusMax,proto3" json:"status_max,omitempty"`
-	From          string                 `protobuf:"bytes,7,opt,name=from,proto3" json:"from,omitempty"` // RFC3339
-	To            string                 `protobuf:"bytes,8,opt,name=to,proto3" json:"to,omitempty"`
-	Search        string                 `protobuf:"bytes,9,opt,name=search,proto3" json:"search,omitempty"` // full text on bodies
-	Starred       bool                   `protobuf:"varint,10,opt,name=starred,proto3" json:"starred,omitempty"`
-	RespTimeMin   int32                  `protobuf:"varint,11,opt,name=resp_time_min,json=respTimeMin,proto3" json:"resp_time_min,omitempty"`
-	RespTimeMax   int32                  `protobuf:"varint,12,opt,name=resp_time_max,json=respTimeMax,proto3" json:"resp_time_max,omitempty"`
-	Limit         int32                  `protobuf:"varint,13,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32                  `protobuf:"varint,14,opt,name=offset,proto3" json:"offset,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Host        string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
+	Path        string                 `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	Method      string                 `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
+	ClientIp    string                 `protobuf:"bytes,4,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	StatusMin   int32                  `protobuf:"varint,5,opt,name=status_min,json=statusMin,proto3" json:"status_min,omitempty"`
+	StatusMax   int32                  `protobuf:"varint,6,opt,name=status_max,json=statusMax,proto3" json:"status_max,omitempty"`
+	From        string                 `protobuf:"bytes,7,opt,name=from,proto3" json:"from,omitempty"` // RFC3339
+	To          string                 `protobuf:"bytes,8,opt,name=to,proto3" json:"to,omitempty"`
+	Search      string                 `protobuf:"bytes,9,opt,name=search,proto3" json:"search,omitempty"` // full text on bodies
+	Starred     bool                   `protobuf:"varint,10,opt,name=starred,proto3" json:"starred,omitempty"`
+	RespTimeMin int32                  `protobuf:"varint,11,opt,name=resp_time_min,json=respTimeMin,proto3" json:"resp_time_min,omitempty"`
+	RespTimeMax int32                  `protobuf:"varint,12,opt,name=resp_time_max,json=respTimeMax,proto3" json:"resp_time_max,omitempty"`
+	Limit       int32                  `protobuf:"varint,13,opt,name=limit,proto3" json:"limit,omitempty"`
+	Offset      int32                  `protobuf:"varint,14,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Match against JWT claims (email, sub, name). Backend ORs all three.
+	User          string `protobuf:"bytes,15,opt,name=user,proto3" json:"user,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -556,6 +558,13 @@ func (x *SearchLogsRequest) GetOffset() int32 {
 	return 0
 }
 
+func (x *SearchLogsRequest) GetUser() string {
+	if x != nil {
+		return x.User
+	}
+	return ""
+}
+
 type SearchLogsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Logs          []*LogSummary          `protobuf:"bytes,1,rep,name=logs,proto3" json:"logs,omitempty"`
@@ -624,8 +633,14 @@ type LogSummary struct {
 	Starred        bool                   `protobuf:"varint,12,opt,name=starred,proto3" json:"starred,omitempty"`
 	Country        string                 `protobuf:"bytes,13,opt,name=country,proto3" json:"country,omitempty"`
 	City           string                 `protobuf:"bytes,14,opt,name=city,proto3" json:"city,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Summary identity — full UserIdentity is available in LogDetail; here
+	// we send only the display claim so the list view can show "alice@foo.com"
+	// without shipping every claim for every row.
+	UserDisplay string `protobuf:"bytes,15,opt,name=user_display,json=userDisplay,proto3" json:"user_display,omitempty"`
+	// Query value that matches the row in SearchLogs({ user }).
+	UserQuery     string `protobuf:"bytes,16,opt,name=user_query,json=userQuery,proto3" json:"user_query,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LogSummary) Reset() {
@@ -752,6 +767,20 @@ func (x *LogSummary) GetCountry() string {
 func (x *LogSummary) GetCity() string {
 	if x != nil {
 		return x.City
+	}
+	return ""
+}
+
+func (x *LogSummary) GetUserDisplay() string {
+	if x != nil {
+		return x.UserDisplay
+	}
+	return ""
+}
+
+func (x *LogSummary) GetUserQuery() string {
+	if x != nil {
+		return x.UserQuery
 	}
 	return ""
 }
@@ -928,9 +957,16 @@ type LogStatsResponse struct {
 	P95ResponseMs      float64                `protobuf:"fixed64,4,opt,name=p95_response_ms,json=p95ResponseMs,proto3" json:"p95_response_ms,omitempty"`
 	P99ResponseMs      float64                `protobuf:"fixed64,5,opt,name=p99_response_ms,json=p99ResponseMs,proto3" json:"p99_response_ms,omitempty"`
 	StatusDistribution map[string]int64       `protobuf:"bytes,6,rep,name=status_distribution,json=statusDistribution,proto3" json:"status_distribution,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
-	TopCountriesJson   string                 `protobuf:"bytes,7,opt,name=top_countries_json,json=topCountriesJson,proto3" json:"top_countries_json,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Pre-rendered JSON strings for the dashboard panels. Plain JSON avoids
+	// a per-field schema evolution on the rpc every time a new breakdown
+	// gets added.
+	TopCountriesJson string  `protobuf:"bytes,7,opt,name=top_countries_json,json=topCountriesJson,proto3" json:"top_countries_json,omitempty"`
+	TopHostsJson     string  `protobuf:"bytes,8,opt,name=top_hosts_json,json=topHostsJson,proto3" json:"top_hosts_json,omitempty"`
+	TopPathsJson     string  `protobuf:"bytes,9,opt,name=top_paths_json,json=topPathsJson,proto3" json:"top_paths_json,omitempty"`
+	TopUsersJson     string  `protobuf:"bytes,10,opt,name=top_users_json,json=topUsersJson,proto3" json:"top_users_json,omitempty"`
+	RequestsPerMin   float64 `protobuf:"fixed64,11,opt,name=requests_per_min,json=requestsPerMin,proto3" json:"requests_per_min,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *LogStatsResponse) Reset() {
@@ -1010,6 +1046,34 @@ func (x *LogStatsResponse) GetTopCountriesJson() string {
 		return x.TopCountriesJson
 	}
 	return ""
+}
+
+func (x *LogStatsResponse) GetTopHostsJson() string {
+	if x != nil {
+		return x.TopHostsJson
+	}
+	return ""
+}
+
+func (x *LogStatsResponse) GetTopPathsJson() string {
+	if x != nil {
+		return x.TopPathsJson
+	}
+	return ""
+}
+
+func (x *LogStatsResponse) GetTopUsersJson() string {
+	if x != nil {
+		return x.TopUsersJson
+	}
+	return ""
+}
+
+func (x *LogStatsResponse) GetRequestsPerMin() float64 {
+	if x != nil {
+		return x.RequestsPerMin
+	}
+	return 0
 }
 
 type StreamLogsRequest struct {
@@ -1204,7 +1268,7 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"5\n" +
 	"\bLogBatch\x12)\n" +
 	"\aentries\x18\x01 \x03(\v2\x0f.logpb.LogEntryR\aentries\"\x05\n" +
-	"\x03Ack\"\xfa\x02\n" +
+	"\x03Ack\"\x8e\x03\n" +
 	"\x11SearchLogsRequest\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x16\n" +
@@ -1222,10 +1286,11 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\rresp_time_min\x18\v \x01(\x05R\vrespTimeMin\x12\"\n" +
 	"\rresp_time_max\x18\f \x01(\x05R\vrespTimeMax\x12\x14\n" +
 	"\x05limit\x18\r \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x0e \x01(\x05R\x06offset\"Q\n" +
+	"\x06offset\x18\x0e \x01(\x05R\x06offset\x12\x12\n" +
+	"\x04user\x18\x0f \x01(\tR\x04user\"Q\n" +
 	"\x12SearchLogsResponse\x12%\n" +
 	"\x04logs\x18\x01 \x03(\v2\x11.logpb.LogSummaryR\x04logs\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x05R\x05total\"\xf2\x02\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\"\xe2\x03\n" +
 	"\n" +
 	"LogSummary\x12\x1d\n" +
 	"\n" +
@@ -1244,7 +1309,12 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"wafBlocked\x12\x1d\n" +
 	"\n" +
 	"waf_action\x18\v \x01(\tR\twafAction\x12\x18\n" +
-	"\astarred\x18\f \x01(\bR\astarred\".\n" +
+	"\astarred\x18\f \x01(\bR\astarred\x12\x18\n" +
+	"\acountry\x18\r \x01(\tR\acountry\x12\x12\n" +
+	"\x04city\x18\x0e \x01(\tR\x04city\x12!\n" +
+	"\fuser_display\x18\x0f \x01(\tR\vuserDisplay\x12\x1d\n" +
+	"\n" +
+	"user_query\x18\x10 \x01(\tR\tuserQuery\".\n" +
 	"\rGetLogRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\"`\n" +
@@ -1255,14 +1325,20 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x12GetLogStatsRequest\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04from\x18\x02 \x01(\tR\x04from\x12\x0e\n" +
-	"\x02to\x18\x03 \x01(\tR\x02to\"\xfd\x02\n" +
+	"\x02to\x18\x03 \x01(\tR\x02to\"\xc7\x04\n" +
 	"\x10LogStatsResponse\x12%\n" +
 	"\x0etotal_requests\x18\x01 \x01(\x03R\rtotalRequests\x12!\n" +
 	"\ftotal_errors\x18\x02 \x01(\x03R\vtotalErrors\x12&\n" +
 	"\x0favg_response_ms\x18\x03 \x01(\x01R\ravgResponseMs\x12&\n" +
 	"\x0fp95_response_ms\x18\x04 \x01(\x01R\rp95ResponseMs\x12&\n" +
 	"\x0fp99_response_ms\x18\x05 \x01(\x01R\rp99ResponseMs\x12`\n" +
-	"\x13status_distribution\x18\x06 \x03(\v2/.logpb.LogStatsResponse.StatusDistributionEntryR\x12statusDistribution\x1aE\n" +
+	"\x13status_distribution\x18\x06 \x03(\v2/.logpb.LogStatsResponse.StatusDistributionEntryR\x12statusDistribution\x12,\n" +
+	"\x12top_countries_json\x18\a \x01(\tR\x10topCountriesJson\x12$\n" +
+	"\x0etop_hosts_json\x18\b \x01(\tR\ftopHostsJson\x12$\n" +
+	"\x0etop_paths_json\x18\t \x01(\tR\ftopPathsJson\x12$\n" +
+	"\x0etop_users_json\x18\n" +
+	" \x01(\tR\ftopUsersJson\x12(\n" +
+	"\x10requests_per_min\x18\v \x01(\x01R\x0erequestsPerMin\x1aE\n" +
 	"\x17StatusDistributionEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"'\n" +

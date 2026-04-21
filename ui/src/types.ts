@@ -89,6 +89,11 @@ export interface LogEntry {
   country?: string;
   city?: string;
   user_identity?: UserIdentity;
+  // Summary-level display for list rows (LogSummary proto). Detail endpoint
+  // populates the full user_identity; SearchLogs already resolves the best
+  // claim so the list does not have to.
+  user_display?: string;
+  user_query?: string;
 }
 
 export interface Alert {
@@ -144,6 +149,10 @@ export interface LogStats {
   top_hosts: { host: string; count: number }[];
   top_paths: { path: string; count: number }[];
   top_countries: { country: string; count: number }[];
+  /** Top users by request volume. `query` is the value to feed back into
+   *  searchLogs({ user }) — it matches the same string against email, name
+   *  or sub claims via JSONB containment. */
+  top_users: { display: string; query: string; count: number }[];
   avg_response_ms: number;
   requests_per_min: number;
 }

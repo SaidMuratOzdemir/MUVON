@@ -23,6 +23,7 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 		Method:   q.Get("method"),
 		ClientIp: q.Get("client_ip"),
 		Search:   q.Get("q"),
+		User:     q.Get("user"),
 	}
 
 	if v := q.Get("status_min"); v != "" {
@@ -98,26 +99,17 @@ func (s *Server) handleGetLog(w http.ResponseWriter, r *http.Request) {
 
 // logStatsResp is the JSON shape the frontend LogStats interface expects.
 type logStatsResp struct {
-	TotalRequests  int64              `json:"total_requests"`
-	TotalErrors    int64              `json:"total_errors"`
-	StatusCounts   map[string]int64   `json:"status_counts"`
-	AvgResponseMs  float64            `json:"avg_response_ms"`
-	P95ResponseMs  float64            `json:"p95_response_ms"`
-	P99ResponseMs  float64            `json:"p99_response_ms"`
-	TopHosts       []logStatHostItem  `json:"top_hosts"`
-	TopPaths       []logStatPathItem  `json:"top_paths"`
-	TopCountries   []db.CountryCount  `json:"top_countries"`
-	RequestsPerMin float64            `json:"requests_per_min"`
-}
-
-type logStatHostItem struct {
-	Host  string `json:"host"`
-	Count int64  `json:"count"`
-}
-
-type logStatPathItem struct {
-	Path  string `json:"path"`
-	Count int64  `json:"count"`
+	TotalRequests  int64             `json:"total_requests"`
+	TotalErrors    int64             `json:"total_errors"`
+	StatusCounts   map[string]int64  `json:"status_counts"`
+	AvgResponseMs  float64           `json:"avg_response_ms"`
+	P95ResponseMs  float64           `json:"p95_response_ms"`
+	P99ResponseMs  float64           `json:"p99_response_ms"`
+	TopHosts       []db.HostCount    `json:"top_hosts"`
+	TopPaths       []db.PathCount    `json:"top_paths"`
+	TopCountries   []db.CountryCount `json:"top_countries"`
+	TopUsers       []db.UserCount    `json:"top_users"`
+	RequestsPerMin float64           `json:"requests_per_min"`
 }
 
 func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
@@ -146,12 +138,32 @@ func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
 		statusCounts = map[string]int64{}
 	}
 
-	var topCountries []db.CountryCount
-	if j := proto.GetTopCountriesJson(); j != "" {
-		_ = json.Unmarshal([]byte(j), &topCountries)
+	decodeOpaque := func(j string, out any) {
+		if j == "" {
+			return
+		}
+		_ = json.Unmarshal([]byte(j), out)
 	}
+	var topCountries []db.CountryCount
+	var topHosts []db.HostCount
+	var topPaths []db.PathCount
+	var topUsers []db.UserCount
+	decodeOpaque(proto.GetTopCountriesJson(), &topCountries)
+	decodeOpaque(proto.GetTopHostsJson(), &topHosts)
+	decodeOpaque(proto.GetTopPathsJson(), &topPaths)
+	decodeOpaque(proto.GetTopUsersJson(), &topUsers)
+
 	if topCountries == nil {
 		topCountries = []db.CountryCount{}
+	}
+	if topHosts == nil {
+		topHosts = []db.HostCount{}
+	}
+	if topPaths == nil {
+		topPaths = []db.PathCount{}
+	}
+	if topUsers == nil {
+		topUsers = []db.UserCount{}
 	}
 
 	resp := logStatsResp{
@@ -161,10 +173,11 @@ func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
 		AvgResponseMs:  proto.GetAvgResponseMs(),
 		P95ResponseMs:  proto.GetP95ResponseMs(),
 		P99ResponseMs:  proto.GetP99ResponseMs(),
-		TopHosts:       []logStatHostItem{},
-		TopPaths:       []logStatPathItem{},
+		TopHosts:       topHosts,
+		TopPaths:       topPaths,
 		TopCountries:   topCountries,
-		RequestsPerMin: 0,
+		TopUsers:       topUsers,
+		RequestsPerMin: proto.GetRequestsPerMin(),
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

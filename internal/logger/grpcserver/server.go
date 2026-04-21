@@ -72,6 +72,9 @@ func (s *Server) SearchLogs(ctx context.Context, req *pb.SearchLogsRequest) (*pb
 	if req.RespTimeMax > 0 {
 		params.ResponseTimeMax = int(req.RespTimeMax)
 	}
+	if req.User != "" {
+		params.UserQuery = req.User
+	}
 
 	logs, total, err := s.database.SearchLogs(ctx, params)
 	if err != nil {
@@ -103,9 +106,35 @@ func (s *Server) SearchLogs(ctx context.Context, req *pb.SearchLogsRequest) (*pb
 		if l.City != nil {
 			summary.City = *l.City
 		}
+		if display, query := extractUserDisplay(l.UserIdentity); display != "" {
+			summary.UserDisplay = display
+			summary.UserQuery = query
+		}
 		resp.Logs = append(resp.Logs, summary)
 	}
 	return resp, nil
+}
+
+// extractUserDisplay picks the human-friendly claim (email > name > sub)
+// from a JSONB user_identity payload. Returns both the display label and
+// the verbatim value so the admin UI can link "alice@foo.com" back to the
+// same user across its other rows.
+func extractUserDisplay(raw json.RawMessage) (display, query string) {
+	if len(raw) == 0 {
+		return "", ""
+	}
+	var wrapper struct {
+		Claims map[string]string `json:"claims"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return "", ""
+	}
+	for _, key := range []string{"email", "name", "sub"} {
+		if v := wrapper.Claims[key]; v != "" {
+			return v, v
+		}
+	}
+	return "", ""
 }
 
 func (s *Server) GetLog(ctx context.Context, req *pb.GetLogRequest) (*pb.LogDetail, error) {
@@ -142,6 +171,7 @@ func (s *Server) GetLogStats(ctx context.Context, req *pb.GetLogStatsRequest) (*
 	resp := &pb.LogStatsResponse{
 		TotalRequests:      stats.TotalRequests,
 		AvgResponseMs:      stats.AvgResponseMs,
+		RequestsPerMin:     stats.RequestsPerMin,
 		StatusDistribution: make(map[string]int64),
 	}
 	for k, v := range stats.StatusCounts {
@@ -150,10 +180,19 @@ func (s *Server) GetLogStats(ctx context.Context, req *pb.GetLogStatsRequest) (*
 			resp.TotalErrors += v
 		}
 	}
-	if len(stats.TopCountries) > 0 {
-		if b, err := json.Marshal(stats.TopCountries); err == nil {
-			resp.TopCountriesJson = string(b)
-		}
+	// Top-N panels ride as opaque JSON so adding new breakdowns later
+	// (e.g. top_user_agents) does not require another rpc schema bump.
+	if b, err := json.Marshal(stats.TopCountries); err == nil && len(stats.TopCountries) > 0 {
+		resp.TopCountriesJson = string(b)
+	}
+	if b, err := json.Marshal(stats.TopHosts); err == nil && len(stats.TopHosts) > 0 {
+		resp.TopHostsJson = string(b)
+	}
+	if b, err := json.Marshal(stats.TopPaths); err == nil && len(stats.TopPaths) > 0 {
+		resp.TopPathsJson = string(b)
+	}
+	if b, err := json.Marshal(stats.TopUsers); err == nil && len(stats.TopUsers) > 0 {
+		resp.TopUsersJson = string(b)
 	}
 	return resp, nil
 }

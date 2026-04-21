@@ -384,6 +384,18 @@ ALTER TABLE http_logs ADD COLUMN IF NOT EXISTS user_identity JSONB;
 ALTER TABLE http_logs ADD COLUMN IF NOT EXISTS country TEXT;
 ALTER TABLE http_logs ADD COLUMN IF NOT EXISTS city TEXT;`,
 	},
+	// Fast JSONB containment for user_identity. Lets us answer
+	// "show me every request where claims @> {email: alice}" without a full
+	// scan over the chunks, and the same index serves sub / name / role
+	// lookups too because jsonb_path_ops supports the @> operator on any
+	// nested path.
+	{
+		name: "add_http_logs_user_identity_gin", product: "dialog",
+		sql: `
+CREATE INDEX IF NOT EXISTS idx_http_logs_user_identity_gin
+    ON http_logs USING gin (user_identity jsonb_path_ops)
+    WHERE user_identity IS NOT NULL;`,
+	},
 	// ── diaLOG: Alerts table ──
 	{
 		name: "create_alerts_table", product: "dialog",

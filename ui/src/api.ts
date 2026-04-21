@@ -327,6 +327,9 @@ export interface LogSearchParams {
   response_time_min?: number;
   response_time_max?: number;
   starred?: boolean;
+  /** Match against JWT claims (email, sub, name). Backend ORs all three
+   *  so admins do not need to know which claim the upstream app uses. */
+  user?: string;
 }
 
 export async function searchLogs(

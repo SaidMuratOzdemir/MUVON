@@ -587,6 +587,12 @@ type LogSearchParams struct {
 	ResponseTimeMin int
 	ResponseTimeMax int
 	Starred         *bool
+	// UserQuery matches against JWT identity claims. A request matches when
+	// any of its enriched claims (email, sub, name) equals UserQuery — so
+	// the admin can type "alice@foo.com" or a raw user id and get every
+	// request attributed to that actor, regardless of which claim key the
+	// upstream app happens to populate.
+	UserQuery       string
 	Limit           int
 	Offset          int
 }
@@ -699,6 +705,27 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		baseWhere += fmt.Sprintf(" AND l.is_starred = $%d", argIdx)
 		args = append(args, *p.Starred)
 		argIdx++
+	}
+	if p.UserQuery != "" {
+		// Match claims via JSONB containment. We OR across the three keys
+		// admins typically type (email, sub, name) so the same search box
+		// finds a user regardless of whether the upstream app signs the
+		// token with "sub":"alice" or "email":"alice@foo.com".
+		//
+		// Each @> uses the GIN index from add_http_logs_user_identity_gin,
+		// and the user value is JSON-encoded via json.Marshal so injected
+		// quotes or backslashes cannot break out of the literal.
+		email, _ := json.Marshal(map[string]string{"email": p.UserQuery})
+		sub, _ := json.Marshal(map[string]string{"sub": p.UserQuery})
+		name, _ := json.Marshal(map[string]string{"name": p.UserQuery})
+		baseWhere += fmt.Sprintf(
+			` AND ((l.user_identity->'claims') @> $%d::jsonb
+			    OR (l.user_identity->'claims') @> $%d::jsonb
+			    OR (l.user_identity->'claims') @> $%d::jsonb)`,
+			argIdx, argIdx+1, argIdx+2,
+		)
+		args = append(args, string(email), string(sub), string(name))
+		argIdx += 3
 	}
 
 	// Count query uses http_logs aliased as l
@@ -890,6 +917,7 @@ type LogStats struct {
 	TopHosts       []HostCount      `json:"top_hosts"`
 	TopPaths       []PathCount      `json:"top_paths"`
 	TopCountries   []CountryCount   `json:"top_countries"`
+	TopUsers       []UserCount      `json:"top_users"`
 	AvgResponseMs  float64          `json:"avg_response_ms"`
 	RequestsPerMin float64          `json:"requests_per_min"`
 }
@@ -907,6 +935,16 @@ type HostCount struct {
 type PathCount struct {
 	Path  string `json:"path"`
 	Count int64  `json:"count"`
+}
+
+// UserCount summarises request volume per identified user.
+// Display is the human-friendly label (email > name > sub) the admin sees in
+// lists; Query is the raw value that SearchLogs' UserQuery will match on so
+// the UI can link "Top Users" row → filtered /logs?user=<query>.
+type UserCount struct {
+	Display string `json:"display"`
+	Query   string `json:"query"`
+	Count   int64  `json:"count"`
 }
 
 func (d *DB) GetLogStats(ctx context.Context, from, to time.Time) (LogStats, error) {
@@ -1016,6 +1054,42 @@ func (d *DB) GetLogStats(ctx context.Context, from, to time.Time) (LogStats, err
 			return stats, err
 		}
 		stats.TopCountries = append(stats.TopCountries, cc)
+	}
+	rows.Close()
+
+	// Top users. Display value is email > name > sub (whichever is first
+	// present) so the admin recognises who a row belongs to without
+	// cross-referencing a user DB. Subquery keeps the SELECT expression
+	// and the NOT NULL filter in one place instead of repeating the
+	// COALESCE inside HAVING.
+	rows, err = d.Pool.Query(ctx,
+		fmt.Sprintf(`SELECT user_key, cnt FROM (
+			SELECT
+				COALESCE(
+					NULLIF(user_identity->'claims'->>'email', ''),
+					NULLIF(user_identity->'claims'->>'name', ''),
+					NULLIF(user_identity->'claims'->>'sub', '')
+				) AS user_key,
+				COUNT(*) AS cnt
+			FROM http_logs %s
+			AND user_identity IS NOT NULL
+			GROUP BY 1
+		) u
+		WHERE user_key IS NOT NULL
+		ORDER BY cnt DESC
+		LIMIT 10`, where),
+		args...)
+	if err != nil {
+		return stats, fmt.Errorf("log stats users: %w", err)
+	}
+	for rows.Next() {
+		var key string
+		var count int64
+		if err := rows.Scan(&key, &count); err != nil {
+			rows.Close()
+			return stats, err
+		}
+		stats.TopUsers = append(stats.TopUsers, UserCount{Display: key, Query: key, Count: count})
 	}
 	rows.Close()
 

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import {
   AlertTriangle, Search, RefreshCw, ChevronLeft, ChevronRight,
-  Check, Bell, BellOff, AlertCircle, Info, Radio, Eye,
+  Check, Bell, BellOff, AlertCircle, Info, Radio, Eye, User,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -342,6 +343,10 @@ function AlertDetailSheet({
         </SheetHeader>
 
         <div className="space-y-4 p-4">
+          {/* Actor — JWT identity if the enricher captured one, otherwise the
+               raw fingerprint (e.g. "user:123e4567"). Clickable → /logs filtered
+               by the same user so the admin can read the user's whole session. */}
+          <AlertActorRow alert={alert} />
           <DetailRow label="Source IP" value={alert.source_ip || '—'} mono />
           <DetailRow label="Host" value={alert.host || '—'} mono />
           <DetailRow label="Fingerprint" value={alert.fingerprint} mono />
@@ -372,6 +377,63 @@ function AlertDetailSheet({
         </div>
       </SheetContent>
     </Sheet>
+  )
+}
+
+// resolveActor pulls the best user label out of an alert's detail map.
+// attachIdentity() writes actor_email / actor_name / actor_sub in the
+// backend; fingerprint is the fallback for pre-enrichment rows.
+function resolveActor(alert: Alert): { display: string; query: string | null } | null {
+  const d = (alert.detail ?? {}) as Record<string, unknown>
+  const pick = (key: string) => {
+    const v = d[key]
+    return typeof v === 'string' && v !== '' ? v : null
+  }
+  const email = pick('actor_email')
+  if (email) return { display: email, query: email }
+  const name = pick('actor_name')
+  if (name) return { display: name, query: name }
+  const sub = pick('actor_sub')
+  if (sub) return { display: sub, query: sub }
+
+  // Parse fingerprints like "data_export_burst:user:123e4567" — the
+  // correlation engine writes these for user-keyed rules when identity
+  // enrichment was missing.
+  const match = alert.fingerprint.match(/^[^:]+:user:(.+)$/)
+  if (match) return { display: match[1], query: match[1] }
+  return null
+}
+
+function AlertActorRow({ alert }: { alert: Alert }) {
+  const actor = resolveActor(alert)
+  const verified = (alert.detail as Record<string, unknown> | undefined)?.['actor_verified']
+  if (!actor) {
+    return <DetailRow label="User" value="—" />
+  }
+  const content = actor.query ? (
+    <Link
+      to={`/logs?user=${encodeURIComponent(actor.query)}`}
+      className="text-primary hover:underline font-mono text-xs inline-flex items-center gap-1"
+      title={`See every request by ${actor.display}`}
+    >
+      <User className="h-3 w-3" />
+      {actor.display}
+    </Link>
+  ) : (
+    <span className="font-mono text-xs">{actor.display}</span>
+  )
+  return (
+    <div className="flex justify-between gap-4 text-sm border-b border-border pb-2 items-start">
+      <span className="text-muted-foreground">User</span>
+      <div className="text-right break-all flex flex-col items-end gap-1">
+        {content}
+        {verified === false && (
+          <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/30">
+            signature not verified
+          </Badge>
+        )}
+      </div>
+    </div>
   )
 }
 

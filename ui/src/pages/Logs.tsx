@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Search, Filter, RefreshCw, X, ChevronLeft, ChevronRight,
   Copy, Star, Shield, ExternalLink, Clock, WifiOff, RotateCcw,
@@ -39,13 +40,14 @@ interface Filters {
   client_ip: string
   response_time_min: string
   status_group: '' | '2xx' | '3xx' | '4xx' | '5xx'
+  user: string
 }
 
 const emptyFilters = (): Filters => ({
   search: '', host: '', method: '', path: '',
   status_min: '', status_max: '', from: '', to: '',
   waf_blocked: false, starred: false, client_ip: '',
-  response_time_min: '', status_group: '',
+  response_time_min: '', status_group: '', user: '',
 })
 
 function getLogID(log: Pick<LogEntry, 'id' | 'request_id'> | null | undefined) {
@@ -57,7 +59,7 @@ function hasFilters(f: Filters) {
     f.search !== '' || f.host !== '' || f.method !== '' || f.path !== '' ||
     f.status_min !== '' || f.status_max !== '' || f.from !== '' || f.to !== '' ||
     f.waf_blocked || f.starred || f.client_ip !== '' ||
-    f.response_time_min !== '' || f.status_group !== ''
+    f.response_time_min !== '' || f.status_group !== '' || f.user !== ''
   )
 }
 
@@ -68,6 +70,7 @@ function filtersToParams(f: Filters, off: number): api.LogSearchParams {
   if (f.method) params.method = f.method
   if (f.path) params.path = f.path
   if (f.client_ip) params.client_ip = f.client_ip
+  if (f.user) params.user = f.user
   if (f.waf_blocked) params.waf_blocked = true
   if (f.starred) params.starred = true
   if (f.response_time_min) params.response_time_min = Number(f.response_time_min)
@@ -101,6 +104,7 @@ function FilterChips({ filters, onClear }: {
   if (filters.method) chips.push({ key: 'method', label: filters.method })
   if (filters.path) chips.push({ key: 'path', label: `path: ${filters.path}` })
   if (filters.client_ip) chips.push({ key: 'client_ip', label: `ip: ${filters.client_ip}` })
+  if (filters.user) chips.push({ key: 'user', label: `user: ${filters.user}` })
   if (filters.status_group) chips.push({ key: 'status_group', label: filters.status_group })
   if (filters.status_min) chips.push({ key: 'status_min', label: `≥${filters.status_min}` })
   if (filters.status_max) chips.push({ key: 'status_max', label: `≤${filters.status_max}` })
@@ -511,13 +515,27 @@ function LogDetailSheet({
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function Logs() {
+  const [searchParams] = useSearchParams()
+  // Accept ?user=alice from Dashboard Top Users / Alerts page deep links.
+  // The initial state seeds both filters (what's applied) and pendingFilters
+  // (what's in the form) so the user lands on a pre-filtered page.
+  const initialFilters: Filters = (() => {
+    const f = emptyFilters()
+    const u = searchParams.get('user')
+    if (u) f.user = u
+    const ip = searchParams.get('client_ip')
+    if (ip) f.client_ip = ip
+    const host = searchParams.get('host')
+    if (host) f.host = host
+    return f
+  })()
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(false)
   const [serviceDown, setServiceDown] = useState(false)
-  const [filters, setFilters] = useState<Filters>(emptyFilters())
-  const [pendingFilters, setPendingFilters] = useState<Filters>(emptyFilters())
+  const [filters, setFilters] = useState<Filters>(initialFilters)
+  const [pendingFilters, setPendingFilters] = useState<Filters>(initialFilters)
   const [showFilters, setShowFilters] = useState(false)
   const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null)
   const [live, setLive] = useState(false)
@@ -769,6 +787,16 @@ export default function Logs() {
               <Input placeholder="1.2.3.4" className="h-8 text-xs bg-background border-border font-mono" value={pendingFilters.client_ip} onChange={e => setPF('client_ip', e.target.value)} />
             </div>
             <div className="space-y-1">
+              <Label className="text-xs">User (JWT claim)</Label>
+              <Input
+                placeholder="alice@foo.com"
+                className="h-8 text-xs bg-background border-border font-mono"
+                value={pendingFilters.user}
+                onChange={e => setPF('user', e.target.value)}
+                title="Matches the value against email, name and sub JWT claims"
+              />
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">Method</Label>
               <Select value={pendingFilters.method || '__all'} onValueChange={v => setPF('method', v === '__all' ? '' : v)}>
                 <SelectTrigger className="h-8 text-xs bg-background border-border cursor-pointer">
@@ -830,11 +858,12 @@ export default function Logs() {
           ) : <>
           {/* Header */}
           <div className="sticky top-0 z-10 bg-card border-b border-border">
-            <div className="grid grid-cols-[80px_120px_90px_1fr_100px_60px_80px_90px_80px] gap-2 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <div className="grid grid-cols-[70px_110px_75px_minmax(0,1fr)_150px_110px_55px_100px_70px_70px] gap-2 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               <span>Status</span>
               <span>Time</span>
               <span>Method</span>
               <span>Path</span>
+              <span>User</span>
               <span>Client IP</span>
               <span>Ülke</span>
               <span>Host</span>
@@ -863,7 +892,7 @@ export default function Logs() {
                 <div
                   key={getLogID(log)}
                   onClick={() => setSelectedLog(log)}
-                  className="grid grid-cols-[80px_120px_90px_1fr_100px_60px_80px_90px_80px] gap-2 px-4 py-2 hover:bg-muted/10 cursor-pointer transition-colors group"
+                  className="grid grid-cols-[70px_110px_75px_minmax(0,1fr)_150px_110px_55px_100px_70px_70px] gap-2 px-4 py-2 hover:bg-muted/10 cursor-pointer transition-colors group"
                 >
                   <span className={cn('text-xs font-mono font-semibold flex items-center gap-1', statusClass(log.response_status))}>
                     {log.response_status}
@@ -879,6 +908,22 @@ export default function Logs() {
                   <span className="text-xs font-mono text-foreground truncate group-hover:text-primary transition-colors">
                     {log.path}{log.query_string ? `?${log.query_string}` : ''}
                   </span>
+                  {log.user_display ? (
+                    <button
+                      type="button"
+                      className="text-xs font-mono text-primary/80 hover:text-primary truncate text-left cursor-pointer"
+                      title={`Filter by user ${log.user_display}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPendingFilters(f => ({ ...f, user: log.user_query || log.user_display || '' }))
+                        setFilters(f => ({ ...f, user: log.user_query || log.user_display || '' }))
+                      }}
+                    >
+                      {log.user_display}
+                    </button>
+                  ) : (
+                    <span className="text-xs font-mono text-muted-foreground/50">—</span>
+                  )}
                   <span className="text-xs font-mono text-muted-foreground truncate">{log.client_ip}</span>
                   <span className="text-xs font-mono text-muted-foreground truncate" title={log.city ? `${log.city}, ${log.country}` : undefined}>
                     {log.country || '—'}

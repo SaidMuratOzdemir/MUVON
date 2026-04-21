@@ -92,6 +92,8 @@ message SearchLogsRequest {
   int32  resp_time_max = 12;
   int32  limit       = 13;
   int32  offset      = 14;
+  // Match against JWT claims (email, sub, name). Backend ORs all three.
+  string user        = 15;
 }
 
 message SearchLogsResponse {
@@ -112,6 +114,14 @@ message LogSummary {
   bool   waf_blocked     = 10;
   string waf_action      = 11;
   bool   starred         = 12;
+  string country         = 13;
+  string city            = 14;
+  // Summary identity — full UserIdentity is available in LogDetail; here
+  // we send only the display claim so the list view can show "alice@foo.com"
+  // without shipping every claim for every row.
+  string user_display    = 15;
+  // Query value that matches the row in SearchLogs({ user }).
+  string user_query      = 16;
 }
 
 // ===== Detail =====
@@ -139,6 +149,14 @@ message LogStatsResponse {
   double p95_response_ms   = 4;
   double p99_response_ms   = 5;
   map<string, int64> status_distribution = 6;
+  // Pre-rendered JSON strings for the dashboard panels. Plain JSON avoids
+  // a per-field schema evolution on the rpc every time a new breakdown
+  // gets added.
+  string top_countries_json = 7;
+  string top_hosts_json     = 8;
+  string top_paths_json     = 9;
+  string top_users_json     = 10;
+  double requests_per_min   = 11;
 }
 
 // ===== Stream =====
