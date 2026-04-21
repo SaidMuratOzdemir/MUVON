@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -81,6 +82,59 @@ type GlobalConfig struct {
 	AlertingSMTPFrom        string
 	AlertingSMTPTo          string
 	AlertingCooldownSeconds int
+
+	// Correlation engine — every threshold and path list is editable live
+	// so ops can tune detection to the protected app's traffic shape.
+	Correlation CorrelationConfig
+}
+
+// CorrelationConfig parametrizes every rule in the correlation engine.
+// Regexes and duration-typed windows are pre-computed once per config reload
+// so the hot path never pays their parse cost.
+type CorrelationConfig struct {
+	// Path scan: N distinct 404 paths from the same IP in a window.
+	PathScanDistinct int
+	PathScanWindow   time.Duration
+
+	// Auth brute force: N auth failures from the same IP in a window.
+	// Django / simplejwt apps return 400 on bad credentials rather than 401,
+	// so the rule also treats 400 as a failure when the request path matches
+	// one of the configured login paths.
+	AuthBruteCount  int
+	AuthBruteWindow time.Duration
+	AuthPaths       []string // exact or prefix-match login endpoints
+
+	// WAF repeat offender: N WAF blocks from the same IP in a window.
+	WafRepeatCount  int
+	WafRepeatWindow time.Duration
+
+	// Error spike: N 5xx responses for the same host in a window.
+	// Previously fired on every single 5xx with no cooldown, which could
+	// flood Slack during an outage — now rate-limited via normal cooldown.
+	ErrorSpikeCount  int
+	ErrorSpikeWindow time.Duration
+
+	// Host-wide traffic anomaly: compares current RPS to a baseline and
+	// alerts when the ratio exceeds the threshold. MinBaseline filters out
+	// low-traffic hosts where 1 → 10 requests would look like a 10× spike.
+	AnomalyEnabled     bool
+	AnomalyRatio       float64
+	AnomalyBaseline    time.Duration
+	AnomalyCurrent     time.Duration
+	AnomalyMinBaseline int
+
+	// Sensitive access: app-specific high-value paths. When requests to any
+	// of the glob-matched paths exceed Threshold inside Window, alert.
+	// Empty SensitivePaths disables the rule.
+	SensitivePaths     []string // globs, matched with path.Match
+	SensitiveThreshold int
+	SensitiveWindow    time.Duration
+
+	// Data export burst: per-user export/download volume. ExportPattern is
+	// compiled once; if nil the rule is disabled.
+	ExportPattern   *regexp.Regexp
+	ExportThreshold int
+	ExportWindow    time.Duration
 }
 
 func LoadFromDB(ctx context.Context, database *db.DB, box *secret.Box) (*Config, error) {
@@ -195,7 +249,73 @@ func loadGlobalConfig(ctx context.Context, database *db.DB, box *secret.Box) (Gl
 	g.AlertingSMTPTo = getStrSetting(settings, "alerting_smtp_to", "")
 	g.AlertingCooldownSeconds = getIntSetting(settings, "alerting_cooldown_seconds", 300)
 
+	g.Correlation = loadCorrelationConfig(settings)
+
 	return g, nil
+}
+
+func loadCorrelationConfig(settings map[string]json.RawMessage) CorrelationConfig {
+	secs := func(key string, def int) time.Duration {
+		return time.Duration(getIntSetting(settings, key, def)) * time.Second
+	}
+
+	c := CorrelationConfig{
+		PathScanDistinct: getIntSetting(settings, "correlation_path_scan_distinct", 10),
+		PathScanWindow:   secs("correlation_path_scan_window_seconds", 120),
+
+		AuthBruteCount:  getIntSetting(settings, "correlation_auth_brute_count", 5),
+		AuthBruteWindow: secs("correlation_auth_brute_window_seconds", 120),
+		AuthPaths: splitCSV(getStrSetting(settings, "correlation_auth_paths",
+			"/login,/api/auth/login,/api/auth/login/,/api/authentication/login,/api/authentication/login/")),
+
+		WafRepeatCount:  getIntSetting(settings, "correlation_waf_repeat_count", 3),
+		WafRepeatWindow: secs("correlation_waf_repeat_window_seconds", 300),
+
+		ErrorSpikeCount:  getIntSetting(settings, "correlation_error_spike_count", 10),
+		ErrorSpikeWindow: secs("correlation_error_spike_window_seconds", 60),
+
+		AnomalyEnabled:     getBoolSetting(settings, "correlation_anomaly_enabled", true),
+		AnomalyRatio:       getFloatSetting(settings, "correlation_anomaly_ratio", 3.0),
+		AnomalyBaseline:    secs("correlation_anomaly_baseline_seconds", 600),
+		AnomalyCurrent:     secs("correlation_anomaly_current_seconds", 60),
+		AnomalyMinBaseline: getIntSetting(settings, "correlation_anomaly_min_baseline", 20),
+
+		SensitivePaths:     splitCSV(getStrSetting(settings, "correlation_sensitive_paths", "")),
+		SensitiveThreshold: getIntSetting(settings, "correlation_sensitive_threshold", 10),
+		SensitiveWindow:    secs("correlation_sensitive_window_seconds", 300),
+
+		ExportThreshold: getIntSetting(settings, "correlation_export_threshold", 5),
+		ExportWindow:    secs("correlation_export_window_seconds", 300),
+	}
+
+	// Compile export pattern once per reload. Invalid regex disables the rule
+	// rather than crashing the pipeline — the warning shows up in logs and
+	// ops can fix it in the admin panel without a restart.
+	if pat := getStrSetting(settings, "correlation_export_pattern",
+		`(?i)(download|export|report|\.pdf|\.xlsx|\.csv)`); pat != "" {
+		if re, err := regexp.Compile(pat); err != nil {
+			slog.Warn("correlation: invalid export pattern, rule disabled", "pattern", pat, "error", err)
+		} else {
+			c.ExportPattern = re
+		}
+	}
+
+	return c
+}
+
+// splitCSV trims whitespace and drops empty entries; empty strings → nil so
+// callers can treat "no paths configured" as "rule disabled" by simple len().
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func splitClaims(s string) []string {

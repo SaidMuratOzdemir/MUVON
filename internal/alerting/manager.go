@@ -33,7 +33,10 @@ type Manager struct {
 	configFn  ConfigFunc
 	notifiers []Notifier
 
-	// Fingerprint-based cooldown: fingerprint → last alert time
+	// In-memory cooldown is a fast-path cache that lets a single node skip
+	// the DB round-trip when the same fingerprint re-fires in quick
+	// succession. The DB remains the source of truth — multi-node cooldown
+	// and per-row occurrence counting happen there.
 	cooldowns sync.Map
 	quit      chan struct{}
 	stopped   chan struct{}
@@ -74,22 +77,27 @@ func (m *Manager) Stop() {
 }
 
 // HandleAlert implements correlation.AlertSink.
-// It persists the alert to DB and dispatches notifications with cooldown.
+//
+// The flow is:
+//
+//  1. Check the in-memory cooldown cache. Hit → we know (locally) a
+//     notification just went out; skip the DB trip and only record the
+//     occurrence. (The DB-backed path below would give the same answer, at
+//     the cost of a lookup.)
+//  2. Miss → ask UpsertAlert whether this fingerprint is already active
+//     somewhere (any node). If yes, it bumps occurrences; if no, it inserts
+//     a fresh row. Either way it reports whether we should notify.
+//  3. If we should notify, run every registered notifier. Failures are
+//     logged but do not revert the DB state — better to over-record a
+//     delivery failure than to risk a duplicate Slack message.
+//
+// Cooldown=0 disables grouping entirely (old behavior, useful for tests).
 func (m *Manager) HandleAlert(ctx context.Context, alert correlation.Alert) {
 	cfg := m.configFn()
+	cooldown := time.Duration(cfg.CooldownSeconds) * time.Second
 
-	// Always persist to DB
 	detailJSON, _ := json.Marshal(alert.Detail)
-	notified := false
-
-	if cfg.Enabled && (alert.NoCooldown || !m.isCoolingDown(alert.Fingerprint, cfg.CooldownSeconds)) {
-		notified = m.dispatch(ctx, alert)
-		if notified && !alert.NoCooldown {
-			m.setCooldown(alert.Fingerprint)
-		}
-	}
-
-	if err := m.database.InsertAlert(ctx, db.AlertRecord{
+	rec := db.AlertRecord{
 		Rule:        alert.Rule,
 		Severity:    alert.Severity,
 		Title:       alert.Title,
@@ -97,9 +105,27 @@ func (m *Manager) HandleAlert(ctx context.Context, alert correlation.Alert) {
 		SourceIP:    alert.SourceIP,
 		Host:        alert.Host,
 		Fingerprint: alert.Fingerprint,
-		Notified:    notified,
-	}); err != nil {
-		slog.Error("failed to persist alert", "error", err, "rule", alert.Rule)
+	}
+
+	// Fast path: if we recently notified this fingerprint on this node,
+	// just record the occurrence and skip notification dispatch.
+	inCooldown := cfg.Enabled && cfg.CooldownSeconds > 0 && m.isCoolingDown(alert.Fingerprint, cfg.CooldownSeconds)
+
+	notifyRequested := cfg.Enabled && !inCooldown
+	result, err := m.database.UpsertAlert(ctx, rec, cooldown, notifyRequested)
+	if err != nil {
+		slog.Error("alerting: upsert failed", "error", err, "rule", alert.Rule)
+		return
+	}
+
+	if !result.ShouldNotify {
+		// Either cooldown was active (in-memory or DB) or alerting is
+		// disabled. Either way, the event was persisted; nothing to send.
+		return
+	}
+
+	if m.dispatch(ctx, alert) {
+		m.setCooldown(alert.Fingerprint)
 	}
 }
 
@@ -139,8 +165,10 @@ func (m *Manager) cleanupLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			// Remove cooldowns older than 10 minutes (2x max reasonable cooldown)
-			cutoff := time.Now().Add(-10 * time.Minute)
+			// Keep the cache from growing unbounded: anything older than 2×
+			// the longest reasonable cooldown is safe to forget — the DB
+			// would handle it anyway.
+			cutoff := time.Now().Add(-1 * time.Hour)
 			m.cooldowns.Range(func(key, value any) bool {
 				if value.(time.Time).Before(cutoff) {
 					m.cooldowns.Delete(key)

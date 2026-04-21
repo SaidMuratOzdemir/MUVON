@@ -39,10 +39,19 @@ type Entry struct {
 }
 
 // UserIdentity represents extracted JWT identity information.
+//
+// ExpExpired is set to true when the signature verified but the `exp` claim
+// is in the past. In that case Verified is forced back to false — a
+// cryptographically correct but stale token is still not trustworthy for
+// authorization, and callers that key off Verified should treat it as a
+// decode-only result. The boolean surfaces separately so the UI can show
+// "the signature was valid, the token just expired" which is a different
+// class of event from a forged token.
 type UserIdentity struct {
-	Claims   map[string]string `json:"claims,omitempty"`
-	Verified bool              `json:"verified"`
-	Source   string            `json:"source"` // "jwt_verify" or "jwt_decode"
+	Claims     map[string]string `json:"claims,omitempty"`
+	Verified   bool              `json:"verified"`
+	Source     string            `json:"source"` // "jwt_verify", "jwt_decode", "jwt_expired"
+	ExpExpired bool              `json:"exp_expired,omitempty"`
 }
 
 func (u *UserIdentity) JSON() json.RawMessage {

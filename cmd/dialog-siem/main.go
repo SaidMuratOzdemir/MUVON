@@ -146,8 +146,12 @@ func main() {
 	}))
 	alertMgr.Start()
 
-	// Correlation engine — subscribes to pipeline, produces alerts
-	corrEngine := correlation.New(alertMgr)
+	// Correlation engine — subscribes to pipeline, produces alerts.
+	// The config func is read on every event so admin-panel changes to
+	// thresholds / paths take effect immediately after a config reload.
+	corrEngine := correlation.New(alertMgr, func() config.CorrelationConfig {
+		return ch.Get().Global.Correlation
+	})
 	corrEngine.Run(pipeline)
 
 	// gRPC server on Unix socket

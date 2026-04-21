@@ -1173,4 +1173,54 @@ CREATE INDEX IF NOT EXISTS        idx_admin_refresh_tokens_user    ON admin_refr
 CREATE INDEX IF NOT EXISTS        idx_admin_refresh_tokens_family  ON admin_refresh_tokens (family_id);
 CREATE INDEX IF NOT EXISTS        idx_admin_refresh_tokens_expires ON admin_refresh_tokens (expires_at);`,
 	},
+	// ── Alerts: grouping + DB-backed cooldown ──
+	// occurrences: how many times the same fingerprint has fired inside the
+	//              most recent cooldown window (≥1, starts at 1 on insert).
+	// last_seen_at: rolls forward on every duplicate; powers "last 15 events in
+	//              the group" views in the UI.
+	// notified_at: set to now() when a notifier actually dispatched. The index
+	//              below lets the alert manager answer "did we notify this
+	//              fingerprint in the last N seconds?" in O(log n) across every
+	//              node — this is how multi-node cooldown stays consistent.
+	{
+		name: "add_alerts_grouping_columns", product: "dialog",
+		sql: `
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS occurrences  INTEGER     NOT NULL DEFAULT 1;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS notified_at  TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_alerts_fingerprint_notified
+    ON alerts (fingerprint, notified_at DESC)
+    WHERE notified_at IS NOT NULL;`,
+	},
+	// ── Correlation engine tunables ──
+	// Everything is a setting so thresholds and path lists can be edited in
+	// the admin panel without redeploying. auth_paths / sensitive_paths are
+	// CSV because settings.value is JSONB but we already store CSV strings
+	// elsewhere (jwt_claims) — keeping the convention.
+	{
+		name: "seed_correlation_settings", product: "muvon",
+		sql: `
+INSERT INTO settings (key, value) VALUES
+    ('correlation_path_scan_distinct',        '10'),
+    ('correlation_path_scan_window_seconds',  '120'),
+    ('correlation_auth_brute_count',          '5'),
+    ('correlation_auth_brute_window_seconds', '120'),
+    ('correlation_auth_paths',                '"/login,/api/auth/login,/api/auth/login/,/api/authentication/login,/api/authentication/login/"'),
+    ('correlation_waf_repeat_count',          '3'),
+    ('correlation_waf_repeat_window_seconds', '300'),
+    ('correlation_error_spike_count',         '10'),
+    ('correlation_error_spike_window_seconds','60'),
+    ('correlation_anomaly_enabled',           'true'),
+    ('correlation_anomaly_ratio',             '3.0'),
+    ('correlation_anomaly_baseline_seconds',  '600'),
+    ('correlation_anomaly_current_seconds',   '60'),
+    ('correlation_anomaly_min_baseline',      '20'),
+    ('correlation_sensitive_paths',           '""'),
+    ('correlation_sensitive_threshold',       '10'),
+    ('correlation_sensitive_window_seconds',  '300'),
+    ('correlation_export_pattern',            '"(?i)(download|export|report|\\.pdf|\\.xlsx|\\.csv)"'),
+    ('correlation_export_threshold',          '5'),
+    ('correlation_export_window_seconds',     '300')
+ON CONFLICT (key) DO NOTHING;`,
+	},
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -43,26 +44,39 @@ func (ex *Extractor) ExtractFromBearer(authHeader string, cfg Config) *logger.Us
 		return nil
 	}
 
-	// Try verify first
-	claims, err := verifyHS256(raw, cfg.Secret)
+	// Check signature first, ignoring exp — we want to report signature and
+	// expiry as separate observations. An expired-but-signed token is a
+	// different class of event (likely a stale but legitimate client) from
+	// a forged token, and collapsing both into "verify failed → fall back
+	// to decode" hides that distinction.
+	claims, err := verifyHS256Signature(raw, cfg.Secret)
 	if err == nil {
-		return buildIdentity(claims, cfg.Claims, true, "jwt_verify")
+		expired := isExpired(claims)
+		if expired {
+			return buildIdentity(claims, cfg.Claims, false, "jwt_expired", true)
+		}
+		return buildIdentity(claims, cfg.Claims, true, "jwt_verify", false)
 	}
 
 	slog.Debug("jwt verify failed, falling back to decode", "error", err)
 
-	// Fallback: decode without verification
+	// Fallback: decode without verification. The claims may be forged; we
+	// still capture them (for observability) and pass exp state through so
+	// the UI can distinguish "forged" from "forged AND expired".
 	claims, err = decodeUnverified(raw)
 	if err != nil {
 		slog.Debug("jwt decode failed", "error", err)
 		return nil
 	}
-
-	return buildIdentity(claims, cfg.Claims, false, "jwt_decode")
+	return buildIdentity(claims, cfg.Claims, false, "jwt_decode", isExpired(claims))
 }
 
-func verifyHS256(tokenStr, secret string) (jwt.MapClaims, error) {
-	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+// verifyHS256Signature parses a token, enforces the HMAC algorithm, and
+// verifies the signature but explicitly skips claim validation (including
+// exp/nbf) so we can report expiry as its own signal.
+func verifyHS256Signature(tokenStr, secret string) (jwt.MapClaims, error) {
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	token, err := parser.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, jwt.ErrSignatureInvalid
 		}
@@ -78,6 +92,35 @@ func verifyHS256(tokenStr, secret string) (jwt.MapClaims, error) {
 	return claims, nil
 }
 
+// isExpired reads the exp claim and returns whether it lies in the past.
+// Missing or unparseable exp → treated as not expired (matches JWT spec:
+// exp is optional, and we do not want to drop tokens that legitimately do
+// not set it).
+func isExpired(claims jwt.MapClaims) bool {
+	raw, ok := claims["exp"]
+	if !ok {
+		return false
+	}
+	var exp int64
+	switch v := raw.(type) {
+	case float64:
+		exp = int64(v)
+	case int64:
+		exp = v
+	case int:
+		exp = int64(v)
+	case string:
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return false
+		}
+		exp = n
+	default:
+		return false
+	}
+	return time.Now().Unix() >= exp
+}
+
 func decodeUnverified(tokenStr string) (jwt.MapClaims, error) {
 	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
 	token, _, err := parser.ParseUnverified(tokenStr, jwt.MapClaims{})
@@ -91,7 +134,7 @@ func decodeUnverified(tokenStr string) (jwt.MapClaims, error) {
 	return claims, nil
 }
 
-func buildIdentity(allClaims jwt.MapClaims, wantedKeys []string, verified bool, source string) *logger.UserIdentity {
+func buildIdentity(allClaims jwt.MapClaims, wantedKeys []string, verified bool, source string, expExpired bool) *logger.UserIdentity {
 	extracted := make(map[string]string, len(wantedKeys))
 	for _, key := range wantedKeys {
 		v, ok := allClaims[key]
@@ -114,13 +157,17 @@ func buildIdentity(allClaims jwt.MapClaims, wantedKeys []string, verified bool, 
 		}
 	}
 
-	if len(extracted) == 0 {
+	// An expired token with no extracted claims is still worth recording —
+	// the expiry signal itself matters for audit/correlation. An unverified
+	// decode with zero extracted claims can be dropped.
+	if len(extracted) == 0 && !expExpired {
 		return nil
 	}
 
 	return &logger.UserIdentity{
-		Claims:   extracted,
-		Verified: verified,
-		Source:   source,
+		Claims:     extracted,
+		Verified:   verified,
+		Source:     source,
+		ExpExpired: expExpired,
 	}
 }

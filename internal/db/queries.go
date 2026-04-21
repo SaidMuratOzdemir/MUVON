@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -1030,12 +1031,118 @@ type AlertRecord struct {
 
 func (d *DB) InsertAlert(ctx context.Context, a AlertRecord) error {
 	_, err := d.Pool.Exec(ctx,
-		`INSERT INTO alerts (rule, severity, title, detail, source_ip, host, fingerprint, notified)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		`INSERT INTO alerts (rule, severity, title, detail, source_ip, host, fingerprint, notified, notified_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CASE WHEN $8 THEN now() ELSE NULL END)`,
 		a.Rule, a.Severity, a.Title, a.Detail, a.SourceIP, a.Host, a.Fingerprint, a.Notified,
 	)
 	if err != nil {
 		return fmt.Errorf("insert alert: %w", err)
 	}
 	return nil
+}
+
+// UpsertAlertResult reports how UpsertAlert resolved the event.
+//
+// ShouldNotify is the single source of truth for "did this call dispatch
+// Slack / email?" — the alert manager must treat it as authoritative, even
+// across nodes. Grouped=true means an existing alert row inside the
+// cooldown window was extended instead of a new row being written; in that
+// case ShouldNotify is always false (cooldown suppressed notification) but
+// occurrences was bumped so the UI still reflects the event.
+type UpsertAlertResult struct {
+	ShouldNotify bool
+	Grouped      bool
+	Occurrences  int
+}
+
+// UpsertAlert implements multi-node alert cooldown + occurrence grouping in
+// a single transaction. The decision tree:
+//
+//  1. Find the most recent row for this fingerprint whose notified_at is
+//     within the cooldown window. FOR UPDATE locks it so concurrent
+//     workers on any node serialize behind us.
+//  2. If one exists: bump occurrences, slide last_seen_at forward. Return
+//     Grouped=true, ShouldNotify=false. Slack will NOT fire — another node
+//     already notified inside the window.
+//  3. If none exists: insert a fresh row with notified=notifyRequested and
+//     notified_at=now() (iff notifyRequested). Return ShouldNotify equal to
+//     notifyRequested. The caller then tries the notifiers; if they succeed
+//     the DB already reflects it, if they fail we leave the row as
+//     "notified=true but dispatch erroneous" — acceptable, we would rather
+//     over-report a failure than duplicate a Slack message.
+//
+// cooldown=0 disables DB grouping entirely and always inserts.
+func (d *DB) UpsertAlert(ctx context.Context, a AlertRecord, cooldown time.Duration, notifyRequested bool) (UpsertAlertResult, error) {
+	var res UpsertAlertResult
+
+	if cooldown <= 0 {
+		// No cooldown → every event is a new row. Preserve the old behaviour.
+		if err := d.InsertAlert(ctx, AlertRecord{
+			Rule: a.Rule, Severity: a.Severity, Title: a.Title, Detail: a.Detail,
+			SourceIP: a.SourceIP, Host: a.Host, Fingerprint: a.Fingerprint,
+			Notified: notifyRequested,
+		}); err != nil {
+			return res, err
+		}
+		res.ShouldNotify = notifyRequested
+		res.Occurrences = 1
+		return res, nil
+	}
+
+	err := pgx.BeginFunc(ctx, d.Pool, func(tx pgx.Tx) error {
+		cutoff := time.Now().Add(-cooldown)
+
+		var (
+			id          string
+			occurrences int
+		)
+		row := tx.QueryRow(ctx, `
+			SELECT id::text, occurrences
+			FROM alerts
+			WHERE fingerprint = $1 AND notified_at IS NOT NULL AND notified_at >= $2
+			ORDER BY notified_at DESC
+			LIMIT 1
+			FOR UPDATE`, a.Fingerprint, cutoff)
+
+		err := row.Scan(&id, &occurrences)
+		switch {
+		case err == nil:
+			// Existing alert inside cooldown — bump occurrences, slide last_seen_at.
+			if _, err := tx.Exec(ctx, `
+				UPDATE alerts
+				SET occurrences = occurrences + 1,
+				    last_seen_at = now()
+				WHERE id = $1::uuid`, id); err != nil {
+				return fmt.Errorf("upsert alert: bump occurrences: %w", err)
+			}
+			res.Grouped = true
+			res.Occurrences = occurrences + 1
+			res.ShouldNotify = false
+			return nil
+
+		case errors.Is(err, pgx.ErrNoRows):
+			// No active alert — insert a fresh row.
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO alerts
+					(rule, severity, title, detail, source_ip, host, fingerprint,
+					 notified, notified_at, last_seen_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+					CASE WHEN $8 THEN now() ELSE NULL END,
+					now())`,
+				a.Rule, a.Severity, a.Title, a.Detail, a.SourceIP, a.Host, a.Fingerprint,
+				notifyRequested); err != nil {
+				return fmt.Errorf("upsert alert: insert: %w", err)
+			}
+			res.Occurrences = 1
+			res.ShouldNotify = notifyRequested
+			return nil
+
+		default:
+			return fmt.Errorf("upsert alert: lookup: %w", err)
+		}
+	})
+	if err != nil {
+		return res, err
+	}
+	return res, nil
 }
