@@ -282,7 +282,21 @@ export default function Hosts() {
   const [loading, setLoading] = useState(true)
   const [hostDialog, setHostDialog] = useState<{ open: boolean; host: Host | null }>({ open: false, host: null })
   const [deleteTarget, setDeleteTarget] = useState<Host | null>(null)
-  const [hostForm, setHostForm] = useState({ domain: '', is_active: true, force_https: false, trusted_proxies: [] as string[] })
+  // jwt_secret stays empty on edit — backend reads empty as "keep existing"
+  // so we never have to round-trip ciphertext. `jwt_secret_set` mirrors
+  // whether the saved row has a secret so the form can show "********"
+  // instead of a blank field when the admin is reviewing an existing host.
+  const [hostForm, setHostForm] = useState({
+    domain: '',
+    is_active: true,
+    force_https: false,
+    trusted_proxies: [] as string[],
+    jwt_identity_enabled: false,
+    jwt_identity_mode: 'verify',
+    jwt_claims: '',
+    jwt_secret: '',
+    jwt_secret_set: false,
+  })
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
 
@@ -300,12 +314,28 @@ export default function Hosts() {
   useEffect(() => { load() }, [load])
 
   function openAddHost() {
-    setHostForm({ domain: '', is_active: true, force_https: false, trusted_proxies: [] })
+    setHostForm({
+      domain: '', is_active: true, force_https: false, trusted_proxies: [],
+      jwt_identity_enabled: false, jwt_identity_mode: 'verify', jwt_claims: '',
+      jwt_secret: '', jwt_secret_set: false,
+    })
     setHostDialog({ open: true, host: null })
   }
 
   function openEditHost(h: Host) {
-    setHostForm({ domain: h.domain, is_active: h.is_active, force_https: h.force_https ?? false, trusted_proxies: h.trusted_proxies ?? [] })
+    setHostForm({
+      domain: h.domain,
+      is_active: h.is_active,
+      force_https: h.force_https ?? false,
+      trusted_proxies: h.trusted_proxies ?? [],
+      jwt_identity_enabled: h.jwt_identity_enabled ?? false,
+      jwt_identity_mode: h.jwt_identity_mode || 'verify',
+      jwt_claims: h.jwt_claims || '',
+      jwt_secret: '',
+      // Backend masks the ciphertext as "********" when a secret is set;
+      // the UI shows a "secret is set" hint instead of a blank field.
+      jwt_secret_set: typeof h.jwt_secret === 'string' && h.jwt_secret !== '',
+    })
     setHostDialog({ open: true, host: h })
   }
 
@@ -313,11 +343,15 @@ export default function Hosts() {
     if (!hostForm.domain) { toast.error('Domain is required'); return }
     setSaving(true)
     try {
+      // jwt_secret_set is a UI-only flag; strip before sending. Empty
+      // jwt_secret tells the backend "keep the existing ciphertext".
+      const { jwt_secret_set: _unused, ...payload } = hostForm
+      void _unused
       if (hostDialog.host) {
-        await api.updateHost(hostDialog.host.id, { ...hostForm, trusted_proxies: hostForm.trusted_proxies })
+        await api.updateHost(hostDialog.host.id, payload)
         toast.success('Host updated')
       } else {
-        await api.createHost({ ...hostForm, trusted_proxies: hostForm.trusted_proxies })
+        await api.createHost(payload)
         toast.success('Host created')
       }
       await load()
@@ -458,6 +492,64 @@ export default function Hosts() {
               onChange={v => setHostForm(f => ({ ...f, trusted_proxies: v }))}
               placeholder="10.0.0.0/8 or 192.168.1.1"
             />
+
+            {/* JWT Identity override — per-host so one MUVON can front
+                multiple tenant apps with different signing secrets. When
+                the toggle is off, the global Settings → JWT Identity rules
+                apply to this host's requests. */}
+            <div className="rounded-md border border-border divide-y divide-border">
+              <div className="flex items-center justify-between px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">JWT Identity override</p>
+                  <p className="text-xs text-muted-foreground">
+                    Use this host's own claims + secret. Off → fall back to global Settings.
+                  </p>
+                </div>
+                <Switch
+                  checked={hostForm.jwt_identity_enabled}
+                  onCheckedChange={v => setHostForm(f => ({ ...f, jwt_identity_enabled: v }))}
+                  className="cursor-pointer"
+                />
+              </div>
+              {hostForm.jwt_identity_enabled && (
+                <>
+                  <div className="px-4 py-3 space-y-1">
+                    <Label className="text-xs">Claims (comma-separated)</Label>
+                    <Input
+                      placeholder="sub,email,name,role,holding_id"
+                      className="bg-background border-border font-mono text-xs"
+                      value={hostForm.jwt_claims}
+                      onChange={e => setHostForm(f => ({ ...f, jwt_claims: e.target.value }))}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Keys extracted from the JWT payload. Leave empty to inherit the
+                      global list.
+                    </p>
+                  </div>
+                  <div className="px-4 py-3 space-y-1">
+                    <Label className="text-xs">
+                      HS256 Secret
+                      {hostForm.jwt_secret_set && !hostForm.jwt_secret && (
+                        <span className="ml-2 text-emerald-400 text-[11px]">(already set — type to rotate)</span>
+                      )}
+                    </Label>
+                    <Input
+                      type="password"
+                      placeholder={hostForm.jwt_secret_set ? '••••••••  (leave blank to keep)' : 'Enter secret or leave blank for decode-only'}
+                      className="bg-background border-border font-mono text-xs"
+                      value={hostForm.jwt_secret}
+                      onChange={e => setHostForm(f => ({ ...f, jwt_secret: e.target.value }))}
+                      autoComplete="off"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      With a secret: signatures are verified. Without: claims are
+                      still decoded but marked "not verified" — useful when you
+                      front multiple tenants with different secrets.
+                    </p>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setHostDialog({ open: false, host: null })} className="cursor-pointer border-border">

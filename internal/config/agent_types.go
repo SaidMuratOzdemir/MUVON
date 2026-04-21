@@ -90,6 +90,18 @@ func (p AgentPayload) ToConfig() *Config {
 				PathPrefix: r.PathPrefix,
 			})
 		}
+		// Per-host JWT metadata crosses the wire via db.Host's json tags.
+		// The secret itself is json:"-" on purpose — agents never receive
+		// it because enrichment happens centrally. The metadata is carried
+		// so agents stay consistent with the central snapshot.
+		hc.JWTIdentityEnabled = h.JWTIdentityEnabled
+		hc.JWTIdentityMode = h.JWTIdentityMode
+		if h.JWTClaims != "" {
+			hc.JWTClaims = strings.Split(h.JWTClaims, ",")
+			for i, c := range hc.JWTClaims {
+				hc.JWTClaims[i] = strings.TrimSpace(c)
+			}
+		}
 		cfg.Hosts[h.Domain] = hc
 	}
 

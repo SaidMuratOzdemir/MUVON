@@ -104,10 +104,27 @@ func main() {
 		return "", ""
 	})
 
-	// JWT identity enrichment — extracts claims from Authorization header centrally
+	// JWT identity enrichment — extracts claims from Authorization header
+	// centrally. Host-scoped override wins when that host's override is
+	// enabled; otherwise we fall back to the global config. This lets a
+	// single MUVON front multiple tenant apps that sign with different
+	// secrets.
 	idExtractor := &identity.Extractor{}
-	pipeline.SetIdentityEnricher(func(authHeader string) *logger.UserIdentity {
+	pipeline.SetIdentityEnricher(func(host, authHeader string) *logger.UserIdentity {
 		cfg := ch.Get()
+		if host != "" {
+			if hc, ok := cfg.Hosts[host]; ok && hc.JWTIdentityEnabled {
+				claims := hc.JWTClaims
+				if len(claims) == 0 {
+					claims = cfg.Global.JWTClaims
+				}
+				return idExtractor.ExtractFromBearer(authHeader, identity.Config{
+					Enabled: true,
+					Secret:  hc.JWTSecret,
+					Claims:  claims,
+				})
+			}
+		}
 		return idExtractor.ExtractFromBearer(authHeader, identity.Config{
 			Enabled: cfg.Global.JWTIdentityEnabled,
 			Secret:  cfg.Global.JWTSecret,

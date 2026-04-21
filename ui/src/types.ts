@@ -11,6 +11,14 @@ export interface Host {
   is_active: boolean;
   force_https: boolean;
   trusted_proxies: string[];
+  // Per-host JWT identity override. When `jwt_identity_enabled` is true,
+  // the central pipeline uses these claims/secret instead of the global
+  // setting. `jwt_secret` comes back masked (`"********"`) from the API
+  // when a secret is set; the UI treats any non-empty string as "set".
+  jwt_identity_enabled?: boolean;
+  jwt_identity_mode?: string;
+  jwt_claims?: string;
+  jwt_secret?: string;
   created_at: string;
   updated_at: string;
 }

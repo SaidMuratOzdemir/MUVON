@@ -22,6 +22,15 @@ type Config struct {
 type HostConfig struct {
 	Host   db.Host
 	Routes []RouteRule
+
+	// Decrypted per-host JWT identity config. When JWTIdentityEnabled is
+	// false the pipeline must fall back to the GlobalConfig equivalents —
+	// this struct always reflects ONLY this host's declared overrides.
+	// Secret is the plaintext; callers must not serialise it.
+	JWTIdentityEnabled bool
+	JWTIdentityMode    string
+	JWTClaims          []string
+	JWTSecret          string
 }
 
 type RouteRule struct {
@@ -163,6 +172,17 @@ func LoadFromDB(ctx context.Context, database *db.DB, box *secret.Box) (*Config,
 				rule.ManagedBackends = managedBackends[*r.ManagedComponentID]
 			}
 			hc.Routes = append(hc.Routes, rule)
+		}
+		// Resolve per-host JWT config: decrypt the stored ciphertext once
+		// per reload so the hot path never pays AES cost. A failed decrypt
+		// disables the override rather than killing the whole reload.
+		hc.JWTIdentityEnabled = h.JWTIdentityEnabled
+		hc.JWTIdentityMode = h.JWTIdentityMode
+		if h.JWTClaims != "" {
+			hc.JWTClaims = splitClaims(h.JWTClaims)
+		}
+		if h.JWTSecret != "" {
+			hc.JWTSecret = decryptSetting(box, h.JWTSecret, "host:"+h.Domain+":jwt_secret")
 		}
 		cfg.Hosts[h.Domain] = hc
 	}

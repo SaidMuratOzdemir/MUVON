@@ -20,16 +20,28 @@ type Host struct {
 	IsActive       bool      `json:"is_active"`
 	ForceHTTPS     bool      `json:"force_https"`
 	TrustedProxies []string  `json:"trusted_proxies"`
+	// Per-host JWT identity override. When JWTIdentityEnabled is false the
+	// pipeline falls back to the global setting. When true, Secret and
+	// Claims on this row take priority. The secret is stored encrypted in
+	// the column and callers must decrypt via secret.Box before use.
+	JWTIdentityEnabled bool   `json:"jwt_identity_enabled"`
+	JWTIdentityMode    string `json:"jwt_identity_mode"`
+	JWTClaims          string `json:"jwt_claims"`
+	JWTSecret          string `json:"-"` // encrypted ciphertext; never serialised
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-const hostSelectCols = `id, domain, is_active, force_https, trusted_proxies, created_at, updated_at`
+const hostSelectCols = `id, domain, is_active, force_https, trusted_proxies,
+	jwt_identity_enabled, jwt_identity_mode, jwt_claims, jwt_secret,
+	created_at, updated_at`
 
 func scanHost(scan func(...any) error) (Host, error) {
 	var h Host
 	var trusted []string
-	err := scan(&h.ID, &h.Domain, &h.IsActive, &h.ForceHTTPS, &trusted, &h.CreatedAt, &h.UpdatedAt)
+	err := scan(&h.ID, &h.Domain, &h.IsActive, &h.ForceHTTPS, &trusted,
+		&h.JWTIdentityEnabled, &h.JWTIdentityMode, &h.JWTClaims, &h.JWTSecret,
+		&h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return h, err
 	}
@@ -68,13 +80,29 @@ func (d *DB) GetHost(ctx context.Context, id int) (Host, error) {
 	return h, nil
 }
 
-func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS bool, trustedProxies []string) (Host, error) {
+// HostJWT groups the per-host JWT columns for CreateHost / UpdateHost so
+// the signature does not grow another four positional args.
+type HostJWT struct {
+	Enabled bool
+	Mode    string // "verify" | "decode"
+	Claims  string // CSV
+	Secret  string // encrypted ciphertext from secret.Box (or "" to clear)
+}
+
+func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS bool, trustedProxies []string, jwt HostJWT) (Host, error) {
 	if trustedProxies == nil {
 		trustedProxies = []string{}
 	}
+	if jwt.Mode == "" {
+		jwt.Mode = "verify"
+	}
 	h, err := scanHost(d.Pool.QueryRow(ctx,
-		`INSERT INTO hosts (domain, is_active, force_https, trusted_proxies) VALUES ($1, $2, $3, $4) RETURNING `+hostSelectCols,
+		`INSERT INTO hosts (domain, is_active, force_https, trusted_proxies,
+			jwt_identity_enabled, jwt_identity_mode, jwt_claims, jwt_secret)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		 RETURNING `+hostSelectCols,
 		domain, isActive, forceHTTPS, trustedProxies,
+		jwt.Enabled, jwt.Mode, jwt.Claims, jwt.Secret,
 	).Scan)
 	if err != nil {
 		return h, fmt.Errorf("create host: %w", err)
@@ -82,14 +110,20 @@ func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS
 	return h, nil
 }
 
-func (d *DB) UpdateHost(ctx context.Context, id int, domain string, isActive, forceHTTPS bool, trustedProxies []string) (Host, error) {
+func (d *DB) UpdateHost(ctx context.Context, id int, domain string, isActive, forceHTTPS bool, trustedProxies []string, jwt HostJWT) (Host, error) {
 	if trustedProxies == nil {
 		trustedProxies = []string{}
 	}
+	if jwt.Mode == "" {
+		jwt.Mode = "verify"
+	}
 	h, err := scanHost(d.Pool.QueryRow(ctx,
-		`UPDATE hosts SET domain=$2, is_active=$3, force_https=$4, trusted_proxies=$5, updated_at=now()
+		`UPDATE hosts SET domain=$2, is_active=$3, force_https=$4, trusted_proxies=$5,
+			jwt_identity_enabled=$6, jwt_identity_mode=$7, jwt_claims=$8, jwt_secret=$9,
+			updated_at=now()
 		 WHERE id=$1 RETURNING `+hostSelectCols,
 		id, domain, isActive, forceHTTPS, trustedProxies,
+		jwt.Enabled, jwt.Mode, jwt.Claims, jwt.Secret,
 	).Scan)
 	if err != nil {
 		return h, fmt.Errorf("update host: %w", err)

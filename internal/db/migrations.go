@@ -384,6 +384,20 @@ ALTER TABLE http_logs ADD COLUMN IF NOT EXISTS user_identity JSONB;
 ALTER TABLE http_logs ADD COLUMN IF NOT EXISTS country TEXT;
 ALTER TABLE http_logs ADD COLUMN IF NOT EXISTS city TEXT;`,
 	},
+	// Per-host JWT identity overrides. When a host enables JWT identity,
+	// the pipeline enricher uses that host's secret/claims instead of the
+	// global one. This lets a single MUVON front multiple tenant apps
+	// that sign with different secrets (e.g. one Django SECRET_KEY per
+	// customer). Null / empty values fall back to the global settings so
+	// operators can start global and move to per-host incrementally.
+	{
+		name: "add_hosts_jwt_columns", product: "muvon",
+		sql: `
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS jwt_identity_enabled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS jwt_identity_mode    TEXT    NOT NULL DEFAULT 'verify';
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS jwt_claims           TEXT    NOT NULL DEFAULT '';
+ALTER TABLE hosts ADD COLUMN IF NOT EXISTS jwt_secret           TEXT    NOT NULL DEFAULT '';`,
+	},
 	// Fast JSONB containment for user_identity. Lets us answer
 	// "show me every request where claims @> {email: alice}" without a full
 	// scan over the chunks, and the same index serves sub / name / role

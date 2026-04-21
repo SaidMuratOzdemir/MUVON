@@ -12,8 +12,11 @@ import (
 // GeoEnricher resolves a client IP to country and city.
 type GeoEnricher func(ip string) (country, city string)
 
-// IdentityEnricher extracts JWT identity from a raw Authorization header value.
-type IdentityEnricher func(authHeader string) *UserIdentity
+// IdentityEnricher extracts JWT identity from a raw Authorization header.
+// The host is passed alongside the header so the caller can pick a
+// host-scoped JWT config (per-customer secret, different claim shapes)
+// before falling back to a global setting.
+type IdentityEnricher func(host, authHeader string) *UserIdentity
 
 type Pipeline struct {
 	ch         chan Entry
@@ -83,8 +86,8 @@ func (p *Pipeline) Send(entry Entry) {
 		entry.Country, entry.City = geoFn(entry.ClientIP)
 	}
 	if jwtFn != nil && entry.UserIdentity == nil {
-		if auth := entry.RequestHeaders["Authorization"]; auth != "" {
-			entry.UserIdentity = jwtFn(auth)
+		if auth := headerCaseInsensitive(entry.RequestHeaders, "Authorization"); auth != "" {
+			entry.UserIdentity = jwtFn(entry.Host, auth)
 		}
 	}
 
@@ -142,4 +145,35 @@ func (p *Pipeline) Stop() {
 
 func (p *Pipeline) Stats() (enqueued, dropped int64, queueLen int) {
 	return p.enqueued.Load(), p.dropped.Load(), len(p.ch)
+}
+
+// headerCaseInsensitive finds a header by lowercase comparison. Some
+// upstream proxies send "authorization" lowercase; we do not want that
+// cosmetic difference to silently disable identity enrichment.
+func headerCaseInsensitive(h map[string]string, key string) string {
+	if v, ok := h[key]; ok && v != "" {
+		return v
+	}
+	lk := ""
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 32
+		}
+		lk += string(c)
+	}
+	for k, v := range h {
+		lower := ""
+		for i := 0; i < len(k); i++ {
+			c := k[i]
+			if c >= 'A' && c <= 'Z' {
+				c += 32
+			}
+			lower += string(c)
+		}
+		if lower == lk {
+			return v
+		}
+	}
+	return ""
 }

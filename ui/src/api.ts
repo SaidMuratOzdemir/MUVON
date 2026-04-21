@@ -256,8 +256,20 @@ export async function listHosts(): Promise<Host[]> {
   return request<Host[]>("GET", "/api/hosts");
 }
 
+// Fields the host edit form POSTs / PATCHes. jwt_secret is plaintext on
+// write — backend encrypts at rest; empty means "keep existing".
+type HostWriteFields =
+  | "domain"
+  | "is_active"
+  | "force_https"
+  | "trusted_proxies"
+  | "jwt_identity_enabled"
+  | "jwt_identity_mode"
+  | "jwt_claims"
+  | "jwt_secret";
+
 export async function createHost(
-  data: Pick<Host, "domain" | "is_active" | "force_https" | "trusted_proxies">,
+  data: Pick<Host, HostWriteFields>,
 ): Promise<Host> {
   return request<Host>("POST", "/api/hosts", data);
 }
@@ -268,7 +280,7 @@ export async function getHost(id: number): Promise<Host> {
 
 export async function updateHost(
   id: number,
-  data: Partial<Pick<Host, "domain" | "is_active" | "force_https" | "trusted_proxies">>,
+  data: Partial<Pick<Host, HostWriteFields>>,
 ): Promise<Host> {
   return request<Host>("PUT", `/api/hosts/${id}`, data);
 }
