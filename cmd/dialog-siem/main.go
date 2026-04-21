@@ -71,6 +71,26 @@ func main() {
 		slog.Warn("config init failed, alerting may be unavailable", "error", err)
 	}
 
+	// Background config reload. Without this the snapshot loaded at
+	// startup is frozen — admin-panel changes to JWT identity, GeoIP,
+	// correlation thresholds, and alerting config never reach this
+	// process. MUVON runs an equivalent loop in its own main; matching
+	// the cadence here keeps the two services in sync within ~5s.
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := ch.Reload(ctx); err != nil {
+					slog.Warn("background config reload failed", "error", err)
+				}
+			}
+		}
+	}()
+
 	// Log pipeline
 	flushInterval := time.Duration(*flushMs) * time.Millisecond
 	pipeline := logger.NewPipeline(database.Pool, *bufSize, *workers, *batchSize, flushInterval)
