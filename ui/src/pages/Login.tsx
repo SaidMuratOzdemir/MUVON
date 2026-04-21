@@ -8,9 +8,11 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import * as api from '@/api'
+import { useAuth } from '@/context/useAuth'
 
 export default function Login() {
   const navigate = useNavigate()
+  const auth = useAuth()
   const [loading, setLoading] = useState(false)
   const [showPw, setShowPw] = useState(false)
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
@@ -24,8 +26,7 @@ export default function Login() {
     }
     setLoading(true)
     try {
-      const { token } = await api.login(loginForm.username, loginForm.password)
-      localStorage.setItem('dialog_token', token)
+      await auth.login(loginForm.username, loginForm.password)
       navigate('/', { replace: true })
     } catch (err) {
       toast.error(err instanceof api.ApiError ? err.message : 'Login failed')
@@ -50,8 +51,7 @@ export default function Login() {
     }
     setLoading(true)
     try {
-      const { token } = await api.setup(setupForm.username, setupForm.password)
-      localStorage.setItem('dialog_token', token)
+      await auth.setup(setupForm.username, setupForm.password)
       toast.success('Admin account created')
       navigate('/', { replace: true })
     } catch (err) {

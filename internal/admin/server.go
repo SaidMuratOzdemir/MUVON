@@ -70,11 +70,24 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	rl := middleware.NewRateLimiter(100, time.Minute)
 
-	// Auth endpoints (rate limited, no JWT)
+	// Auth endpoints (rate limited, no JWT).
+	// CSRF is enforced by a single middleware instance shared with the
+	// protected api mux; login/setup/refresh are in the bypass list because
+	// they establish or renew the cookie (and therefore cannot have a valid
+	// CSRF pair yet). Logout is not bypassed — it is state-changing and
+	// callable while a session is active.
+	csrfMW := csrfMiddleware(map[string]bool{
+		"/api/auth/login":   true,
+		"/api/auth/setup":   true,
+		"/api/auth/refresh": true,
+	})
+
 	authMux := http.NewServeMux()
 	authMux.HandleFunc("POST /api/auth/login", s.handleLogin)
 	authMux.HandleFunc("POST /api/auth/setup", s.handleSetup)
-	mux.Handle("/api/auth/", rl.Middleware(authMux))
+	authMux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
+	authMux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	mux.Handle("/api/auth/", rl.Middleware(csrfMW(authMux)))
 
 	// Deploy webhook — HMAC-authenticated by project secret, no admin JWT.
 	mux.HandleFunc("POST /api/deploy/webhook", s.handleDeployWebhook)
@@ -161,7 +174,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/deploy/deployments/{id}/rerun", s.handleRerunDeployment)
 	api.HandleFunc("POST /api/deploy/projects/{slug}/deploy", s.handleManualDeploy)
 
-	mux.Handle("/api/", s.authMiddleware(api))
+	mux.Handle("/api/", s.authMiddleware(csrfMW(api)))
 
 	// Agent API (X-Api-Key auth, no JWT)
 	if s.agentSvc != nil {
@@ -195,97 +208,6 @@ func (s *Server) Handler() http.Handler {
 	handler = middleware.Recovery(handler)
 
 	return handler
-}
-
-// --- Auth handlers ---
-
-func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
-		return
-	}
-
-	user, err := s.db.GetAdminByUsername(r.Context(), req.Username)
-	if err != nil || !user.IsActive {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
-		return
-	}
-
-	if !CheckPassword(user.PasswordHash, req.Password) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
-		return
-	}
-
-	token, err := s.auth.GenerateToken(user.ID, user.Username)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"token": token})
-}
-
-func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
-	exists, err := s.db.AdminExists(r.Context())
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if exists {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "admin already exists"})
-		return
-	}
-
-	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
-		return
-	}
-	if req.Username == "" || len(req.Password) < 8 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username required, password min 8 chars"})
-		return
-	}
-
-	hash, err := HashPassword(req.Password)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password hashing failed"})
-		return
-	}
-
-	user, err := s.db.CreateAdmin(r.Context(), req.Username, hash)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-
-	token, err := s.auth.GenerateToken(user.ID, user.Username)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"user":  user,
-		"token": token,
-	})
-}
-
-func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	userID := r.Context().Value(userIDKey).(int)
-	user, err := s.db.GetAdminByUsername(r.Context(), "") // TODO: GetAdminByID
-	_ = userID
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"user_id": userID})
-		return
-	}
-	writeJSON(w, http.StatusOK, user)
 }
 
 // --- System handlers ---

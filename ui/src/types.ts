@@ -1,3 +1,10 @@
+export interface AdminUser {
+  id: number;
+  username: string;
+  is_active: boolean;
+  created_at: string;
+}
+
 export interface Host {
   id: number;
   domain: string;

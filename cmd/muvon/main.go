@@ -173,6 +173,10 @@ func main() {
 	if err := adminSrv.EnsureDefaultAdmin(ctx); err != nil {
 		slog.Warn("admin check failed", "error", err)
 	}
+	// Prune refresh tokens whose absolute expiry has passed. Hourly is a fine
+	// cadence — the rows are tiny and hanging around for an extra hour does
+	// not weaken the security model (they are already marked expired).
+	adminSrv.StartRefreshTokenCleanup(ctx, time.Hour)
 
 	// Router — main reverse proxy handler
 	// If adminDomain is set, admin panel is served on :443 for that domain; :9443 is not started.

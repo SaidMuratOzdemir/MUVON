@@ -1146,4 +1146,31 @@ ON CONFLICT DO NOTHING;
 		name: "add_routes_static_spa", product: "muvon",
 		sql: `ALTER TABLE routes ADD COLUMN IF NOT EXISTS static_spa BOOLEAN NOT NULL DEFAULT false;`,
 	},
+	// ── Refresh tokens (enterprise auth: short-lived access + long-lived refresh with rotation) ──
+	{
+		name: "add_admin_users_token_version", product: "muvon",
+		sql: `ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;`,
+	},
+	{
+		name: "create_admin_refresh_tokens", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS admin_refresh_tokens (
+    id           UUID NOT NULL DEFAULT gen_uuidv7(),
+    user_id      INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+    token_hash   BYTEA NOT NULL,
+    family_id    UUID NOT NULL,
+    parent_id    UUID,
+    issued_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at   TIMESTAMPTZ NOT NULL,
+    revoked_at   TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ,
+    user_agent   TEXT,
+    ip_address   TEXT,
+    PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_refresh_tokens_hash    ON admin_refresh_tokens (token_hash);
+CREATE INDEX IF NOT EXISTS        idx_admin_refresh_tokens_user    ON admin_refresh_tokens (user_id);
+CREATE INDEX IF NOT EXISTS        idx_admin_refresh_tokens_family  ON admin_refresh_tokens (family_id);
+CREATE INDEX IF NOT EXISTS        idx_admin_refresh_tokens_expires ON admin_refresh_tokens (expires_at);`,
+	},
 }

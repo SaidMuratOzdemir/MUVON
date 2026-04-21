@@ -1,4 +1,5 @@
 import type {
+  AdminUser,
   Host,
   Route,
   LogEntry,
@@ -22,15 +23,57 @@ import type {
 
 const API_BASE = "";
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem("dialog_token");
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+// Authentication is cookie-based:
+//   • __Host-muvon_access  — HttpOnly JWT, 15 min
+//   • muvon_refresh        — HttpOnly refresh token, 30 days, path=/api/auth
+//   • muvon_csrf           — JS-readable CSRF token, mirrored in X-CSRF-Token
+//
+// The browser attaches the cookies for us; this module only has to (a) echo
+// the CSRF token on state-changing requests and (b) transparently refresh on
+// 401.
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function readCSRF(): string {
+  const m = document.cookie.match(/(?:^|;\s*)muvon_csrf=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+function buildHeaders(method: string, hasBody: boolean): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (hasBody) headers["Content-Type"] = "application/json";
+  if (!SAFE_METHODS.has(method)) {
+    const csrf = readCSRF();
+    if (csrf) headers["X-CSRF-Token"] = csrf;
   }
   return headers;
+}
+
+// Single-flight refresh: if N concurrent requests see 401 at once, only one
+// /api/auth/refresh call is in flight. The rest await the same promise.
+let refreshInFlight: Promise<void> | null = null;
+// Callback fired when refresh fails (e.g. refresh token expired or revoked).
+// AuthContext registers a handler to clear user state and bounce to login.
+let onAuthExpired: (() => void) | null = null;
+
+export function setAuthExpiredHandler(fn: (() => void) | null): void {
+  onAuthExpired = fn;
+}
+
+async function doRefresh(): Promise<void> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!res.ok) {
+      throw new ApiError("session expired", res.status);
+    }
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
 }
 
 async function request<T>(
@@ -38,14 +81,29 @@ async function request<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const opts: RequestInit = {
+  const init: RequestInit = {
     method,
-    headers: authHeaders(),
+    credentials: "include",
+    headers: buildHeaders(method, body !== undefined),
   };
-  if (body !== undefined) {
-    opts.body = JSON.stringify(body);
+  if (body !== undefined) init.body = JSON.stringify(body);
+
+  let res = await fetch(`${API_BASE}${path}`, init);
+
+  // On 401, try to refresh the session once and replay the request. Skip the
+  // dance for auth endpoints themselves — a 401 on /api/auth/login means bad
+  // credentials, not an expired session.
+  if (res.status === 401 && !path.startsWith("/api/auth/")) {
+    try {
+      await doRefresh();
+      // Refresh rotates the CSRF cookie — rebuild headers before retrying.
+      init.headers = buildHeaders(method, body !== undefined);
+      res = await fetch(`${API_BASE}${path}`, init);
+    } catch {
+      if (onAuthExpired) onAuthExpired();
+    }
   }
-  const res = await fetch(`${API_BASE}${path}`, opts);
+
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     let message = `HTTP ${res.status}`;
@@ -150,8 +208,8 @@ export function isServiceUnavailable(err: unknown): boolean {
 export async function login(
   username: string,
   password: string,
-): Promise<{ token: string }> {
-  return request<{ token: string }>("POST", "/api/auth/login", {
+): Promise<{ user: AdminUser }> {
+  return request<{ user: AdminUser }>("POST", "/api/auth/login", {
     username,
     password,
   });
@@ -160,15 +218,19 @@ export async function login(
 export async function setup(
   username: string,
   password: string,
-): Promise<{ token: string }> {
-  return request<{ token: string }>("POST", "/api/auth/setup", {
+): Promise<{ user: AdminUser }> {
+  return request<{ user: AdminUser }>("POST", "/api/auth/setup", {
     username,
     password,
   });
 }
 
-export async function me(): Promise<{ username: string }> {
-  return request<{ username: string }>("GET", "/api/auth/me");
+export async function logout(): Promise<void> {
+  return request<void>("POST", "/api/auth/logout");
+}
+
+export async function me(): Promise<AdminUser> {
+  return request<AdminUser>("GET", "/api/auth/me");
 }
 
 // ---------------------------------------------------------------------------
@@ -439,11 +501,10 @@ export function createLogStream(
   onEntry: (entry: LogEntry) => void,
   onError?: () => void,
 ): () => void {
-  const token = localStorage.getItem("dialog_token");
-  const url = token
-    ? `/api/logs/stream?token=${encodeURIComponent(token)}`
-    : "/api/logs/stream";
-  const es = new EventSource(url);
+  // EventSource sends same-origin cookies automatically; withCredentials=true
+  // keeps it working when the SPA is served from a different origin than the
+  // backend during local dev with a proxy.
+  const es = new EventSource("/api/logs/stream", { withCredentials: true });
   es.onmessage = (e) => {
     try {
       const entry = JSON.parse(e.data) as LogEntry;

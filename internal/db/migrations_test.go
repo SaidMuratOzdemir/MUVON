@@ -65,3 +65,29 @@ func TestCentralSettingsLiveInMuvonSchema(t *testing.T) {
 		t.Fatalf("seed_waf_settings product = %q, want muvon", got)
 	}
 }
+
+func TestAdminRefreshTokensMigrationShape(t *testing.T) {
+	var sql string
+	for _, m := range migrations {
+		if m.name == "create_admin_refresh_tokens" {
+			sql = m.sql
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("create_admin_refresh_tokens migration missing")
+	}
+	for _, must := range []string{
+		"token_hash",
+		"family_id",
+		"parent_id",
+		"revoked_at",
+		"expires_at",
+		"UNIQUE INDEX IF NOT EXISTS idx_admin_refresh_tokens_hash",
+		"REFERENCES admin_users(id) ON DELETE CASCADE",
+	} {
+		if !strings.Contains(sql, must) {
+			t.Errorf("admin_refresh_tokens missing required fragment: %q", must)
+		}
+	}
+}

@@ -520,15 +520,30 @@ type AdminUser struct {
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"-"`
 	IsActive     bool      `json:"is_active"`
+	TokenVersion int       `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-func (d *DB) GetAdminByUsername(ctx context.Context, username string) (AdminUser, error) {
+const adminUserCols = `id, username, password_hash, is_active, token_version, created_at`
+
+func scanAdminUser(scan func(...any) error) (AdminUser, error) {
 	var u AdminUser
-	err := d.Pool.QueryRow(ctx,
-		`SELECT id, username, password_hash, is_active, created_at FROM admin_users WHERE username = $1`,
-		username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsActive, &u.CreatedAt)
+	err := scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsActive, &u.TokenVersion, &u.CreatedAt)
+	return u, err
+}
+
+func (d *DB) GetAdminByUsername(ctx context.Context, username string) (AdminUser, error) {
+	u, err := scanAdminUser(d.Pool.QueryRow(ctx,
+		`SELECT `+adminUserCols+` FROM admin_users WHERE username = $1`, username).Scan)
+	if err != nil {
+		return u, fmt.Errorf("get admin user: %w", err)
+	}
+	return u, nil
+}
+
+func (d *DB) GetAdminByID(ctx context.Context, id int) (AdminUser, error) {
+	u, err := scanAdminUser(d.Pool.QueryRow(ctx,
+		`SELECT `+adminUserCols+` FROM admin_users WHERE id = $1`, id).Scan)
 	if err != nil {
 		return u, fmt.Errorf("get admin user: %w", err)
 	}
@@ -536,12 +551,10 @@ func (d *DB) GetAdminByUsername(ctx context.Context, username string) (AdminUser
 }
 
 func (d *DB) CreateAdmin(ctx context.Context, username, passwordHash string) (AdminUser, error) {
-	var u AdminUser
-	err := d.Pool.QueryRow(ctx,
+	u, err := scanAdminUser(d.Pool.QueryRow(ctx,
 		`INSERT INTO admin_users (username, password_hash) VALUES ($1, $2)
-		 RETURNING id, username, password_hash, is_active, created_at`,
-		username, passwordHash,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.IsActive, &u.CreatedAt)
+		 RETURNING `+adminUserCols,
+		username, passwordHash).Scan)
 	if err != nil {
 		return u, fmt.Errorf("create admin: %w", err)
 	}

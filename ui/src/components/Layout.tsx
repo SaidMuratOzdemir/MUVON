@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils'
 import { Toaster } from '@/components/ui/sonner'
 import { ServiceBanner } from '@/components/ServiceBanner'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
+import { useAuth } from '@/context/useAuth'
 
 const mainNav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -32,11 +33,12 @@ const wafNav = [
 
 export default function Layout() {
   const navigate = useNavigate()
+  const auth = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { wafOnline, logOnline } = useServiceHealth()
 
-  function logout() {
-    localStorage.removeItem('dialog_token')
+  async function logout() {
+    await auth.logout()
     navigate('/login')
   }
 
