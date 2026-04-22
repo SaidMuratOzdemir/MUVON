@@ -398,6 +398,25 @@ ALTER TABLE hosts ADD COLUMN IF NOT EXISTS jwt_identity_mode    TEXT    NOT NULL
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS jwt_claims           TEXT    NOT NULL DEFAULT '';
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS jwt_secret           TEXT    NOT NULL DEFAULT '';`,
 	},
+	// Swap BM25 for pg_trgm trigram GIN indexes. pg_search's BM25 operator
+	// does not propagate to TimescaleDB hypertable chunks in the installed
+	// pg_search version (0.22.5) — chunk-level queries match, hypertable
+	// root queries return zero. Trigram GIN on each searchable column
+	// works natively with hypertables, and ILIKE '%term%' against a
+	// handful of columns is cheap enough at tenant scale.
+	{
+		name: "drop_dialog_bm25_index", product: "dialog",
+		sql: `DROP INDEX IF EXISTS http_logs_search;`,
+	},
+	{
+		name: "add_http_logs_fts_trgm_indexes", product: "dialog",
+		sql: `
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_http_logs_path_trgm       ON http_logs USING gin (path       gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_http_logs_host_trgm       ON http_logs USING gin (host       gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_http_logs_user_agent_trgm ON http_logs USING gin (user_agent gin_trgm_ops) WHERE user_agent IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_http_logs_client_ip_trgm  ON http_logs USING gin (client_ip  gin_trgm_ops);`,
+	},
 	// Fast JSONB containment for user_identity. Lets us answer
 	// "show me every request where claims @> {email: alice}" without a full
 	// scan over the chunks, and the same index serves sub / name / role

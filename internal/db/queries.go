@@ -711,8 +711,17 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		argIdx++
 	}
 	if p.Query != "" {
-		baseWhere += fmt.Sprintf(" AND l.id @@@ paradedb.parse($%d)", argIdx)
-		args = append(args, p.Query)
+		// Multi-column ILIKE against the trigram-indexed fields. Earlier
+		// revisions routed this through pg_search BM25, which does not
+		// propagate through TimescaleDB hypertable chunks in the
+		// installed version (0.22.5) — hypertable queries returned zero
+		// matches even when chunk-level queries worked. Trigram GIN is
+		// hypertable-native and fast at tenant scale.
+		like := "%" + p.Query + "%"
+		baseWhere += fmt.Sprintf(
+			" AND (l.path ILIKE $%d OR l.host ILIKE $%d OR l.user_agent ILIKE $%d OR l.client_ip ILIKE $%d)",
+			argIdx, argIdx, argIdx, argIdx)
+		args = append(args, like)
 		argIdx++
 	}
 	if !p.From.IsZero() {
