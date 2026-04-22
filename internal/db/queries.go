@@ -829,6 +829,24 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 
 func (d *DB) GetLogDetail(ctx context.Context, id string) (LogEntry, LogBody, error) {
 	var e LogEntry
+
+	// UUIDv7 embeds a millisecond timestamp in its first 48 bits. Decoding
+	// it gives the planner a tight `timestamp` range so TimescaleDB can
+	// chunk-exclude instead of scanning every daily chunk — the detail
+	// lookup was occasionally hitting the 5s gRPC deadline without it.
+	// A ±1-day window is plenty for clock skew and still narrows the
+	// scan to at most 3 chunks.
+	ts, ok := uuidV7Time(id)
+	var rangeStart, rangeEnd time.Time
+	if ok {
+		rangeStart = ts.Add(-24 * time.Hour)
+		rangeEnd = ts.Add(24 * time.Hour)
+	} else {
+		// Non-UUIDv7 id — skip the hint, fall back to full hypertable scan.
+		rangeStart = time.Unix(0, 0)
+		rangeEnd = time.Now().Add(24 * time.Hour)
+	}
+
 	err := d.Pool.QueryRow(ctx,
 		`SELECT l.id::text, l.timestamp, l.host, l.client_ip, l.method, l.path, l.query_string,
 		        l.request_headers, l.response_status, l.response_headers, l.response_time_ms,
@@ -836,7 +854,7 @@ func (d *DB) GetLogDetail(ctx context.Context, id string) (LogEntry, LogBody, er
 		        l.is_starred, n.note, l.country, l.city, l.user_identity
 		 FROM http_logs l
 		 LEFT JOIN log_notes n ON n.log_id = l.id
-		 WHERE l.id = $1`, id,
+		 WHERE l.id = $1 AND l.timestamp BETWEEN $2 AND $3`, id, rangeStart, rangeEnd,
 	).Scan(&e.ID, &e.Timestamp, &e.Host, &e.ClientIP, &e.Method, &e.Path,
 		&e.QueryString, &e.RequestHeaders, &e.ResponseStatus, &e.ResponseHeaders,
 		&e.ResponseTimeMs, &e.RequestSize, &e.ResponseSize, &e.UserAgent, &e.Error,
@@ -849,10 +867,52 @@ func (d *DB) GetLogDetail(ctx context.Context, id string) (LogEntry, LogBody, er
 	var b LogBody
 	_ = d.Pool.QueryRow(ctx,
 		`SELECT request_body, response_body, is_request_truncated, is_response_truncated
-		 FROM http_log_bodies WHERE log_id = $1 LIMIT 1`, id,
+		 FROM http_log_bodies
+		 WHERE log_id = $1 AND timestamp BETWEEN $2 AND $3
+		 LIMIT 1`, id, rangeStart, rangeEnd,
 	).Scan(&b.RequestBody, &b.ResponseBody, &b.IsRequestTruncated, &b.IsResponseTruncated)
 
 	return e, b, nil
+}
+
+// uuidV7Time extracts the 48-bit millisecond timestamp embedded in a UUIDv7.
+// Returns (time, true) on success; (zero, false) for non-UUIDv7 input so
+// callers can fall back to a full-range query. Parses the canonical
+// 8-4-4-4-12 hex form — draft-ietf-uuidrev-rfc4122bis §5.7.
+func uuidV7Time(s string) (time.Time, bool) {
+	if len(s) != 36 {
+		return time.Time{}, false
+	}
+	hex := make([]byte, 0, 32)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '-' {
+			continue
+		}
+		switch {
+		case c >= '0' && c <= '9':
+			hex = append(hex, c-'0')
+		case c >= 'a' && c <= 'f':
+			hex = append(hex, c-'a'+10)
+		case c >= 'A' && c <= 'F':
+			hex = append(hex, c-'A'+10)
+		default:
+			return time.Time{}, false
+		}
+	}
+	if len(hex) != 32 {
+		return time.Time{}, false
+	}
+	// Version nibble is the 13th hex char (index 12) — must be 7.
+	if hex[12] != 7 {
+		return time.Time{}, false
+	}
+	// First 48 bits (12 hex chars) = ms since unix epoch.
+	var ms int64
+	for i := 0; i < 12; i++ {
+		ms = ms<<4 | int64(hex[i])
+	}
+	return time.UnixMilli(ms), true
 }
 
 // --- Log Notes ---
