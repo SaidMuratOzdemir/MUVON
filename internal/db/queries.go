@@ -711,6 +711,20 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		argIdx++
 	}
 	if p.Query != "" {
+		// TimescaleDB compresses chunks older than 7 days; compressed
+		// chunks ignore the pg_trgm GIN and fall back to a columnar
+		// seq scan. On a tenant with tens of millions of rows that is
+		// multi-second, so without an explicit `from` we default the
+		// search window to the last 7 days — the uncompressed range
+		// the trigram indexes actually accelerate. The admin can type
+		// a wider `from` / `to` into the form whenever they need to
+		// reach into archived data; the tradeoff is their call.
+		if p.From.IsZero() {
+			p.From = time.Now().Add(-7 * 24 * time.Hour)
+			baseWhere += fmt.Sprintf(" AND l.timestamp >= $%d", argIdx)
+			args = append(args, p.From)
+			argIdx++
+		}
 		// Full-text-ish search across every column that carries
 		// admin-interesting text: URL, host, UA, IP, enriched identity
 		// (JSONB text-cast — surfaces user_id UUIDs, emails, etc.) and

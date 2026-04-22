@@ -92,8 +92,13 @@ func (r *RemoteLogSink) Stop() {
 // ==================== Admin Query Methods ====================
 
 // SearchLogs queries logs from diaLOG SIEM.
+// 30s caps the wait for trigram scans that reach past TimescaleDB's
+// compression horizon — older chunks fall back to columnar seq scan
+// and a manual `from` covering archived data can run ~10s. Anything
+// longer is almost certainly an admin asking for a window the engine
+// can't service without narrowing the search window.
 func (r *RemoteLogSink) SearchLogs(ctx context.Context, req *pb.SearchLogsRequest) (*pb.SearchLogsResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return r.client.SearchLogs(ctx, req)
 }
