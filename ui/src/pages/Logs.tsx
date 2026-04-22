@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Search, Filter, RefreshCw, X, ChevronLeft, ChevronRight,
@@ -49,6 +49,65 @@ const emptyFilters = (): Filters => ({
   waf_blocked: false, starred: false, client_ip: '',
   response_time_min: '', status_group: '', user: '',
 })
+
+// URL ↔ Filters conversion. The URL is the single source of truth:
+// reloading the page, sharing the link, or pressing back/forward all
+// reproduce the same filter + page state. String filters round-trip
+// verbatim; booleans and the status_group enum get their own narrow
+// reader so bad URL values don't poison the state.
+const BOOL_KEYS = ['waf_blocked', 'starred'] as const
+const STATUS_GROUPS = ['2xx', '3xx', '4xx', '5xx'] as const
+
+function filtersFromURL(p: URLSearchParams): Filters {
+  const f = emptyFilters()
+  f.search = p.get('search') ?? ''
+  f.host = p.get('host') ?? ''
+  f.method = p.get('method') ?? ''
+  f.path = p.get('path') ?? ''
+  f.client_ip = p.get('client_ip') ?? ''
+  f.user = p.get('user') ?? ''
+  f.status_min = p.get('status_min') ?? ''
+  f.status_max = p.get('status_max') ?? ''
+  f.from = p.get('from') ?? ''
+  f.to = p.get('to') ?? ''
+  f.response_time_min = p.get('response_time_min') ?? ''
+  for (const k of BOOL_KEYS) {
+    f[k] = p.get(k) === '1' || p.get(k) === 'true'
+  }
+  const sg = p.get('status_group') ?? ''
+  if ((STATUS_GROUPS as readonly string[]).includes(sg)) {
+    f.status_group = sg as Filters['status_group']
+  }
+  return f
+}
+
+function writeFilters(
+  current: URLSearchParams,
+  f: Filters,
+  offset: number,
+): URLSearchParams {
+  const out = new URLSearchParams(current)
+  // String keys — empty means remove (keeps URL clean + shareable).
+  const strKeys: Array<keyof Filters> = [
+    'search', 'host', 'method', 'path', 'client_ip', 'user',
+    'status_min', 'status_max', 'from', 'to', 'response_time_min',
+    'status_group',
+  ]
+  for (const k of strKeys) {
+    const v = String(f[k] ?? '')
+    if (v) out.set(k, v); else out.delete(k)
+  }
+  for (const k of BOOL_KEYS) {
+    if (f[k]) out.set(k, '1'); else out.delete(k)
+  }
+  if (offset > 0) out.set('offset', String(offset)); else out.delete('offset')
+  return out
+}
+
+function offsetFromURL(p: URLSearchParams): number {
+  const n = parseInt(p.get('offset') ?? '0', 10)
+  return Number.isFinite(n) && n >= 0 ? n : 0
+}
 
 function getLogID(log: Pick<LogEntry, 'id' | 'request_id'> | null | undefined) {
   return log?.id || log?.request_id || ''
@@ -541,32 +600,35 @@ function LogDetailSheet({
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function Logs() {
-  const [searchParams] = useSearchParams()
-  // Accept ?user=alice from Dashboard Top Users / Alerts page deep links.
-  // The initial state seeds both filters (what's applied) and pendingFilters
-  // (what's in the form) so the user lands on a pre-filtered page.
-  const initialFilters: Filters = (() => {
-    const f = emptyFilters()
-    const u = searchParams.get('user')
-    if (u) f.user = u
-    const ip = searchParams.get('client_ip')
-    if (ip) f.client_ip = ip
-    const host = searchParams.get('host')
-    if (host) f.host = host
-    return f
-  })()
+  // The URL is the single source of truth for filters + pagination. This
+  // gives the admin three things for free:
+  //   1. Back / forward buttons walk through filter history.
+  //   2. A copied link reproduces exactly what the sender was looking at.
+  //   3. Reloading the page keeps the current filter + page.
+  // Text inputs still have a local "pending" buffer so every keystroke
+  // doesn't hit the network; toggles and quick actions commit directly.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filters = useMemo(() => filtersFromURL(searchParams), [searchParams])
+  const offset = offsetFromURL(searchParams)
+
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [total, setTotal] = useState(0)
-  const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(false)
   const [serviceDown, setServiceDown] = useState(false)
-  const [filters, setFilters] = useState<Filters>(initialFilters)
-  const [pendingFilters, setPendingFilters] = useState<Filters>(initialFilters)
+  const [pendingFilters, setPendingFilters] = useState<Filters>(filters)
   const [showFilters, setShowFilters] = useState(false)
   const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null)
   const [live, setLive] = useState(false)
   const [sseDisconnected, setSseDisconnected] = useState(false)
   const sseCloseRef = useRef<(() => void) | null>(null)
+
+  // Keep the pending form in sync whenever the URL changes from the outside
+  // (back button, deep link, pivot from another page). User typing in the
+  // form does NOT trigger this — only URL-sourced changes.
+  useEffect(() => {
+    setPendingFilters(filters)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.toString()])
 
   const fetchLogs = useCallback(async (f: Filters, off: number) => {
     setLoading(true)
@@ -588,7 +650,24 @@ export default function Logs() {
 
   useEffect(() => {
     fetchLogs(filters, offset)
-  }, [filters, offset, fetchLogs])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams.toString()])
+
+  // Single entry point for writing filter state back to the URL. `replace`
+  // is false so each commit creates a history entry the admin can walk
+  // with back/forward; the only exception is pagination (see setPage).
+  const commitFilters = useCallback((next: Filters, opts?: { keepOffset?: boolean }) => {
+    const nextParams = writeFilters(searchParams, next, opts?.keepOffset ? offset : 0)
+    setSearchParams(nextParams, { replace: false })
+  }, [searchParams, offset, setSearchParams])
+
+  const setPage = useCallback((newOffset: number) => {
+    const p = new URLSearchParams(searchParams)
+    if (newOffset > 0) p.set('offset', String(newOffset))
+    else p.delete('offset')
+    // Page changes replace so back button doesn't page back one by one.
+    setSearchParams(p, { replace: true })
+  }, [searchParams, setSearchParams])
 
   // SSE live tail
   useEffect(() => {
@@ -617,24 +696,16 @@ export default function Logs() {
   }, [live]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function applyFilters() {
-    setFilters(pendingFilters)
-    setOffset(0)
+    commitFilters(pendingFilters)
     setShowFilters(false)
   }
 
   function clearFilters() {
-    const empty = emptyFilters()
-    setPendingFilters(empty)
-    setFilters(empty)
-    setOffset(0)
+    commitFilters(emptyFilters())
   }
 
   function clearOneFilter(key: keyof Filters) {
-    const defaultVal = emptyFilters()[key]
-    const next = { ...filters, [key]: defaultVal }
-    setFilters(next)
-    setPendingFilters(next)
-    setOffset(0)
+    commitFilters({ ...filters, [key]: emptyFilters()[key] })
   }
 
   function setPF<K extends keyof Filters>(k: K, v: Filters[K]) {
@@ -642,18 +713,12 @@ export default function Logs() {
   }
 
   function handlePivotIP(ip: string) {
-    const next = { ...emptyFilters(), client_ip: ip }
-    setFilters(next)
-    setPendingFilters(next)
-    setOffset(0)
+    commitFilters({ ...emptyFilters(), client_ip: ip })
     setSelectedLog(null)
   }
 
   function handlePivotPath(path: string) {
-    const next = { ...emptyFilters(), path }
-    setFilters(next)
-    setPendingFilters(next)
-    setOffset(0)
+    commitFilters({ ...emptyFilters(), path })
     setSelectedLog(null)
   }
 
@@ -696,10 +761,7 @@ export default function Logs() {
                 g === '4xx' && filters.status_group !== g && 'text-yellow-500',
               )}
               onClick={() => {
-                const next = { ...filters, status_group: filters.status_group === g ? ('' as const) : g, status_min: '', status_max: '' }
-                setFilters(next)
-                setPendingFilters(next)
-                setOffset(0)
+                commitFilters({ ...filters, status_group: filters.status_group === g ? ('' as const) : g, status_min: '', status_max: '' })
               }}
             >
               {g}
@@ -712,12 +774,7 @@ export default function Logs() {
           variant={filters.waf_blocked ? 'default' : 'outline'}
           size="sm"
           className={cn('gap-1.5 cursor-pointer border-border h-8', filters.waf_blocked && 'bg-destructive hover:bg-destructive/90 border-destructive')}
-          onClick={() => {
-            const next = { ...filters, waf_blocked: !filters.waf_blocked }
-            setFilters(next)
-            setPendingFilters(next)
-            setOffset(0)
-          }}
+          onClick={() => commitFilters({ ...filters, waf_blocked: !filters.waf_blocked })}
         >
           <Shield className="h-3 w-3" />
           WAF
@@ -728,12 +785,7 @@ export default function Logs() {
           variant={filters.starred ? 'default' : 'outline'}
           size="sm"
           className={cn('gap-1.5 cursor-pointer border-border h-8', filters.starred && 'bg-yellow-500 hover:bg-yellow-500/90 border-yellow-500 text-white')}
-          onClick={() => {
-            const next = { ...filters, starred: !filters.starred }
-            setFilters(next)
-            setPendingFilters(next)
-            setOffset(0)
-          }}
+          onClick={() => commitFilters({ ...filters, starred: !filters.starred })}
         >
           <Star className={cn('h-3 w-3', filters.starred && 'fill-white')} />
         </Button>
@@ -941,8 +993,7 @@ export default function Logs() {
                       title={`Filter by user ${log.user_display}`}
                       onClick={(e) => {
                         e.stopPropagation()
-                        setPendingFilters(f => ({ ...f, user: log.user_query || log.user_display || '' }))
-                        setFilters(f => ({ ...f, user: log.user_query || log.user_display || '' }))
+                        commitFilters({ ...filters, user: log.user_query || log.user_display || '' })
                       }}
                     >
                       {log.user_display}
@@ -980,14 +1031,14 @@ export default function Logs() {
           <Button
             variant="outline" size="icon" className="h-8 w-8 cursor-pointer border-border"
             disabled={offset === 0 || live}
-            onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            onClick={() => setPage(Math.max(0, offset - PAGE_SIZE))}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <Button
             variant="outline" size="icon" className="h-8 w-8 cursor-pointer border-border"
             disabled={offset + PAGE_SIZE >= total || live}
-            onClick={() => setOffset(offset + PAGE_SIZE)}
+            onClick={() => setPage(offset + PAGE_SIZE)}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
