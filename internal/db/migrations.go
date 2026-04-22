@@ -417,6 +417,24 @@ CREATE INDEX IF NOT EXISTS idx_http_logs_host_trgm       ON http_logs USING gin 
 CREATE INDEX IF NOT EXISTS idx_http_logs_user_agent_trgm ON http_logs USING gin (user_agent gin_trgm_ops) WHERE user_agent IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_http_logs_client_ip_trgm  ON http_logs USING gin (client_ip  gin_trgm_ops);`,
 	},
+	// Search also has to reach the enriched identity (JWT claim values
+	// like user_id or email) and the captured bodies (TC Kimlik, IBAN,
+	// anything the app sends in JSON). Trigram indexes on the JSONB
+	// text-cast and the body columns keep those ILIKE lookups
+	// hypertable-safe and fast at tenant scale.
+	{
+		name: "add_http_logs_identity_body_trgm_indexes", product: "dialog",
+		sql: `
+CREATE INDEX IF NOT EXISTS idx_http_logs_user_identity_trgm
+    ON http_logs USING gin ((user_identity::text) gin_trgm_ops)
+    WHERE user_identity IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_http_log_bodies_request_trgm
+    ON http_log_bodies USING gin (request_body gin_trgm_ops)
+    WHERE request_body IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_http_log_bodies_response_trgm
+    ON http_log_bodies USING gin (response_body gin_trgm_ops)
+    WHERE response_body IS NOT NULL;`,
+	},
 	// Fast JSONB containment for user_identity. Lets us answer
 	// "show me every request where claims @> {email: alice}" without a full
 	// scan over the chunks, and the same index serves sub / name / role

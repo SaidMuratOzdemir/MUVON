@@ -711,16 +711,27 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		argIdx++
 	}
 	if p.Query != "" {
-		// Multi-column ILIKE against the trigram-indexed fields. Earlier
-		// revisions routed this through pg_search BM25, which does not
-		// propagate through TimescaleDB hypertable chunks in the
-		// installed version (0.22.5) — hypertable queries returned zero
-		// matches even when chunk-level queries worked. Trigram GIN is
-		// hypertable-native and fast at tenant scale.
+		// Full-text-ish search across every column that carries
+		// admin-interesting text: URL, host, UA, IP, enriched identity
+		// (JSONB text-cast — surfaces user_id UUIDs, emails, etc.) and
+		// captured bodies (EXISTS subquery so a single body row can't
+		// duplicate a log). Every branch is backed by a pg_trgm GIN so
+		// the ILIKE '%term%' lookups stay hypertable-safe and fast.
 		like := "%" + p.Query + "%"
 		baseWhere += fmt.Sprintf(
-			" AND (l.path ILIKE $%d OR l.host ILIKE $%d OR l.user_agent ILIKE $%d OR l.client_ip ILIKE $%d)",
-			argIdx, argIdx, argIdx, argIdx)
+			` AND (
+				l.path             ILIKE $%d
+				OR l.host          ILIKE $%d
+				OR l.user_agent    ILIKE $%d
+				OR l.client_ip     ILIKE $%d
+				OR l.user_identity::text ILIKE $%d
+				OR EXISTS (
+					SELECT 1 FROM http_log_bodies b
+					WHERE b.log_id = l.id
+					  AND (b.request_body ILIKE $%d OR b.response_body ILIKE $%d)
+				)
+			)`,
+			argIdx, argIdx, argIdx, argIdx, argIdx, argIdx, argIdx)
 		args = append(args, like)
 		argIdx++
 	}
