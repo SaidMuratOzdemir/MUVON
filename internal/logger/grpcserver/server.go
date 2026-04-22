@@ -6,20 +6,30 @@ import (
 	"fmt"
 	"time"
 
+	"muvon/internal/config"
 	"muvon/internal/db"
 	"muvon/internal/logger"
 	pb "muvon/proto/logpb"
 )
+
+// ConfigFunc returns the current config snapshot so query handlers can
+// resolve host-scoped JWT claim priority without baking it in here.
+type ConfigFunc func() *config.Config
 
 // Server implements logpb.LogServiceServer by writing to the log pipeline.
 type Server struct {
 	pb.UnimplementedLogServiceServer
 	pipeline *logger.Pipeline
 	database *db.DB
+	configFn ConfigFunc
 }
 
-func New(pipeline *logger.Pipeline, database *db.DB) *Server {
-	return &Server{pipeline: pipeline, database: database}
+// New wires the gRPC server. configFn may be nil — when absent, user-display
+// enrichment on reads falls back to an empty priority list (no Top Users,
+// no pivot column), which is the correct behaviour for callers that have
+// not provisioned any JWT config.
+func New(pipeline *logger.Pipeline, database *db.DB, configFn ConfigFunc) *Server {
+	return &Server{pipeline: pipeline, database: database, configFn: configFn}
 }
 
 // --- Log Ingest ---
@@ -106,7 +116,8 @@ func (s *Server) SearchLogs(ctx context.Context, req *pb.SearchLogsRequest) (*pb
 		if l.City != nil {
 			summary.City = *l.City
 		}
-		if display, query := extractUserDisplay(l.UserIdentity); display != "" {
+		priority := s.displayClaimsForHost(l.Host)
+		if display, query := extractUserDisplay(l.UserIdentity, priority); display != "" {
 			summary.UserDisplay = display
 			summary.UserQuery = query
 		}
@@ -115,12 +126,33 @@ func (s *Server) SearchLogs(ctx context.Context, req *pb.SearchLogsRequest) (*pb
 	return resp, nil
 }
 
-// extractUserDisplay picks the human-friendly claim (email > name > sub)
-// from a JSONB user_identity payload. Returns both the display label and
-// the verbatim value so the admin UI can link "alice@foo.com" back to the
-// same user across its other rows.
-func extractUserDisplay(raw json.RawMessage) (display, query string) {
-	if len(raw) == 0 {
+// displayClaimsForHost returns the ordered list of JWT claim keys to
+// treat as "user display" candidates. It reads from the host's own
+// override when present (so a cevik host with user_id,holding_id gets
+// user_id first) and falls back to the global list. Returning nil means
+// "no JWT config at all" — callers then skip user enrichment for reads.
+func (s *Server) displayClaimsForHost(host string) []string {
+	if s.configFn == nil {
+		return nil
+	}
+	cfg := s.configFn()
+	if cfg == nil {
+		return nil
+	}
+	if host != "" {
+		if hc, ok := cfg.Hosts[host]; ok && len(hc.JWTClaims) > 0 {
+			return hc.JWTClaims
+		}
+	}
+	return cfg.Global.JWTClaims
+}
+
+// extractUserDisplay picks the first non-empty claim from priorityKeys.
+// The caller supplies the priority so every tenant app's own JWT schema
+// drives which claim identifies a user — no claim vocabulary lives in
+// this package.
+func extractUserDisplay(raw json.RawMessage, priorityKeys []string) (display, query string) {
+	if len(raw) == 0 || len(priorityKeys) == 0 {
 		return "", ""
 	}
 	var wrapper struct {
@@ -129,7 +161,7 @@ func extractUserDisplay(raw json.RawMessage) (display, query string) {
 	if err := json.Unmarshal(raw, &wrapper); err != nil {
 		return "", ""
 	}
-	for _, key := range []string{"email", "name", "sub"} {
+	for _, key := range priorityKeys {
 		if v := wrapper.Claims[key]; v != "" {
 			return v, v
 		}
@@ -163,7 +195,7 @@ func (s *Server) GetLogStats(ctx context.Context, req *pb.GetLogStatsRequest) (*
 		to, _ = time.Parse(time.RFC3339, req.To)
 	}
 
-	stats, err := s.database.GetLogStats(ctx, from, to)
+	stats, err := s.database.GetLogStats(ctx, from, to, s.displayClaimsForHost(req.Host))
 	if err != nil {
 		return nil, fmt.Errorf("get log stats: %w", err)
 	}
@@ -368,6 +400,26 @@ func dbEntryToProto(l db.LogEntry, body db.LogBody) *pb.LogEntry {
 	}
 	p.IsRequestTruncated = body.IsRequestTruncated
 	p.IsResponseTruncated = body.IsResponseTruncated
+
+	// Decode the JSONB user_identity payload into the proto shape so the
+	// admin panel's log detail view actually receives claims/verified/source.
+	// Without this the column is read from DB but dropped on the floor; the
+	// UI then shows its "identity enrichment is disabled" hint even though
+	// the SIEM enriched the row correctly.
+	if len(l.UserIdentity) > 0 {
+		var ui struct {
+			Claims   map[string]string `json:"claims,omitempty"`
+			Verified bool              `json:"verified"`
+			Source   string            `json:"source"`
+		}
+		if err := json.Unmarshal(l.UserIdentity, &ui); err == nil && (len(ui.Claims) > 0 || ui.Source != "") {
+			p.UserIdentity = &pb.UserIdentity{
+				Claims:   ui.Claims,
+				Verified: ui.Verified,
+				Source:   ui.Source,
+			}
+		}
+	}
 	return p
 }
 

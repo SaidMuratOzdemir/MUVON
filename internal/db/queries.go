@@ -364,7 +364,12 @@ func (d *DB) DeleteRoute(ctx context.Context, id int) error {
 // --- All active hosts+routes for router config ---
 
 func (d *DB) LoadActiveRoutes(ctx context.Context) ([]Host, map[int][]Route, error) {
-	hosts, err := d.Pool.Query(ctx, `SELECT id, domain, is_active, force_https, created_at, updated_at FROM muvon.hosts WHERE is_active = true ORDER BY domain`)
+	// Use the canonical host column list + scanHost helper so every consumer
+	// sees the full Host struct. An earlier, narrower SELECT silently
+	// zero-valued jwt_* and trusted_proxies — config.LoadFromDB then thought
+	// every host had JWT identity disabled and no trusted proxies, which
+	// made per-host JWT enrichment impossible to turn on.
+	hosts, err := d.Pool.Query(ctx, `SELECT `+hostSelectCols+` FROM muvon.hosts WHERE is_active = true ORDER BY domain`)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load active hosts: %w", err)
 	}
@@ -372,8 +377,8 @@ func (d *DB) LoadActiveRoutes(ctx context.Context) ([]Host, map[int][]Route, err
 
 	var hostList []Host
 	for hosts.Next() {
-		var h Host
-		if err := hosts.Scan(&h.ID, &h.Domain, &h.IsActive, &h.ForceHTTPS, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		h, err := scanHost(hosts.Scan)
+		if err != nil {
 			return nil, nil, fmt.Errorf("load active hosts scan: %w", err)
 		}
 		hostList = append(hostList, h)
@@ -981,7 +986,15 @@ type UserCount struct {
 	Count   int64  `json:"count"`
 }
 
-func (d *DB) GetLogStats(ctx context.Context, from, to time.Time) (LogStats, error) {
+// GetLogStats aggregates traffic metrics for the dashboard.
+//
+// displayClaims controls which JWT claim keys get resolved into the
+// per-user display label for the Top Users panel. The order is the
+// priority: first non-empty claim wins. When the list is empty the
+// Top Users panel is not produced (no hard-coded fallback — the admin
+// decides per deployment which claims identify a user, because every
+// tenant app signs tokens with its own claim vocabulary).
+func (d *DB) GetLogStats(ctx context.Context, from, to time.Time, displayClaims []string) (LogStats, error) {
 	var stats LogStats
 	stats.StatusCounts = make(map[string]int64)
 
@@ -1091,19 +1104,25 @@ func (d *DB) GetLogStats(ctx context.Context, from, to time.Time) (LogStats, err
 	}
 	rows.Close()
 
-	// Top users. Display value is email > name > sub (whichever is first
-	// present) so the admin recognises who a row belongs to without
-	// cross-referencing a user DB. Subquery keeps the SELECT expression
-	// and the NOT NULL filter in one place instead of repeating the
-	// COALESCE inside HAVING.
-	rows, err = d.Pool.Query(ctx,
-		fmt.Sprintf(`SELECT user_key, cnt FROM (
+	// Top users. Priority comes from displayClaims — first non-empty claim
+	// wins. We build the COALESCE dynamically rather than hard-coding a
+	// fixed claim list because every tenant app signs tokens with its own
+	// vocabulary (HRS: user_id + holding_id, vize360: user_id, some SaaS:
+	// email + sub, …). Empty list → skip the panel entirely.
+	if len(displayClaims) > 0 {
+		coalesceParts := make([]string, 0, len(displayClaims))
+		claimArgs := make([]any, len(args), len(args)+len(displayClaims))
+		copy(claimArgs, args)
+		nextIdx := argIdx
+		for _, c := range displayClaims {
+			coalesceParts = append(coalesceParts,
+				fmt.Sprintf("NULLIF(user_identity->'claims'->>$%d, '')", nextIdx))
+			claimArgs = append(claimArgs, c)
+			nextIdx++
+		}
+		topUsersSQL := fmt.Sprintf(`SELECT user_key, cnt FROM (
 			SELECT
-				COALESCE(
-					NULLIF(user_identity->'claims'->>'email', ''),
-					NULLIF(user_identity->'claims'->>'name', ''),
-					NULLIF(user_identity->'claims'->>'sub', '')
-				) AS user_key,
+				COALESCE(%s) AS user_key,
 				COUNT(*) AS cnt
 			FROM http_logs %s
 			AND user_identity IS NOT NULL
@@ -1111,21 +1130,23 @@ func (d *DB) GetLogStats(ctx context.Context, from, to time.Time) (LogStats, err
 		) u
 		WHERE user_key IS NOT NULL
 		ORDER BY cnt DESC
-		LIMIT 10`, where),
-		args...)
-	if err != nil {
-		return stats, fmt.Errorf("log stats users: %w", err)
-	}
-	for rows.Next() {
-		var key string
-		var count int64
-		if err := rows.Scan(&key, &count); err != nil {
-			rows.Close()
-			return stats, err
+		LIMIT 10`, strings.Join(coalesceParts, ", "), where)
+
+		rows, err = d.Pool.Query(ctx, topUsersSQL, claimArgs...)
+		if err != nil {
+			return stats, fmt.Errorf("log stats users: %w", err)
 		}
-		stats.TopUsers = append(stats.TopUsers, UserCount{Display: key, Query: key, Count: count})
+		for rows.Next() {
+			var key string
+			var count int64
+			if err := rows.Scan(&key, &count); err != nil {
+				rows.Close()
+				return stats, err
+			}
+			stats.TopUsers = append(stats.TopUsers, UserCount{Display: key, Query: key, Count: count})
+		}
+		rows.Close()
 	}
-	rows.Close()
 
 	return stats, nil
 }

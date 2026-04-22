@@ -202,7 +202,11 @@ func main() {
 	}
 
 	grpcServer := grpc.NewServer()
-	logSrv := loggrpc.New(pipeline, database)
+	// Pass the config holder's Get so read handlers (SearchLogs / GetLog /
+	// GetLogStats) can resolve JWT display claim priority per-host from
+	// live config, with the global list as fallback. No hard-coded claim
+	// vocabulary in the server itself.
+	logSrv := loggrpc.New(pipeline, database, ch.Get)
 	pb.RegisterLogServiceServer(grpcServer, logSrv)
 
 	// TCP gRPC server — for agents sending logs over the network

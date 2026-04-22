@@ -103,3 +103,29 @@ deploy-all: build-linux
 		docker cp /opt/muvon/muwaf muvon-muwaf-1:/usr/local/bin/app && \
 		cd /opt/muvon && docker compose restart muwaf muvon"
 	@echo "Done."
+
+# Single-service quick deploys — handy while iterating on dialog-siem or
+# muwaf without waiting for CI (each run is scp + docker cp + restart).
+deploy-dialog:
+	@echo "Building dialog-siem (linux/amd64)..."
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" \
+		-o $(BUILD_DIR)/dialog-siem-linux-amd64 ./cmd/dialog-siem
+	@scp $(BUILD_DIR)/dialog-siem-linux-amd64 vps:/opt/muvon/dialog-siem
+	@ssh vps "docker cp /opt/muvon/dialog-siem muvon-dialog-siem-1:/usr/local/bin/app && cd /opt/muvon && docker compose restart dialog-siem"
+	@echo "Done."
+
+deploy-muwaf:
+	@echo "Building muwaf (linux/amd64)..."
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" \
+		-o $(BUILD_DIR)/muwaf-linux-amd64 ./cmd/muwaf
+	@scp $(BUILD_DIR)/muwaf-linux-amd64 vps:/opt/muvon/muwaf
+	@ssh vps "docker cp /opt/muvon/muwaf muvon-muwaf-1:/usr/local/bin/app && cd /opt/muvon && docker compose restart muwaf"
+	@echo "Done."
+
+deploy-deployer:
+	@echo "Building muvon-deployer (linux/amd64)..."
+	@GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" \
+		-o $(BUILD_DIR)/muvon-deployer-linux-amd64 ./cmd/muvon-deployer
+	@scp $(BUILD_DIR)/muvon-deployer-linux-amd64 vps:/opt/muvon/muvon-deployer
+	@ssh vps "docker cp /opt/muvon/muvon-deployer muvon-muvon-deployer-1:/usr/local/bin/app && cd /opt/muvon && docker compose restart muvon-deployer"
+	@echo "Done."

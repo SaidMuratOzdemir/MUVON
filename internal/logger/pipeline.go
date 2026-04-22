@@ -85,21 +85,10 @@ func (p *Pipeline) Send(entry Entry) {
 	if geoFn != nil && entry.Country == "" {
 		entry.Country, entry.City = geoFn(entry.ClientIP)
 	}
-	// DIAGNOSTIC — remove once JWT enrichment is verified working.
-	auth := headerCaseInsensitive(entry.RequestHeaders, "Authorization")
-	slog.Debug("pipeline enrich probe",
-		"host", entry.Host,
-		"has_jwt_fn", jwtFn != nil,
-		"ui_preset", entry.UserIdentity != nil,
-		"header_count", len(entry.RequestHeaders),
-		"auth_len", len(auth),
-		"auth_prefix", safePrefix(auth, 7),
-	)
-	if jwtFn != nil && entry.UserIdentity == nil && auth != "" {
-		entry.UserIdentity = jwtFn(entry.Host, auth)
-		slog.Debug("pipeline enrich result",
-			"host", entry.Host,
-			"identity_nil", entry.UserIdentity == nil)
+	if jwtFn != nil && entry.UserIdentity == nil {
+		if auth := headerCaseInsensitive(entry.RequestHeaders, "Authorization"); auth != "" {
+			entry.UserIdentity = jwtFn(entry.Host, auth)
+		}
 	}
 
 	// Sanitize sensitive headers before they enter the channel / get written to DB.
@@ -156,16 +145,6 @@ func (p *Pipeline) Stop() {
 
 func (p *Pipeline) Stats() (enqueued, dropped int64, queueLen int) {
 	return p.enqueued.Load(), p.dropped.Load(), len(p.ch)
-}
-
-// safePrefix returns up to n characters of s — diagnostic helper for the
-// enrichment probe so we can see what "Authorization" looks like on the
-// wire without leaking the full token.
-func safePrefix(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
 }
 
 // headerCaseInsensitive finds a header by lowercase comparison. Some
