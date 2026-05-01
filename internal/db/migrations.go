@@ -1369,7 +1369,13 @@ WHERE waf_enabled = FALSE
 	// Severity tuned so a single hit alone reaches ThresholdBlock=26 — these
 	// paths have no legitimate reason to be requested over the public edge.
 	{
-		name: "seed_waf_rules_2026_leak_targets", product: "muwaf",
+		// product is "muvon" (not "muwaf") because the muwaf service
+		// connects with schema=muvon — that's where waf_rules actually
+		// lives in production. The "muwaf" schema is a vestigial table
+		// from an earlier deployment and is no longer the source of
+		// truth. Tagging this migration "muwaf" left it un-applied on
+		// the first prod deploy — caught and corrected here.
+		name: "seed_waf_rules_2026_leak_targets", product: "muvon",
 		sql: `
 INSERT INTO waf_rules (pattern, is_regex, category, severity, description) VALUES
     ('Dockerfile',              false, 'lfi', 30, 'Container build manifest probe'),
