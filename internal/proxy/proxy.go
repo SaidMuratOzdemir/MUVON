@@ -179,6 +179,15 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 			bodyBytes = reqCapture.Data
 		}
 
+		// Detection-only is the union of two signals: the explicit per-route
+		// flag, and a soak window after a default-on rollout. While a route's
+		// waf_detection_only_until is set and in the future, blocks are
+		// downgraded to logs so the admin can review false positives without
+		// taking real traffic offline.
+		detectionOnly := route.Route.WafDetectionOnly
+		if route.Route.WafDetectionOnlyUntil != nil && time.Now().Before(*route.Route.WafDetectionOnlyUntil) {
+			detectionOnly = true
+		}
 		wafResult = h.inspector.Inspect(r.Context(), waf.InspectRequest{
 			RequestID:     reqID,
 			ClientIP:      ip,
@@ -190,7 +199,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 			Body:          bodyBytes,
 			ContentType:   r.Header.Get("Content-Type"),
 			RouteID:       route.Route.ID,
-			DetectionOnly: route.Route.WafDetectionOnly,
+			DetectionOnly: detectionOnly,
 		})
 
 		if !wafResult.DetectionOnly {

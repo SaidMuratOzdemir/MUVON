@@ -23,8 +23,18 @@ func maskHostSecret(h db.Host) db.Host {
 // buildHostJWT gathers and encrypts the JWT fields from a create payload.
 // An empty secret string means the admin didn't provide one — we store
 // empty, which triggers the decode-only path in the pipeline extractor.
-func (s *Server) buildHostJWT(enabled *bool, mode, claims, plaintextSecret string) (db.HostJWT, error) {
-	jwt := db.HostJWT{Mode: mode, Claims: claims}
+// headerName accepts forms like "Authorization", "X-Auth-Token" or
+// "Cookie:session" — the resolver in the pipeline understands both header
+// names and cookie lookups. storeRaw opts the host into persisting the
+// bearer token alongside the log row (default off; reveal flow is
+// audit-logged).
+func (s *Server) buildHostJWT(enabled *bool, mode, claims, plaintextSecret, headerName string, storeRaw bool) (db.HostJWT, error) {
+	jwt := db.HostJWT{
+		Mode:       mode,
+		Claims:     claims,
+		HeaderName: strings.TrimSpace(headerName),
+		StoreRaw:   storeRaw,
+	}
 	if enabled != nil {
 		jwt.Enabled = *enabled
 	}
@@ -79,6 +89,8 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 		JWTIdentityMode    string    `json:"jwt_identity_mode"`
 		JWTClaims          string    `json:"jwt_claims"`
 		JWTSecret          string    `json:"jwt_secret"` // plaintext in; encrypted at rest
+		IdentityHeaderName string    `json:"identity_header_name"`
+		StoreRawJWT        bool      `json:"store_raw_jwt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -105,7 +117,7 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 	if req.TrustedProxies != nil {
 		trustedProxies = *req.TrustedProxies
 	}
-	jwt, err := s.buildHostJWT(req.JWTIdentityEnabled, req.JWTIdentityMode, req.JWTClaims, req.JWTSecret)
+	jwt, err := s.buildHostJWT(req.JWTIdentityEnabled, req.JWTIdentityMode, req.JWTClaims, req.JWTSecret, req.IdentityHeaderName, req.StoreRawJWT)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "jwt secret encryption failed"})
 		return
@@ -160,6 +172,8 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		// it is" so the UI can PATCH-style update other fields without
 		// re-asking for the secret every time.
 		JWTSecret          string    `json:"jwt_secret"`
+		IdentityHeaderName *string   `json:"identity_header_name"`
+		StoreRawJWT        *bool     `json:"store_raw_jwt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -218,11 +232,22 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		jwtSecret = enc
 	}
 
+	headerName := existing.IdentityHeaderName
+	if req.IdentityHeaderName != nil {
+		headerName = strings.TrimSpace(*req.IdentityHeaderName)
+	}
+	storeRaw := existing.StoreRawJWT
+	if req.StoreRawJWT != nil {
+		storeRaw = *req.StoreRawJWT
+	}
+
 	host, err := s.db.UpdateHost(r.Context(), id, domain, isActive, forceHTTPS, trustedProxies, db.HostJWT{
-		Enabled: jwtEnabled,
-		Mode:    jwtMode,
-		Claims:  jwtClaims,
-		Secret:  jwtSecret,
+		Enabled:    jwtEnabled,
+		Mode:       jwtMode,
+		Claims:     jwtClaims,
+		Secret:     jwtSecret,
+		HeaderName: headerName,
+		StoreRaw:   storeRaw,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": domainError(err)})

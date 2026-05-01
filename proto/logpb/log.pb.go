@@ -1216,6 +1216,229 @@ func (x *ToggleStarRequest) GetRequestId() string {
 	return ""
 }
 
+type EnrichmentStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnrichmentStatusRequest) Reset() {
+	*x = EnrichmentStatusRequest{}
+	mi := &file_proto_logpb_log_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnrichmentStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnrichmentStatusRequest) ProtoMessage() {}
+
+func (x *EnrichmentStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnrichmentStatusRequest.ProtoReflect.Descriptor instead.
+func (*EnrichmentStatusRequest) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{14}
+}
+
+type GetLogRawJWTRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RequestId     string                 `protobuf:"bytes,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetLogRawJWTRequest) Reset() {
+	*x = GetLogRawJWTRequest{}
+	mi := &file_proto_logpb_log_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetLogRawJWTRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetLogRawJWTRequest) ProtoMessage() {}
+
+func (x *GetLogRawJWTRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetLogRawJWTRequest.ProtoReflect.Descriptor instead.
+func (*GetLogRawJWTRequest) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *GetLogRawJWTRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+type GetLogRawJWTResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Empty when the host did not opt in or the token was not captured for
+	// this row. The caller must distinguish this from "log not found"
+	// (returned as a NotFound gRPC status).
+	Token         string `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`
+	Host          string `protobuf:"bytes,2,opt,name=host,proto3" json:"host,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetLogRawJWTResponse) Reset() {
+	*x = GetLogRawJWTResponse{}
+	mi := &file_proto_logpb_log_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetLogRawJWTResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetLogRawJWTResponse) ProtoMessage() {}
+
+func (x *GetLogRawJWTResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetLogRawJWTResponse.ProtoReflect.Descriptor instead.
+func (*GetLogRawJWTResponse) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *GetLogRawJWTResponse) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+func (x *GetLogRawJWTResponse) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+type EnrichmentStatusResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// GeoIP — file-backed MaxMind reader.
+	// state ∈ {"disabled","ok","error"}.
+	GeoipState    string `protobuf:"bytes,1,opt,name=geoip_state,json=geoipState,proto3" json:"geoip_state,omitempty"`
+	GeoipPath     string `protobuf:"bytes,2,opt,name=geoip_path,json=geoipPath,proto3" json:"geoip_path,omitempty"`               // path the loader tried (post-trim)
+	GeoipError    string `protobuf:"bytes,3,opt,name=geoip_error,json=geoipError,proto3" json:"geoip_error,omitempty"`            // last error if state == "error"
+	GeoipLoadedAt string `protobuf:"bytes,4,opt,name=geoip_loaded_at,json=geoipLoadedAt,proto3" json:"geoip_loaded_at,omitempty"` // RFC3339, empty when not loaded
+	// JWT identity — global toggle plus a non-zero indicator that some host
+	// override is active. We do not return secrets here.
+	JwtIdentityState         string `protobuf:"bytes,5,opt,name=jwt_identity_state,json=jwtIdentityState,proto3" json:"jwt_identity_state,omitempty"` // "disabled" | "ok"
+	JwtIdentityHostOverrides int32  `protobuf:"varint,6,opt,name=jwt_identity_host_overrides,json=jwtIdentityHostOverrides,proto3" json:"jwt_identity_host_overrides,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
+}
+
+func (x *EnrichmentStatusResponse) Reset() {
+	*x = EnrichmentStatusResponse{}
+	mi := &file_proto_logpb_log_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnrichmentStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnrichmentStatusResponse) ProtoMessage() {}
+
+func (x *EnrichmentStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnrichmentStatusResponse.ProtoReflect.Descriptor instead.
+func (*EnrichmentStatusResponse) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *EnrichmentStatusResponse) GetGeoipState() string {
+	if x != nil {
+		return x.GeoipState
+	}
+	return ""
+}
+
+func (x *EnrichmentStatusResponse) GetGeoipPath() string {
+	if x != nil {
+		return x.GeoipPath
+	}
+	return ""
+}
+
+func (x *EnrichmentStatusResponse) GetGeoipError() string {
+	if x != nil {
+		return x.GeoipError
+	}
+	return ""
+}
+
+func (x *EnrichmentStatusResponse) GetGeoipLoadedAt() string {
+	if x != nil {
+		return x.GeoipLoadedAt
+	}
+	return ""
+}
+
+func (x *EnrichmentStatusResponse) GetJwtIdentityState() string {
+	if x != nil {
+		return x.JwtIdentityState
+	}
+	return ""
+}
+
+func (x *EnrichmentStatusResponse) GetJwtIdentityHostOverrides() int32 {
+	if x != nil {
+		return x.JwtIdentityHostOverrides
+	}
+	return 0
+}
+
 var File_proto_logpb_log_proto protoreflect.FileDescriptor
 
 const file_proto_logpb_log_proto_rawDesc = "" +
@@ -1350,7 +1573,24 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x04note\x18\x02 \x01(\tR\x04note\"2\n" +
 	"\x11ToggleStarRequest\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x01 \x01(\tR\trequestId2\xbb\x03\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\"\x19\n" +
+	"\x17EnrichmentStatusRequest\"4\n" +
+	"\x13GetLogRawJWTRequest\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\"@\n" +
+	"\x14GetLogRawJWTResponse\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token\x12\x12\n" +
+	"\x04host\x18\x02 \x01(\tR\x04host\"\x90\x02\n" +
+	"\x18EnrichmentStatusResponse\x12\x1f\n" +
+	"\vgeoip_state\x18\x01 \x01(\tR\n" +
+	"geoipState\x12\x1d\n" +
+	"\n" +
+	"geoip_path\x18\x02 \x01(\tR\tgeoipPath\x12\x1f\n" +
+	"\vgeoip_error\x18\x03 \x01(\tR\n" +
+	"geoipError\x12&\n" +
+	"\x0fgeoip_loaded_at\x18\x04 \x01(\tR\rgeoipLoadedAt\x12,\n" +
+	"\x12jwt_identity_state\x18\x05 \x01(\tR\x10jwtIdentityState\x12=\n" +
+	"\x1bjwt_identity_host_overrides\x18\x06 \x01(\x05R\x18jwtIdentityHostOverrides2\xdc\x04\n" +
 	"\n" +
 	"LogService\x12(\n" +
 	"\tSendEntry\x12\x0f.logpb.LogEntry\x1a\n" +
@@ -1368,7 +1608,9 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	".logpb.Ack\x122\n" +
 	"\n" +
 	"ToggleStar\x12\x18.logpb.ToggleStarRequest\x1a\n" +
-	".logpb.AckB\x14Z\x12dialog/proto/logpbb\x06proto3"
+	".logpb.Ack\x12V\n" +
+	"\x13GetEnrichmentStatus\x12\x1e.logpb.EnrichmentStatusRequest\x1a\x1f.logpb.EnrichmentStatusResponse\x12G\n" +
+	"\fGetLogRawJWT\x12\x1a.logpb.GetLogRawJWTRequest\x1a\x1b.logpb.GetLogRawJWTResponseB\x14Z\x12dialog/proto/logpbb\x06proto3"
 
 var (
 	file_proto_logpb_log_proto_rawDescOnce sync.Once
@@ -1382,36 +1624,40 @@ func file_proto_logpb_log_proto_rawDescGZIP() []byte {
 	return file_proto_logpb_log_proto_rawDescData
 }
 
-var file_proto_logpb_log_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_proto_logpb_log_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_proto_logpb_log_proto_goTypes = []any{
-	(*LogEntry)(nil),           // 0: logpb.LogEntry
-	(*UserIdentity)(nil),       // 1: logpb.UserIdentity
-	(*LogBatch)(nil),           // 2: logpb.LogBatch
-	(*Ack)(nil),                // 3: logpb.Ack
-	(*SearchLogsRequest)(nil),  // 4: logpb.SearchLogsRequest
-	(*SearchLogsResponse)(nil), // 5: logpb.SearchLogsResponse
-	(*LogSummary)(nil),         // 6: logpb.LogSummary
-	(*GetLogRequest)(nil),      // 7: logpb.GetLogRequest
-	(*LogDetail)(nil),          // 8: logpb.LogDetail
-	(*GetLogStatsRequest)(nil), // 9: logpb.GetLogStatsRequest
-	(*LogStatsResponse)(nil),   // 10: logpb.LogStatsResponse
-	(*StreamLogsRequest)(nil),  // 11: logpb.StreamLogsRequest
-	(*UpsertNoteRequest)(nil),  // 12: logpb.UpsertNoteRequest
-	(*ToggleStarRequest)(nil),  // 13: logpb.ToggleStarRequest
-	nil,                        // 14: logpb.LogEntry.RequestHeadersEntry
-	nil,                        // 15: logpb.LogEntry.ResponseHeadersEntry
-	nil,                        // 16: logpb.UserIdentity.ClaimsEntry
-	nil,                        // 17: logpb.LogStatsResponse.StatusDistributionEntry
+	(*LogEntry)(nil),                 // 0: logpb.LogEntry
+	(*UserIdentity)(nil),             // 1: logpb.UserIdentity
+	(*LogBatch)(nil),                 // 2: logpb.LogBatch
+	(*Ack)(nil),                      // 3: logpb.Ack
+	(*SearchLogsRequest)(nil),        // 4: logpb.SearchLogsRequest
+	(*SearchLogsResponse)(nil),       // 5: logpb.SearchLogsResponse
+	(*LogSummary)(nil),               // 6: logpb.LogSummary
+	(*GetLogRequest)(nil),            // 7: logpb.GetLogRequest
+	(*LogDetail)(nil),                // 8: logpb.LogDetail
+	(*GetLogStatsRequest)(nil),       // 9: logpb.GetLogStatsRequest
+	(*LogStatsResponse)(nil),         // 10: logpb.LogStatsResponse
+	(*StreamLogsRequest)(nil),        // 11: logpb.StreamLogsRequest
+	(*UpsertNoteRequest)(nil),        // 12: logpb.UpsertNoteRequest
+	(*ToggleStarRequest)(nil),        // 13: logpb.ToggleStarRequest
+	(*EnrichmentStatusRequest)(nil),  // 14: logpb.EnrichmentStatusRequest
+	(*GetLogRawJWTRequest)(nil),      // 15: logpb.GetLogRawJWTRequest
+	(*GetLogRawJWTResponse)(nil),     // 16: logpb.GetLogRawJWTResponse
+	(*EnrichmentStatusResponse)(nil), // 17: logpb.EnrichmentStatusResponse
+	nil,                              // 18: logpb.LogEntry.RequestHeadersEntry
+	nil,                              // 19: logpb.LogEntry.ResponseHeadersEntry
+	nil,                              // 20: logpb.UserIdentity.ClaimsEntry
+	nil,                              // 21: logpb.LogStatsResponse.StatusDistributionEntry
 }
 var file_proto_logpb_log_proto_depIdxs = []int32{
-	14, // 0: logpb.LogEntry.request_headers:type_name -> logpb.LogEntry.RequestHeadersEntry
-	15, // 1: logpb.LogEntry.response_headers:type_name -> logpb.LogEntry.ResponseHeadersEntry
+	18, // 0: logpb.LogEntry.request_headers:type_name -> logpb.LogEntry.RequestHeadersEntry
+	19, // 1: logpb.LogEntry.response_headers:type_name -> logpb.LogEntry.ResponseHeadersEntry
 	1,  // 2: logpb.LogEntry.user_identity:type_name -> logpb.UserIdentity
-	16, // 3: logpb.UserIdentity.claims:type_name -> logpb.UserIdentity.ClaimsEntry
+	20, // 3: logpb.UserIdentity.claims:type_name -> logpb.UserIdentity.ClaimsEntry
 	0,  // 4: logpb.LogBatch.entries:type_name -> logpb.LogEntry
 	6,  // 5: logpb.SearchLogsResponse.logs:type_name -> logpb.LogSummary
 	0,  // 6: logpb.LogDetail.entry:type_name -> logpb.LogEntry
-	17, // 7: logpb.LogStatsResponse.status_distribution:type_name -> logpb.LogStatsResponse.StatusDistributionEntry
+	21, // 7: logpb.LogStatsResponse.status_distribution:type_name -> logpb.LogStatsResponse.StatusDistributionEntry
 	0,  // 8: logpb.LogService.SendEntry:input_type -> logpb.LogEntry
 	2,  // 9: logpb.LogService.SendBatch:input_type -> logpb.LogBatch
 	4,  // 10: logpb.LogService.SearchLogs:input_type -> logpb.SearchLogsRequest
@@ -1420,16 +1666,20 @@ var file_proto_logpb_log_proto_depIdxs = []int32{
 	11, // 13: logpb.LogService.StreamLogs:input_type -> logpb.StreamLogsRequest
 	12, // 14: logpb.LogService.UpsertNote:input_type -> logpb.UpsertNoteRequest
 	13, // 15: logpb.LogService.ToggleStar:input_type -> logpb.ToggleStarRequest
-	3,  // 16: logpb.LogService.SendEntry:output_type -> logpb.Ack
-	3,  // 17: logpb.LogService.SendBatch:output_type -> logpb.Ack
-	5,  // 18: logpb.LogService.SearchLogs:output_type -> logpb.SearchLogsResponse
-	8,  // 19: logpb.LogService.GetLog:output_type -> logpb.LogDetail
-	10, // 20: logpb.LogService.GetLogStats:output_type -> logpb.LogStatsResponse
-	0,  // 21: logpb.LogService.StreamLogs:output_type -> logpb.LogEntry
-	3,  // 22: logpb.LogService.UpsertNote:output_type -> logpb.Ack
-	3,  // 23: logpb.LogService.ToggleStar:output_type -> logpb.Ack
-	16, // [16:24] is the sub-list for method output_type
-	8,  // [8:16] is the sub-list for method input_type
+	14, // 16: logpb.LogService.GetEnrichmentStatus:input_type -> logpb.EnrichmentStatusRequest
+	15, // 17: logpb.LogService.GetLogRawJWT:input_type -> logpb.GetLogRawJWTRequest
+	3,  // 18: logpb.LogService.SendEntry:output_type -> logpb.Ack
+	3,  // 19: logpb.LogService.SendBatch:output_type -> logpb.Ack
+	5,  // 20: logpb.LogService.SearchLogs:output_type -> logpb.SearchLogsResponse
+	8,  // 21: logpb.LogService.GetLog:output_type -> logpb.LogDetail
+	10, // 22: logpb.LogService.GetLogStats:output_type -> logpb.LogStatsResponse
+	0,  // 23: logpb.LogService.StreamLogs:output_type -> logpb.LogEntry
+	3,  // 24: logpb.LogService.UpsertNote:output_type -> logpb.Ack
+	3,  // 25: logpb.LogService.ToggleStar:output_type -> logpb.Ack
+	17, // 26: logpb.LogService.GetEnrichmentStatus:output_type -> logpb.EnrichmentStatusResponse
+	16, // 27: logpb.LogService.GetLogRawJWT:output_type -> logpb.GetLogRawJWTResponse
+	18, // [18:28] is the sub-list for method output_type
+	8,  // [8:18] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -1446,7 +1696,7 @@ func file_proto_logpb_log_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_logpb_log_proto_rawDesc), len(file_proto_logpb_log_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

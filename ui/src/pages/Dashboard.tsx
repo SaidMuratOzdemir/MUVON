@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -13,9 +13,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select'
 import { cn, formatBytes, formatUptime, formatNumber } from '@/lib/utils'
 import * as api from '@/api'
-import type { SystemStats, LogStats } from '@/types'
+import type { SystemStats, LogStats, Host } from '@/types'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
 
 const STATUS_COLORS = {
@@ -75,14 +78,33 @@ function StatCard({
 export default function Dashboard() {
   const [sys, setSys] = useState<SystemStats | null>(null)
   const [stats, setStats] = useState<LogStats | null>(null)
+  const [hosts, setHosts] = useState<Host[]>([])
   const [loading, setLoading] = useState(true)
   const [reloading, setReloading] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(new Date())
-  const { wafOnline, logOnline, dbOnline } = useServiceHealth()
+  const { wafOnline, logOnline, dbOnline, geoIPBroken, geoIPError } = useServiceHealth()
+
+  // Host filter — URL state, so refresh / share-link preserves the view.
+  // Empty string means "all hosts"; the backend treats that as a claim
+  // union across every configured host so per-tenant top-users work.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const hostFilter = searchParams.get('host') ?? ''
+
+  const setHostFilter = useCallback((next: string) => {
+    setSearchParams(prev => {
+      const out = new URLSearchParams(prev)
+      if (next) out.set('host', next)
+      else out.delete('host')
+      return out
+    }, { replace: true })
+  }, [setSearchParams])
 
   const load = useCallback(async () => {
     try {
-      const [s, lg] = await Promise.all([api.systemStats(), api.getLogStats()])
+      const [s, lg] = await Promise.all([
+        api.systemStats(),
+        api.getLogStats(hostFilter ? { host: hostFilter } : {}),
+      ])
       setSys(s)
       setStats(lg)
       setLastRefresh(new Date())
@@ -91,6 +113,11 @@ export default function Dashboard() {
     } finally {
       setLoading(false)
     }
+  }, [hostFilter])
+
+  // Hosts list rarely changes — fetch once, ignore polling.
+  useEffect(() => {
+    api.listHosts().then(setHosts).catch(() => setHosts([]))
   }, [])
 
   useEffect(() => {
@@ -128,23 +155,39 @@ export default function Dashboard() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-foreground tracking-tight">Dashboard</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Last updated: {lastRefresh.toLocaleTimeString()}
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleReload}
-          disabled={reloading}
-          className="gap-2 cursor-pointer border-border hover:border-primary/50"
-        >
-          <RefreshCw className={cn('h-3.5 w-3.5', reloading && 'animate-spin')} />
-          Reload Config
-        </Button>
+        <div className="flex items-center gap-2">
+          <Select
+            value={hostFilter || '__all__'}
+            onValueChange={v => setHostFilter(v === '__all__' ? '' : v)}
+          >
+            <SelectTrigger className="h-9 w-[220px] cursor-pointer">
+              <SelectValue placeholder="All hosts" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All hosts</SelectItem>
+              {hosts.filter(h => h.is_active).map(h => (
+                <SelectItem key={h.id} value={h.domain}>{h.domain}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleReload}
+            disabled={reloading}
+            className="gap-2 cursor-pointer border-border hover:border-primary/50"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', reloading && 'animate-spin')} />
+            Reload Config
+          </Button>
+        </div>
       </div>
 
       {/* System Health Banner */}
@@ -165,6 +208,25 @@ export default function Dashboard() {
           <span className="ml-auto text-muted-foreground font-mono text-xs">
             {new Date().toLocaleDateString()}
           </span>
+        </div>
+      )}
+
+      {/* Enrichment failure banner — shown only when GeoIP is configured but
+          the loader on the diaLOG side reports an error. A plain "disabled"
+          state never lights this up; the goal is to convert silent empty
+          country columns into a visible, actionable signal. */}
+      {geoIPBroken && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-300">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="font-medium">GeoIP enrichment offline</p>
+            <p className="text-xs text-amber-300/80 mt-0.5 break-all">
+              {geoIPError || 'GeoIP database is enabled but could not be loaded. Country/city columns will stay empty until this is fixed.'}
+            </p>
+            <Link to="/settings" className="text-xs underline underline-offset-2 mt-1 inline-block">
+              Open Settings →
+            </Link>
+          </div>
         </div>
       )}
 

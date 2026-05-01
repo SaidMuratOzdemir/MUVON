@@ -33,6 +33,13 @@ type Entry struct {
 	// Identity enrichment (JWT)
 	UserIdentity    *UserIdentity
 
+	// RawJWT is the unmodified bearer token captured from the request.
+	// Set only when the host explicitly opts in (hosts.store_raw_jwt) —
+	// otherwise the pipeline drops it after extracting claims so it never
+	// reaches the DB. UI access goes through a reveal endpoint that
+	// audit-logs every read.
+	RawJWT          string
+
 	// GeoIP enrichment
 	Country         string
 	City            string

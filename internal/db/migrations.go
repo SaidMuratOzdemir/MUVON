@@ -1313,4 +1313,139 @@ INSERT INTO settings (key, value) VALUES
     ('correlation_export_window_seconds',     '300')
 ON CONFLICT (key) DO NOTHING;`,
 	},
+	// One-shot cleanup for stored string settings whose JSON value got saved
+	// with surrounding whitespace before the admin-side trim landed (a single
+	// leading space in geoip_db_path silently disabled the loader for weeks).
+	// We rebuild the JSONB scalar from a trimmed Go string via to_jsonb so
+	// objects/numbers/booleans are left untouched even though jsonb_typeof
+	// already filters them.
+	{
+		name: "trim_whitespace_in_string_settings", product: "muvon",
+		sql: `
+UPDATE settings
+SET value = to_jsonb(btrim(value #>> '{}'))
+WHERE jsonb_typeof(value) = 'string'
+  AND value #>> '{}' <> btrim(value #>> '{}');`,
+	},
+	// Per-host identity_header_name: the request header to inspect for a
+	// bearer-style identity token. Default "Authorization" matches RFC 6750
+	// and our existing pipeline. We add this because tenants like cevikapi
+	// authenticate with a different header name (X-Auth-Token, X-Access-Token),
+	// which previously left identity enrichment silent for that whole host.
+	{
+		name: "add_hosts_identity_header_name", product: "muvon",
+		sql: `
+ALTER TABLE hosts
+  ADD COLUMN IF NOT EXISTS identity_header_name TEXT NOT NULL DEFAULT 'Authorization';`,
+	},
+	// WAF default-on with a detection-only soak window. New routes start with
+	// waf_enabled=true; existing routes that were created with the old default
+	// (false) get auto-enabled in detection-only mode for 7 days so the admin
+	// can review false positives before traffic is actually blocked.
+	// waf_detection_only_until is a per-route override that the proxy reads on
+	// every request — when set and in the future it forces detection-only
+	// regardless of the route's waf_detection_only flag.
+	{
+		name: "add_routes_waf_detection_only_until", product: "muvon",
+		sql: `
+ALTER TABLE routes
+  ADD COLUMN IF NOT EXISTS waf_detection_only_until TIMESTAMPTZ;
+ALTER TABLE routes
+  ALTER COLUMN waf_enabled SET DEFAULT TRUE;`,
+	},
+	{
+		name: "soak_existing_waf_disabled_routes", product: "muvon",
+		sql: `
+UPDATE routes
+SET waf_enabled = TRUE,
+    waf_detection_only_until = now() + interval '7 days',
+    updated_at = now()
+WHERE waf_enabled = FALSE
+  AND waf_detection_only_until IS NULL;`,
+	},
+	// Extend the seeded path-recon ruleset with the modern leak targets
+	// scanners actually probe in 2026 (Dockerfile, docker-compose, Spring/.NET
+	// app configs, language-specific secret stores, key files, cloud creds).
+	// Severity tuned so a single hit alone reaches ThresholdBlock=26 — these
+	// paths have no legitimate reason to be requested over the public edge.
+	{
+		name: "seed_waf_rules_2026_leak_targets", product: "muwaf",
+		sql: `
+INSERT INTO waf_rules (pattern, is_regex, category, severity, description) VALUES
+    ('Dockerfile',              false, 'lfi', 30, 'Container build manifest probe'),
+    ('docker-compose.yml',      false, 'lfi', 35, 'Docker Compose manifest probe'),
+    ('docker-compose.yaml',     false, 'lfi', 35, 'Docker Compose manifest probe'),
+    ('application.yml',         false, 'lfi', 35, 'Spring app config probe'),
+    ('application.yaml',        false, 'lfi', 35, 'Spring app config probe'),
+    ('application.properties',  false, 'lfi', 35, 'Spring app config probe'),
+    ('appsettings.json',        false, 'lfi', 35, 'ASP.NET appsettings.json probe'),
+    ('appsettings.Production.json', false, 'lfi', 40, 'ASP.NET prod settings probe'),
+    ('appsettings.Development.json', false, 'lfi', 30, 'ASP.NET dev settings probe'),
+    ('local_settings.py',       false, 'lfi', 35, 'Django local_settings probe'),
+    ('settings.py',             false, 'lfi', 30, 'Django settings.py probe'),
+    ('production.py',           false, 'lfi', 35, 'Django production settings probe'),
+    ('config/database.yml',     false, 'lfi', 40, 'Rails database config probe'),
+    ('config/secrets.yml',      false, 'lfi', 45, 'Rails secrets probe'),
+    ('config/master.key',       false, 'lfi', 50, 'Rails master.key probe'),
+    ('config/credentials.yml.enc', false, 'lfi', 45, 'Rails encrypted credentials probe'),
+    ('config/production.json',  false, 'lfi', 35, 'Generic prod config probe'),
+    ('config/development.json', false, 'lfi', 30, 'Generic dev config probe'),
+    ('production.json',         false, 'lfi', 30, 'Top-level prod config probe'),
+    ('id_rsa',                  false, 'lfi', 60, 'SSH private key probe'),
+    ('id_dsa',                  false, 'lfi', 50, 'SSH DSA key probe'),
+    ('id_ecdsa',                false, 'lfi', 50, 'SSH ECDSA key probe'),
+    ('id_ed25519',              false, 'lfi', 50, 'SSH ed25519 key probe'),
+    ('.aws/credentials',        false, 'lfi', 60, 'AWS credentials probe'),
+    ('.aws/config',             false, 'lfi', 35, 'AWS CLI config probe'),
+    ('.kube/config',            false, 'lfi', 50, 'Kubeconfig probe'),
+    ('.npmrc',                  false, 'lfi', 30, 'npm credentials probe'),
+    ('.pypirc',                 false, 'lfi', 30, 'PyPI credentials probe'),
+    ('.netrc',                  false, 'lfi', 35, 'netrc credentials probe'),
+    ('.dockercfg',              false, 'lfi', 30, 'Docker auth probe'),
+    ('.docker/config.json',     false, 'lfi', 35, 'Docker auth probe'),
+    ('credentials.json',        false, 'lfi', 35, 'GCP service account JSON probe'),
+    ('serviceaccount.json',     false, 'lfi', 35, 'GCP service account JSON probe'),
+    ('terraform.tfstate',       false, 'lfi', 45, 'Terraform state probe'),
+    ('terraform.tfvars',        false, 'lfi', 35, 'Terraform vars probe'),
+    ('private.key',             false, 'lfi', 45, 'Generic private key probe'),
+    ('server.key',              false, 'lfi', 45, 'Generic server key probe'),
+    ('.git/config',             false, 'custom', 35, 'Git config probe'),
+    ('.git/HEAD',               false, 'custom', 30, 'Git repo probe')
+ON CONFLICT DO NOTHING;`,
+	},
+	// Agent observability — record what config snapshot each agent is
+	// running and when they last pulled/streamed it. Without these the only
+	// signal we have is "is the agent alive now?" — no way to detect a
+	// stuck agent that's still pinging but missed a config push, which is
+	// exactly the scenario where agents drift apart from central.
+	{
+		name: "add_agents_observability_columns", product: "",
+		sql: `
+ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS last_config_pull_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS config_version      TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS last_remote_addr    TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS last_user_agent     TEXT NOT NULL DEFAULT '';`,
+	},
+	// Per-host opt-in for raw-JWT capture. Off by default — storing the
+	// signed token alongside the log row is a high-value secret if the DB
+	// is ever exfiltrated, so admins must explicitly turn it on per host
+	// (typically only for tenants where customer-support workflows need
+	// to replay or decode the original token).
+	{
+		name: "add_hosts_store_raw_jwt", product: "muvon",
+		sql: `
+ALTER TABLE hosts
+  ADD COLUMN IF NOT EXISTS store_raw_jwt BOOLEAN NOT NULL DEFAULT FALSE;`,
+	},
+	// Raw JWT column on the log row. Nullable + indexed-only for the
+	// "is set" case so we can render a Reveal button without leaking the
+	// token in list views. Existence of this column for hosts without
+	// store_raw_jwt is harmless — the pipeline never populates it.
+	{
+		name: "add_http_logs_raw_jwt", product: "dialog",
+		sql: `
+ALTER TABLE http_logs
+  ADD COLUMN IF NOT EXISTS raw_jwt TEXT;`,
+	},
 }

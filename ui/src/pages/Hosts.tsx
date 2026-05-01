@@ -296,6 +296,8 @@ export default function Hosts() {
     jwt_claims: '',
     jwt_secret: '',
     jwt_secret_set: false,
+    identity_header_name: '',
+    store_raw_jwt: false,
   })
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
@@ -317,7 +319,8 @@ export default function Hosts() {
     setHostForm({
       domain: '', is_active: true, force_https: false, trusted_proxies: [],
       jwt_identity_enabled: false, jwt_identity_mode: 'verify', jwt_claims: '',
-      jwt_secret: '', jwt_secret_set: false,
+      jwt_secret: '', jwt_secret_set: false, identity_header_name: '',
+      store_raw_jwt: false,
     })
     setHostDialog({ open: true, host: null })
   }
@@ -335,6 +338,8 @@ export default function Hosts() {
       // Backend masks the ciphertext as "********" when a secret is set;
       // the UI shows a "secret is set" hint instead of a blank field.
       jwt_secret_set: typeof h.jwt_secret === 'string' && h.jwt_secret !== '',
+      identity_header_name: h.identity_header_name || '',
+      store_raw_jwt: h.store_raw_jwt ?? false,
     })
     setHostDialog({ open: true, host: h })
   }
@@ -546,6 +551,40 @@ export default function Hosts() {
                       still decoded but marked "not verified" — useful when you
                       front multiple tenants with different secrets.
                     </p>
+                  </div>
+                  <div className="px-4 py-3 space-y-1">
+                    <Label className="text-xs">Identity header</Label>
+                    <Input
+                      placeholder="Authorization"
+                      className="bg-background border-border font-mono text-xs"
+                      value={hostForm.identity_header_name}
+                      onChange={e => setHostForm(f => ({ ...f, identity_header_name: e.target.value }))}
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Header to read the bearer token from. Default
+                      <code className="font-mono px-1">Authorization</code>. Use
+                      <code className="font-mono px-1">X-Auth-Token</code> for hosts
+                      that don't follow RFC 6750, or
+                      <code className="font-mono px-1">Cookie:session</code> to pull
+                      the token from a named cookie.
+                    </p>
+                  </div>
+                  <div className="flex items-start justify-between px-4 py-3 gap-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium">Store raw token alongside logs</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Persists the original signed JWT in <code className="font-mono">http_logs.raw_jwt</code> so support
+                        flows can replay or decode it. Each reveal is audit-logged.
+                        Off by default — only turn on for hosts where this is
+                        explicitly accepted, since the column carries valid
+                        credentials until they expire.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={hostForm.store_raw_jwt}
+                      onCheckedChange={v => setHostForm(f => ({ ...f, store_raw_jwt: v }))}
+                      className="cursor-pointer"
+                    />
                   </div>
                 </>
               )}

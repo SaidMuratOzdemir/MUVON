@@ -28,12 +28,23 @@ type Host struct {
 	JWTIdentityMode    string `json:"jwt_identity_mode"`
 	JWTClaims          string `json:"jwt_claims"`
 	JWTSecret          string `json:"-"` // encrypted ciphertext; never serialised
+	// IdentityHeaderName is the HTTP header inspected for a bearer-style
+	// token. Defaults to "Authorization". Hosts that authenticate with
+	// "X-Auth-Token" / "X-Access-Token" override this so identity
+	// enrichment doesn't silently skip the whole host.
+	IdentityHeaderName string    `json:"identity_header_name"`
+	// StoreRawJWT opts a host into persisting the original bearer token
+	// alongside the log row. Off by default — saving signed tokens is a
+	// high-value secret leak if the DB is ever exfiltrated. Reveal flows
+	// require an admin auth + audit log entry per access.
+	StoreRawJWT       bool      `json:"store_raw_jwt"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 const hostSelectCols = `id, domain, is_active, force_https, trusted_proxies,
 	jwt_identity_enabled, jwt_identity_mode, jwt_claims, jwt_secret,
+	identity_header_name, store_raw_jwt,
 	created_at, updated_at`
 
 func scanHost(scan func(...any) error) (Host, error) {
@@ -41,6 +52,7 @@ func scanHost(scan func(...any) error) (Host, error) {
 	var trusted []string
 	err := scan(&h.ID, &h.Domain, &h.IsActive, &h.ForceHTTPS, &trusted,
 		&h.JWTIdentityEnabled, &h.JWTIdentityMode, &h.JWTClaims, &h.JWTSecret,
+		&h.IdentityHeaderName, &h.StoreRawJWT,
 		&h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return h, err
@@ -87,6 +99,21 @@ type HostJWT struct {
 	Mode    string // "verify" | "decode"
 	Claims  string // CSV
 	Secret  string // encrypted ciphertext from secret.Box (or "" to clear)
+	// HeaderName overrides the default "Authorization" for hosts that
+	// authenticate via X-Auth-Token / X-Access-Token. Empty string keeps
+	// the default at the DB level via the column's DEFAULT.
+	HeaderName string
+	// StoreRaw opts this host into persisting the original token on each
+	// log row. Off by default — admins must turn it on knowing the
+	// security implications.
+	StoreRaw bool
+}
+
+func (j HostJWT) headerOrDefault() string {
+	if h := strings.TrimSpace(j.HeaderName); h != "" {
+		return h
+	}
+	return "Authorization"
 }
 
 func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS bool, trustedProxies []string, jwt HostJWT) (Host, error) {
@@ -98,11 +125,13 @@ func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS
 	}
 	h, err := scanHost(d.Pool.QueryRow(ctx,
 		`INSERT INTO hosts (domain, is_active, force_https, trusted_proxies,
-			jwt_identity_enabled, jwt_identity_mode, jwt_claims, jwt_secret)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+			jwt_identity_enabled, jwt_identity_mode, jwt_claims, jwt_secret,
+			identity_header_name, store_raw_jwt)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		 RETURNING `+hostSelectCols,
 		domain, isActive, forceHTTPS, trustedProxies,
 		jwt.Enabled, jwt.Mode, jwt.Claims, jwt.Secret,
+		jwt.headerOrDefault(), jwt.StoreRaw,
 	).Scan)
 	if err != nil {
 		return h, fmt.Errorf("create host: %w", err)
@@ -120,10 +149,12 @@ func (d *DB) UpdateHost(ctx context.Context, id int, domain string, isActive, fo
 	h, err := scanHost(d.Pool.QueryRow(ctx,
 		`UPDATE hosts SET domain=$2, is_active=$3, force_https=$4, trusted_proxies=$5,
 			jwt_identity_enabled=$6, jwt_identity_mode=$7, jwt_claims=$8, jwt_secret=$9,
+			identity_header_name=$10, store_raw_jwt=$11,
 			updated_at=now()
 		 WHERE id=$1 RETURNING `+hostSelectCols,
 		id, domain, isActive, forceHTTPS, trustedProxies,
 		jwt.Enabled, jwt.Mode, jwt.Claims, jwt.Secret,
+		jwt.headerOrDefault(), jwt.StoreRaw,
 	).Scan)
 	if err != nil {
 		return h, fmt.Errorf("update host: %w", err)
@@ -164,6 +195,12 @@ type Route struct {
 	WafEnabled         bool              `json:"waf_enabled"`
 	WafExcludePaths    []string          `json:"waf_exclude_paths"`
 	WafDetectionOnly   bool              `json:"waf_detection_only"`
+	// WafDetectionOnlyUntil forces detection-only behaviour while in the
+	// future, regardless of WafDetectionOnly. Used to give a route a soak
+	// period after WAF is auto-enabled (e.g. after a default-on rollout) so
+	// the admin can review false positives before traffic is actually
+	// blocked. Nil = no soak window.
+	WafDetectionOnlyUntil *time.Time     `json:"waf_detection_only_until,omitempty"`
 	RateLimitRPS       int               `json:"rate_limit_rps"`
 	RateLimitBurst     int               `json:"rate_limit_burst"`
 	ReqHeadersAdd      map[string]string `json:"req_headers_add"`
@@ -188,7 +225,7 @@ type Route struct {
 
 const routeSelectCols = `id, host_id, path_prefix, route_type, backend_url, backend_urls, managed_component_id, static_root, static_spa, redirect_url,
 	strip_prefix, rewrite_pattern, rewrite_to, priority, is_active, log_enabled, waf_enabled,
-	waf_exclude_paths, waf_detection_only, rate_limit_rps, rate_limit_burst,
+	waf_exclude_paths, waf_detection_only, waf_detection_only_until, rate_limit_rps, rate_limit_burst,
 	req_headers_add, req_headers_del, resp_headers_add, resp_headers_del,
 	accel_root, accel_signed_secret,
 	max_body_bytes, timeout_seconds,
@@ -205,7 +242,7 @@ func scanRoute(scan func(...any) error) (Route, error) {
 		&r.BackendURL, &backendURLs, &r.ManagedComponentID, &r.StaticRoot, &r.StaticSPA, &r.RedirectURL,
 		&r.StripPrefix, &r.RewritePattern, &r.RewriteTo,
 		&r.Priority, &r.IsActive, &r.LogEnabled, &r.WafEnabled,
-		&wafExclude, &r.WafDetectionOnly, &r.RateLimitRPS, &r.RateLimitBurst,
+		&wafExclude, &r.WafDetectionOnly, &r.WafDetectionOnlyUntil, &r.RateLimitRPS, &r.RateLimitBurst,
 		&reqAdd, &reqDel, &respAdd, &respDel,
 		&r.AccelRoot, &r.AccelSignedSecret,
 		&r.MaxBodyBytes, &r.TimeoutSeconds,
@@ -282,17 +319,17 @@ func (d *DB) CreateRoute(ctx context.Context, r Route) (Route, error) {
 	row := d.Pool.QueryRow(ctx,
 		`INSERT INTO routes (host_id, path_prefix, route_type, backend_url, backend_urls, managed_component_id, static_root, static_spa, redirect_url,
 		                     strip_prefix, rewrite_pattern, rewrite_to, priority, is_active, log_enabled, waf_enabled,
-		                     waf_exclude_paths, waf_detection_only, rate_limit_rps, rate_limit_burst,
+		                     waf_exclude_paths, waf_detection_only, waf_detection_only_until, rate_limit_rps, rate_limit_burst,
 		                     req_headers_add, req_headers_del, resp_headers_add, resp_headers_del,
 		                     accel_root, accel_signed_secret,
 		                     max_body_bytes, timeout_seconds,
 		                     cors_enabled, cors_origins, cors_methods, cors_headers, cors_max_age, cors_credentials,
 		                     error_page_4xx, error_page_5xx)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
 		 RETURNING `+routeSelectCols,
 		r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.ManagedComponentID, r.StaticRoot, r.StaticSPA, r.RedirectURL,
 		r.StripPrefix, r.RewritePattern, r.RewriteTo, r.Priority, r.IsActive, r.LogEnabled, r.WafEnabled,
-		r.WafExcludePaths, r.WafDetectionOnly, r.RateLimitRPS, r.RateLimitBurst,
+		r.WafExcludePaths, r.WafDetectionOnly, r.WafDetectionOnlyUntil, r.RateLimitRPS, r.RateLimitBurst,
 		reqAdd, r.ReqHeadersDel, respAdd, r.RespHeadersDel,
 		r.AccelRoot, r.AccelSignedSecret,
 		r.MaxBodyBytes, r.TimeoutSeconds,
@@ -325,18 +362,18 @@ func (d *DB) UpdateRoute(ctx context.Context, r Route) (Route, error) {
 		`UPDATE routes SET host_id=$2, path_prefix=$3, route_type=$4, backend_url=$5, backend_urls=$6,
 		        managed_component_id=$7, static_root=$8, static_spa=$9, redirect_url=$10, strip_prefix=$11, rewrite_pattern=$12, rewrite_to=$13,
 		        priority=$14, is_active=$15, log_enabled=$16, waf_enabled=$17,
-		        waf_exclude_paths=$18, waf_detection_only=$19, rate_limit_rps=$20, rate_limit_burst=$21,
-		        req_headers_add=$22, req_headers_del=$23, resp_headers_add=$24, resp_headers_del=$25,
-		        accel_root=$26, accel_signed_secret=$27,
-		        max_body_bytes=$28, timeout_seconds=$29,
-		        cors_enabled=$30, cors_origins=$31, cors_methods=$32, cors_headers=$33, cors_max_age=$34, cors_credentials=$35,
-		        error_page_4xx=$36, error_page_5xx=$37,
+		        waf_exclude_paths=$18, waf_detection_only=$19, waf_detection_only_until=$20, rate_limit_rps=$21, rate_limit_burst=$22,
+		        req_headers_add=$23, req_headers_del=$24, resp_headers_add=$25, resp_headers_del=$26,
+		        accel_root=$27, accel_signed_secret=$28,
+		        max_body_bytes=$29, timeout_seconds=$30,
+		        cors_enabled=$31, cors_origins=$32, cors_methods=$33, cors_headers=$34, cors_max_age=$35, cors_credentials=$36,
+		        error_page_4xx=$37, error_page_5xx=$38,
 		        updated_at=now()
 		 WHERE id=$1
 		 RETURNING `+routeSelectCols,
 		r.ID, r.HostID, r.PathPrefix, r.RouteType, r.BackendURL, r.BackendURLs, r.ManagedComponentID, r.StaticRoot, r.StaticSPA, r.RedirectURL,
 		r.StripPrefix, r.RewritePattern, r.RewriteTo, r.Priority, r.IsActive, r.LogEnabled, r.WafEnabled,
-		r.WafExcludePaths, r.WafDetectionOnly, r.RateLimitRPS, r.RateLimitBurst,
+		r.WafExcludePaths, r.WafDetectionOnly, r.WafDetectionOnlyUntil, r.RateLimitRPS, r.RateLimitBurst,
 		reqAdd, r.ReqHeadersDel, respAdd, r.RespHeadersDel,
 		r.AccelRoot, r.AccelSignedSecret,
 		r.MaxBodyBytes, r.TimeoutSeconds,
@@ -839,6 +876,36 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 	}
 
 	return entries, total, rows.Err()
+}
+
+// GetLogRawJWT fetches the raw bearer token captured for a single log row,
+// alongside the host so the caller can sanity-check that the host still has
+// store_raw_jwt enabled. Returns ("", "", nil) when the row exists but the
+// column is empty (host opted out, or token was outside the capture
+// window). Returns an error only on lookup failure.
+func (d *DB) GetLogRawJWT(ctx context.Context, id string) (token, host string, err error) {
+	ts, ok := uuidV7Time(id)
+	var rangeStart, rangeEnd time.Time
+	if ok {
+		rangeStart = ts.Add(-24 * time.Hour)
+		rangeEnd = ts.Add(24 * time.Hour)
+	} else {
+		rangeStart = time.Unix(0, 0)
+		rangeEnd = time.Now().Add(24 * time.Hour)
+	}
+	var raw *string
+	err = d.Pool.QueryRow(ctx,
+		`SELECT raw_jwt, host
+		 FROM http_logs
+		 WHERE id = $1 AND timestamp BETWEEN $2 AND $3`, id, rangeStart, rangeEnd,
+	).Scan(&raw, &host)
+	if err != nil {
+		return "", "", fmt.Errorf("get log raw jwt: %w", err)
+	}
+	if raw != nil {
+		token = *raw
+	}
+	return token, host, nil
 }
 
 func (d *DB) GetLogDetail(ctx context.Context, id string) (LogEntry, LogBody, error) {

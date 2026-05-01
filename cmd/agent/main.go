@@ -56,8 +56,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// TLS — ACME with local dir cache (no DB needed)
-	tlsMgr := tlspkg.NewManagerNoDB(ch, *tlsCacheDir)
+	// TLS — ACME with local dir cache + central cert sync. The sync layer
+	// makes admin-uploaded certs win over autocert (pull) and stores
+	// freshly-issued ACME certs back on central as a backup (push).
+	certSync := tlspkg.NewAgentCertSync(*centralURL, *apiKey)
+	tlsMgr := tlspkg.NewManagerNoDB(ch, *tlsCacheDir, certSync)
 
 	// Health manager
 	hm := health.NewManager()

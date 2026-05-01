@@ -118,6 +118,7 @@ func (w *worker) flush(batch []Entry) {
 			e.UserIdentity.JSON(),
 			nilIfEmpty(e.Country),
 			nilIfEmpty(e.City),
+			nilIfEmpty(e.RawJWT),
 		})
 	}
 
@@ -126,7 +127,7 @@ func (w *worker) flush(batch []Entry) {
 		[]string{"id", "timestamp", "host", "client_ip", "method", "path", "query_string",
 			"request_headers", "response_status", "response_headers", "response_time_ms",
 			"request_size", "response_size", "user_agent", "error", "waf_blocked", "waf_block_reason",
-			"waf_score", "waf_action", "user_identity", "country", "city"},
+			"waf_score", "waf_action", "user_identity", "country", "city", "raw_jwt"},
 		pgx.CopyFromRows(logRows),
 	)
 	if err != nil {

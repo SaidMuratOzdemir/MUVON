@@ -20,6 +20,10 @@ type Manager struct {
 	autocertMgr *autocert.Manager
 	certStore   *CertStore
 	configHolder *config.Holder
+	// agentSync is set on agent binaries to consult central for a manual
+	// cert before falling back to ACME, and to push freshly-issued ACME
+	// certs back to central. nil on the central server itself.
+	agentSync   *AgentCertSync
 }
 
 func NewManager(database *db.DB, configHolder *config.Holder, adminDomain string) *Manager {
@@ -58,15 +62,26 @@ func NewManager(database *db.DB, configHolder *config.Holder, adminDomain string
 func (m *Manager) GetCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	domain := strings.ToLower(hello.ServerName)
 
-	// Önce DB'den (manuel yüklenen veya önceden cached sertifika)
-	cert, err := m.certStore.GetCertificate(domain)
-	if err == nil {
+	// 1. Local DB / in-process cert store (only populated on central).
+	if cert, err := m.certStore.GetCertificate(domain); err == nil {
 		return cert, nil
 	}
 
-	// Sonra autocert (Let's Encrypt)
+	// 2. Agent mode — ask central whether a manual cert exists for this
+	//    host. Manual certs always win over autocert because the admin
+	//    explicitly uploaded them. Errors fall through to autocert so a
+	//    central outage never breaks TLS at the edge.
+	if m.agentSync != nil {
+		if cert, err := m.agentSync.FetchCertificate(domain); err == nil && cert != nil {
+			return cert, nil
+		} else if err != nil {
+			slog.Warn("central cert pull failed, falling back to ACME", "domain", domain, "error", err)
+		}
+	}
+
+	// 3. ACME — Let's Encrypt via autocert.
 	slog.Info("requesting certificate from Let's Encrypt", "domain", domain)
-	cert, err = m.autocertMgr.GetCertificate(hello)
+	cert, err := m.autocertMgr.GetCertificate(hello)
 	if err != nil {
 		slog.Error("autocert GetCertificate failed", "domain", domain, "error", err)
 	}
@@ -90,7 +105,9 @@ func (m *Manager) InvalidateCache(domain string) {
 }
 
 // InvalidateMissing removes in-memory cached certs for domains
-// that are no longer present in the active config.
+// that are no longer present in the active config. On agent mode it also
+// drops the central pull cache so a manual cert upload is picked up on the
+// next handshake without waiting for the TTL.
 func (m *Manager) InvalidateMissing(cfg *config.Config) {
 	m.certStore.mu.RLock()
 	var stale []string
@@ -104,6 +121,10 @@ func (m *Manager) InvalidateMissing(cfg *config.Config) {
 		m.certStore.Invalidate(domain)
 		slog.Info("TLS cache invalidated for removed host", "domain", domain)
 	}
+	// Cheap on the agent (resets a 60-second TTL map); a no-op on central.
+	if m.agentSync != nil {
+		m.agentSync.InvalidateCache()
+	}
 }
 
 func hostPolicyFromConfig(ch *config.Holder, adminDomain string) autocert.HostPolicy {
@@ -115,7 +136,12 @@ func hostPolicyFromConfig(ch *config.Holder, adminDomain string) autocert.HostPo
 // NewManagerNoDB creates a TLS manager that does not require a database.
 // ACME certs are cached in the given directory (or in-memory if empty).
 // Used by agent binaries running on client servers.
-func NewManagerNoDB(configHolder *config.Holder, cacheDir string) *Manager {
+//
+// When sync is non-nil the manager additionally consults central for manual
+// cert overrides (FetchCertificate) and pushes ACME-issued certs back as a
+// backup (via ReportingCache wrapped around the local cache). Pass nil to
+// keep the agent fully decoupled from central — useful for offline tests.
+func NewManagerNoDB(configHolder *config.Holder, cacheDir string, sync *AgentCertSync) *Manager {
 	cfg := configHolder.Get()
 
 	var acmeURL string
@@ -131,6 +157,7 @@ func NewManagerNoDB(configHolder *config.Holder, cacheDir string) *Manager {
 	} else {
 		cache = newMemCache()
 	}
+	cache = NewReportingCache(cache, sync)
 
 	am := &autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
@@ -144,12 +171,14 @@ func NewManagerNoDB(configHolder *config.Holder, cacheDir string) *Manager {
 		"staging", cfg.Global.LetsEncryptStaging,
 		"email", cfg.Global.LetsEncryptEmail,
 		"cache_dir", cacheDir,
+		"central_sync", sync != nil,
 	)
 
 	return &Manager{
 		autocertMgr:  am,
 		certStore:    &CertStore{certs: make(map[string]*tls.Certificate)}, // no DB
 		configHolder: configHolder,
+		agentSync:    sync,
 	}
 }
 

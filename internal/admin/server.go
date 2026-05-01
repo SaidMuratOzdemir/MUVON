@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/logs/{id}", s.handleGetLog)
 	api.HandleFunc("PUT /api/logs/{id}/note", s.handleUpsertLogNote)
 	api.HandleFunc("POST /api/logs/{id}/star", s.handleToggleLogStar)
+	api.HandleFunc("GET /api/logs/{id}/jwt", s.handleRevealLogJWT)
 
 	// Settings
 	api.HandleFunc("GET /api/settings", s.handleGetSettings)
@@ -198,6 +199,11 @@ func (s *Server) Handler() http.Handler {
 		agentMux := http.NewServeMux()
 		agentMux.HandleFunc("GET /api/v1/agent/config", s.agentSvc.HandleConfig)
 		agentMux.HandleFunc("GET /api/v1/agent/watch", s.agentSvc.HandleWatch)
+		// Cert sync — agent-issued ACME certs flow up so central has a
+		// backup + audit trail; manual certs flow down so an admin-uploaded
+		// cert wins over whatever the agent autocert has cached.
+		agentMux.HandleFunc("POST /api/v1/agent/cert/{domain}", s.agentSvc.HandleUploadCert)
+		agentMux.HandleFunc("GET /api/v1/agent/cert/{domain}", s.agentSvc.HandleGetCert)
 		mux.Handle("/api/v1/agent/", s.agentSvc.AuthMiddleware(agentMux))
 	}
 
@@ -247,10 +253,32 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		services["logging"] = "ok"
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"status":   status,
 		"services": services,
-	})
+	}
+
+	// Enrichment health is reported separately from "logging" because diaLOG
+	// can be reachable while a sub-feature (GeoIP file mistyped, JWT off) is
+	// silently broken. Surfacing the sub-state lets the admin UI show an
+	// actionable banner pointing at the feature, not just "logging: ok".
+	if s.logClient != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if es, err := s.logClient.EnrichmentStatus(ctx); err == nil && es != nil {
+			enrich := map[string]any{
+				"geoip_state":               es.GeoipState,
+				"geoip_path":                es.GeoipPath,
+				"geoip_error":               es.GeoipError,
+				"geoip_loaded_at":           es.GeoipLoadedAt,
+				"jwt_identity_state":        es.JwtIdentityState,
+				"jwt_identity_host_count":   es.JwtIdentityHostOverrides,
+			}
+			resp["enrichment"] = enrich
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleSystemStats(w http.ResponseWriter, r *http.Request) {

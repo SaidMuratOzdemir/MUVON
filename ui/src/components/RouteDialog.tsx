@@ -199,6 +199,10 @@ export type RouteFormData = {
   waf_enabled: boolean
   waf_exclude_paths: string[]
   waf_detection_only: boolean
+  // RFC3339 (or empty when no soak window). The form treats this as
+  // read-only metadata — the only mutation we support from the dialog is
+  // ending the soak early via a "Stop soak" button below.
+  waf_detection_only_until: string
   // proxy + static
   cors_enabled: boolean
   cors_origins: string
@@ -234,6 +238,7 @@ export const defaultRouteForm = (): RouteFormData => ({
   waf_enabled: false,
   waf_exclude_paths: [],
   waf_detection_only: false,
+  waf_detection_only_until: '',
   rate_limit_rps: 0,
   rate_limit_burst: 0,
   max_body_bytes: 0,
@@ -308,6 +313,7 @@ export function RouteDialog({
         waf_enabled: route.waf_enabled,
         waf_exclude_paths: route.waf_exclude_paths ?? [],
         waf_detection_only: route.waf_detection_only ?? false,
+        waf_detection_only_until: route.waf_detection_only_until ?? '',
         rate_limit_rps: route.rate_limit_rps ?? 0,
         rate_limit_burst: route.rate_limit_burst ?? 0,
         max_body_bytes: route.max_body_bytes ?? 0,
@@ -429,6 +435,10 @@ export function RouteDialog({
         waf_enabled: form.waf_enabled,
         waf_exclude_paths: form.waf_exclude_paths.length > 0 ? form.waf_exclude_paths : undefined,
         waf_detection_only: form.waf_detection_only,
+        // Empty string round-trips as null on the wire so "Stop soak" can
+        // clear the soak window. Any non-empty string is forwarded as-is
+        // (the only mutation paths we expose set this to '' to clear).
+        waf_detection_only_until: form.waf_detection_only_until === '' ? null : form.waf_detection_only_until,
         // cors — proxy + static only
         cors_enabled: form.route_type !== 'redirect' ? form.cors_enabled : undefined,
         cors_origins: (form.route_type !== 'redirect' && form.cors_enabled) ? (form.cors_origins || '*') : undefined,
@@ -764,6 +774,28 @@ export function RouteDialog({
                   </div>
                   <Switch checked={form.waf_detection_only} onCheckedChange={v => set('waf_detection_only', v)} className="cursor-pointer" />
                 </div>
+                {(() => {
+                  const until = form.waf_detection_only_until ? new Date(form.waf_detection_only_until) : null
+                  if (!until || until.getTime() <= Date.now()) return null
+                  const days = Math.max(1, Math.ceil((until.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+                  return (
+                    <div className="flex items-center justify-between rounded-md border border-amber-400/40 bg-amber-400/5 px-4 py-2.5">
+                      <div>
+                        <p className="text-xs font-medium text-amber-300">Soak window active · {days} day{days === 1 ? '' : 's'} left</p>
+                        <p className="text-xs text-amber-300/80">
+                          Blocks are downgraded to logs until {until.toLocaleString()}. End early once you've reviewed false positives.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => set('waf_detection_only_until', '')}
+                        className="text-xs px-2 py-1 rounded border border-amber-400/40 text-amber-300 hover:bg-amber-400/10 cursor-pointer"
+                      >
+                        Stop soak
+                      </button>
+                    </div>
+                  )
+                })()}
               </div>
             )}
           </div>

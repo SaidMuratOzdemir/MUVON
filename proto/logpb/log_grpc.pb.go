@@ -19,14 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	LogService_SendEntry_FullMethodName   = "/logpb.LogService/SendEntry"
-	LogService_SendBatch_FullMethodName   = "/logpb.LogService/SendBatch"
-	LogService_SearchLogs_FullMethodName  = "/logpb.LogService/SearchLogs"
-	LogService_GetLog_FullMethodName      = "/logpb.LogService/GetLog"
-	LogService_GetLogStats_FullMethodName = "/logpb.LogService/GetLogStats"
-	LogService_StreamLogs_FullMethodName  = "/logpb.LogService/StreamLogs"
-	LogService_UpsertNote_FullMethodName  = "/logpb.LogService/UpsertNote"
-	LogService_ToggleStar_FullMethodName  = "/logpb.LogService/ToggleStar"
+	LogService_SendEntry_FullMethodName           = "/logpb.LogService/SendEntry"
+	LogService_SendBatch_FullMethodName           = "/logpb.LogService/SendBatch"
+	LogService_SearchLogs_FullMethodName          = "/logpb.LogService/SearchLogs"
+	LogService_GetLog_FullMethodName              = "/logpb.LogService/GetLog"
+	LogService_GetLogStats_FullMethodName         = "/logpb.LogService/GetLogStats"
+	LogService_StreamLogs_FullMethodName          = "/logpb.LogService/StreamLogs"
+	LogService_UpsertNote_FullMethodName          = "/logpb.LogService/UpsertNote"
+	LogService_ToggleStar_FullMethodName          = "/logpb.LogService/ToggleStar"
+	LogService_GetEnrichmentStatus_FullMethodName = "/logpb.LogService/GetEnrichmentStatus"
+	LogService_GetLogRawJWT_FullMethodName        = "/logpb.LogService/GetLogRawJWT"
 )
 
 // LogServiceClient is the client API for LogService service.
@@ -49,6 +51,19 @@ type LogServiceClient interface {
 	// --- Not / Star ---
 	UpsertNote(ctx context.Context, in *UpsertNoteRequest, opts ...grpc.CallOption) (*Ack, error)
 	ToggleStar(ctx context.Context, in *ToggleStarRequest, opts ...grpc.CallOption) (*Ack, error)
+	// --- Enrichment health ---
+	// Reports whether GeoIP and JWT identity enrichment are actually wired up
+	// and operating. The admin panel uses this to show an actionable banner
+	// when a setting is enabled but the underlying loader has failed (e.g. a
+	// mistyped path, a missing file). Without this signal the symptom is just
+	// empty country / user fields with no visible cause.
+	GetEnrichmentStatus(ctx context.Context, in *EnrichmentStatusRequest, opts ...grpc.CallOption) (*EnrichmentStatusResponse, error)
+	// --- Reveal raw JWT ---
+	// Fetches the raw bearer token captured on a single log row. Available
+	// only when the host opted into hosts.store_raw_jwt. Callers (admin) are
+	// expected to wrap this in an audit log entry — the SIEM does not record
+	// who pulled the token.
+	GetLogRawJWT(ctx context.Context, in *GetLogRawJWTRequest, opts ...grpc.CallOption) (*GetLogRawJWTResponse, error)
 }
 
 type logServiceClient struct {
@@ -148,6 +163,26 @@ func (c *logServiceClient) ToggleStar(ctx context.Context, in *ToggleStarRequest
 	return out, nil
 }
 
+func (c *logServiceClient) GetEnrichmentStatus(ctx context.Context, in *EnrichmentStatusRequest, opts ...grpc.CallOption) (*EnrichmentStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnrichmentStatusResponse)
+	err := c.cc.Invoke(ctx, LogService_GetEnrichmentStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *logServiceClient) GetLogRawJWT(ctx context.Context, in *GetLogRawJWTRequest, opts ...grpc.CallOption) (*GetLogRawJWTResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetLogRawJWTResponse)
+	err := c.cc.Invoke(ctx, LogService_GetLogRawJWT_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LogServiceServer is the server API for LogService service.
 // All implementations must embed UnimplementedLogServiceServer
 // for forward compatibility.
@@ -168,6 +203,19 @@ type LogServiceServer interface {
 	// --- Not / Star ---
 	UpsertNote(context.Context, *UpsertNoteRequest) (*Ack, error)
 	ToggleStar(context.Context, *ToggleStarRequest) (*Ack, error)
+	// --- Enrichment health ---
+	// Reports whether GeoIP and JWT identity enrichment are actually wired up
+	// and operating. The admin panel uses this to show an actionable banner
+	// when a setting is enabled but the underlying loader has failed (e.g. a
+	// mistyped path, a missing file). Without this signal the symptom is just
+	// empty country / user fields with no visible cause.
+	GetEnrichmentStatus(context.Context, *EnrichmentStatusRequest) (*EnrichmentStatusResponse, error)
+	// --- Reveal raw JWT ---
+	// Fetches the raw bearer token captured on a single log row. Available
+	// only when the host opted into hosts.store_raw_jwt. Callers (admin) are
+	// expected to wrap this in an audit log entry — the SIEM does not record
+	// who pulled the token.
+	GetLogRawJWT(context.Context, *GetLogRawJWTRequest) (*GetLogRawJWTResponse, error)
 	mustEmbedUnimplementedLogServiceServer()
 }
 
@@ -201,6 +249,12 @@ func (UnimplementedLogServiceServer) UpsertNote(context.Context, *UpsertNoteRequ
 }
 func (UnimplementedLogServiceServer) ToggleStar(context.Context, *ToggleStarRequest) (*Ack, error) {
 	return nil, status.Error(codes.Unimplemented, "method ToggleStar not implemented")
+}
+func (UnimplementedLogServiceServer) GetEnrichmentStatus(context.Context, *EnrichmentStatusRequest) (*EnrichmentStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetEnrichmentStatus not implemented")
+}
+func (UnimplementedLogServiceServer) GetLogRawJWT(context.Context, *GetLogRawJWTRequest) (*GetLogRawJWTResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetLogRawJWT not implemented")
 }
 func (UnimplementedLogServiceServer) mustEmbedUnimplementedLogServiceServer() {}
 func (UnimplementedLogServiceServer) testEmbeddedByValue()                    {}
@@ -360,6 +414,42 @@ func _LogService_ToggleStar_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LogService_GetEnrichmentStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnrichmentStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).GetEnrichmentStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_GetEnrichmentStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).GetEnrichmentStatus(ctx, req.(*EnrichmentStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LogService_GetLogRawJWT_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetLogRawJWTRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).GetLogRawJWT(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_GetLogRawJWT_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).GetLogRawJWT(ctx, req.(*GetLogRawJWTRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LogService_ServiceDesc is the grpc.ServiceDesc for LogService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -394,6 +484,14 @@ var LogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ToggleStar",
 			Handler:    _LogService_ToggleStar_Handler,
+		},
+		{
+			MethodName: "GetEnrichmentStatus",
+			Handler:    _LogService_GetEnrichmentStatus_Handler,
+		},
+		{
+			MethodName: "GetLogRawJWT",
+			Handler:    _LogService_GetLogRawJWT_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

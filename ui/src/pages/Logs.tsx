@@ -124,6 +124,76 @@ function hasAuthHeader(headers: Record<string, string> | undefined): boolean {
   return false
 }
 
+// RawTokenReveal renders an inline reveal control inside the Identity panel.
+// We deliberately keep the token hidden by default and require an explicit
+// click — every successful fetch lands in muvon.audit_log so a leaked token
+// can always be traced. 404 from the endpoint means the host did not opt
+// into store_raw_jwt; we hide the control rather than nag the admin.
+function RawTokenReveal({ logId }: { logId: string }) {
+  const [state, setState] = useState<'idle' | 'loading' | 'shown' | 'unavailable'>('idle')
+  const [token, setToken] = useState('')
+
+  if (!logId) return null
+
+  async function reveal() {
+    setState('loading')
+    try {
+      const r = await api.revealLogJWT(logId)
+      setToken(r.token)
+      setState('shown')
+    } catch (err) {
+      if (err instanceof api.ApiError && err.status === 404) {
+        setState('unavailable')
+        return
+      }
+      toast.error(err instanceof api.ApiError ? err.message : 'Reveal failed')
+      setState('idle')
+    }
+  }
+
+  if (state === 'unavailable') {
+    return (
+      <p className="text-[11px] text-muted-foreground italic mt-1">
+        Raw token not stored for this host.
+      </p>
+    )
+  }
+
+  if (state === 'shown') {
+    return (
+      <div className="space-y-1.5 pt-2 border-t border-border/50 mt-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Raw bearer token</span>
+          <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/30">
+            audit-logged
+          </Badge>
+          <button
+            type="button"
+            className="ml-auto text-[11px] text-muted-foreground hover:text-foreground cursor-pointer underline-offset-2 hover:underline"
+            onClick={() => { navigator.clipboard.writeText(token); toast.success('Token copied') }}
+          >
+            Copy
+          </button>
+        </div>
+        <code className="block text-[11px] font-mono bg-background border border-border rounded p-2 break-all max-h-32 overflow-auto">
+          {token}
+        </code>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={reveal}
+      disabled={state === 'loading'}
+      className="text-[11px] text-primary hover:underline disabled:opacity-60 cursor-pointer mt-1 inline-flex items-center gap-1"
+    >
+      {state === 'loading' ? 'Revealing…' : 'Reveal raw token'}
+    </button>
+  )
+}
+
 function hasFilters(f: Filters) {
   return (
     f.search !== '' || f.host !== '' || f.method !== '' || f.path !== '' ||
@@ -477,6 +547,7 @@ function LogDetailSheet({
                       ))}
                     </div>
                   )}
+                  <RawTokenReveal logId={getLogID(entry)} />
                 </div>
               </section>
             )}

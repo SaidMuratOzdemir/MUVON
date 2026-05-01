@@ -52,6 +52,15 @@ func (s *Server) handleUpdateSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize string-typed values at the boundary. Pasting from a docs page
+	// or another tab routinely smuggles a trailing newline or leading space,
+	// which then silently breaks features whose downstream consumer reads the
+	// literal value (path, regex, hostname). Trim on read exists too, but we
+	// also clean on write so the stored value matches what the admin sees.
+	if trimmed, ok := trimJSONString(req.Value); ok {
+		req.Value = trimmed
+	}
+
 	// For secret keys, don't accept the masked placeholder back
 	if secretKeys[key] {
 		var val string
@@ -92,6 +101,25 @@ func (s *Server) handleUpdateSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// trimJSONString peels a JSON-encoded scalar string, trims it, and re-encodes.
+// Returns ok=false for non-string JSON values (numbers, booleans, objects) so
+// the caller leaves them untouched.
+func trimJSONString(raw json.RawMessage) (json.RawMessage, bool) {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return raw, false
+	}
+	trimmed := strings.TrimSpace(s)
+	if trimmed == s {
+		return raw, true
+	}
+	out, err := json.Marshal(trimmed)
+	if err != nil {
+		return raw, true
+	}
+	return out, true
 }
 
 func (s *Server) handleListCerts(w http.ResponseWriter, r *http.Request) {

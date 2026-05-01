@@ -258,6 +258,48 @@ func (s *Server) handleUpsertLogNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleRevealLogJWT returns the raw bearer token captured for a single log
+// row when the host opted into store_raw_jwt. Every successful reveal lands
+// in the audit log so a token leak via this surface can always be traced
+// back to a specific admin user. Returns 404 when no token was captured
+// for that row (host opted out, request had no Authorization, or the row
+// pre-dates the column).
+func (s *Server) handleRevealLogJWT(w http.ResponseWriter, r *http.Request) {
+	if !s.requireLog(w) {
+		return
+	}
+	requestID := r.PathValue("id")
+	if requestID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		return
+	}
+
+	resp, err := s.logClient.GetLogRawJWT(r.Context(), requestID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if resp.Token == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "no captured token for this log entry",
+		})
+		return
+	}
+
+	// Audit before serving — if the write fails we still serve, since the
+	// admin has already authenticated and the request is loggable elsewhere
+	// in the access log; we just record the failure.
+	s.auditLog(r, "log.reveal_jwt", "log", requestID, map[string]string{
+		"host": resp.Host,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"request_id": requestID,
+		"host":       resp.Host,
+		"token":      resp.Token,
+	})
+}
+
 func (s *Server) handleToggleLogStar(w http.ResponseWriter, r *http.Request) {
 	if !s.requireLog(w) {
 		return

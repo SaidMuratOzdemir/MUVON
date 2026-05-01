@@ -19,6 +19,14 @@ export interface Host {
   jwt_identity_mode?: string;
   jwt_claims?: string;
   jwt_secret?: string;
+  // Header that the SIEM identity enricher inspects. Defaults to
+  // "Authorization". Use "X-Auth-Token" / "X-Access-Token" when the host
+  // does not follow RFC 6750, or "Cookie:<name>" to pull a token from a
+  // named cookie (the pipeline supports both forms).
+  identity_header_name?: string;
+  // Opt-in: persist the raw bearer token alongside each log row. UI shows
+  // a stern warning when toggling on; the reveal flow audits every read.
+  store_raw_jwt?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -43,6 +51,10 @@ export interface Route {
   waf_enabled: boolean;
   waf_exclude_paths?: string[];
   waf_detection_only?: boolean;
+  // RFC3339 timestamp; while in the future the proxy forces detection-only
+  // regardless of waf_detection_only. Used by the auto-rollout flow to give
+  // newly-enabled routes a soak period.
+  waf_detection_only_until?: string | null;
   rate_limit_rps?: number;
   rate_limit_burst?: number;
   max_body_bytes?: number;
@@ -261,6 +273,13 @@ export interface Agent {
   api_key: string;
   is_active: boolean;
   last_seen_at?: string | null;
+  // Stamped on every config pull from the agent — used to flag agents
+  // that are alive on the SSE channel but lagging behind the current
+  // central config version.
+  last_config_pull_at?: string | null;
+  config_version?: string;
+  last_remote_addr?: string;
+  last_user_agent?: string;
   created_at: string;
   updated_at: string;
 }
@@ -271,6 +290,17 @@ export interface ServiceHealth {
     database: string;
     waf: string;
     logging: string;
+  };
+  // Reported by diaLOG when reachable. The admin UI uses these to surface
+  // "GeoIP enabled but failing" as a banner instead of leaving country/user
+  // columns silently empty. Absent when diaLOG is unavailable.
+  enrichment?: {
+    geoip_state: 'disabled' | 'ok' | 'error';
+    geoip_path: string;
+    geoip_error: string;
+    geoip_loaded_at: string;
+    jwt_identity_state: 'disabled' | 'ok';
+    jwt_identity_host_count: number;
   };
 }
 

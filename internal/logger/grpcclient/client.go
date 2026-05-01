@@ -172,6 +172,24 @@ func (r *RemoteLogSink) ToggleStar(ctx context.Context, requestID string) error 
 	return err
 }
 
+// GetLogRawJWT pulls the raw bearer token captured on a log row. Returns
+// empty token when the host opted out or the token was not captured.
+func (r *RemoteLogSink) GetLogRawJWT(ctx context.Context, requestID string) (*pb.GetLogRawJWTResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return r.client.GetLogRawJWT(ctx, &pb.GetLogRawJWTRequest{RequestId: requestID})
+}
+
+// EnrichmentStatus reports whether GeoIP / JWT identity enrichment are
+// loaded on the diaLOG side. Used by the admin /api/system/health handler
+// to render an actionable banner when an enrichment feature is configured
+// but not actually working.
+func (r *RemoteLogSink) EnrichmentStatus(ctx context.Context) (*pb.EnrichmentStatusResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return r.client.GetEnrichmentStatus(ctx, &pb.EnrichmentStatusRequest{})
+}
+
 // ==================== Converters ====================
 
 func entryToProto(e logger.Entry) *pb.LogEntry {

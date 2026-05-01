@@ -263,6 +263,36 @@ export default function Agents() {
                 <CopyButton text={agent.api_key} />
               </div>
 
+              {/* Observability strip — only render when we have any signal,
+                  so freshly-registered agents that haven't pulled yet still
+                  look clean. */}
+              {(agent.last_config_pull_at || agent.config_version) && (
+                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <div className="rounded border border-border/60 bg-background/40 px-2.5 py-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Last config pull</p>
+                    <p className="font-mono text-foreground/90 truncate" title={agent.last_config_pull_at ?? ''}>
+                      {agent.last_config_pull_at
+                        ? new Date(agent.last_config_pull_at).toLocaleString()
+                        : '—'}
+                    </p>
+                  </div>
+                  <div className="rounded border border-border/60 bg-background/40 px-2.5 py-1.5">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Applied version</p>
+                    <p className="font-mono text-foreground/90 truncate" title={agent.config_version ?? ''}>
+                      {agent.config_version || '—'}
+                    </p>
+                  </div>
+                  {agent.last_remote_addr ? (
+                    <div className="rounded border border-border/60 bg-background/40 px-2.5 py-1.5 col-span-2">
+                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Last seen from</p>
+                      <p className="font-mono text-foreground/90 truncate" title={agent.last_user_agent ?? ''}>
+                        {agent.last_remote_addr}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
               <DeployInstructions agent={agent} />
             </div>
           ))}

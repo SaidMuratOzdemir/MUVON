@@ -88,6 +88,11 @@ func main() {
 
 	// TLS
 	tlsMgr := tlspkg.NewManager(database, ch, *adminDomain)
+	// Hand the TLS manager to the agent service so an agent-uploaded cert
+	// invalidates central's in-memory cache straight away. Admin-uploaded
+	// certs already invalidate via the cert handlers; this closes the loop
+	// for the reverse direction.
+	agentSvc.SetTLSManager(tlsMgr)
 
 	// Health manager
 	hm := health.NewManager()

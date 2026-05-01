@@ -16,12 +16,19 @@ import (
 // resolve host-scoped JWT claim priority without baking it in here.
 type ConfigFunc func() *config.Config
 
+// EnrichmentStatusFunc returns a snapshot of GeoIP/JWT enrichment health for
+// the admin panel. Optional — a nil func means GetEnrichmentStatus reports
+// "disabled" for both signals, which is the correct behaviour when the host
+// process has not wired up enrichment at all (e.g. minimal builds).
+type EnrichmentStatusFunc func() *pb.EnrichmentStatusResponse
+
 // Server implements logpb.LogServiceServer by writing to the log pipeline.
 type Server struct {
 	pb.UnimplementedLogServiceServer
-	pipeline *logger.Pipeline
-	database *db.DB
-	configFn ConfigFunc
+	pipeline       *logger.Pipeline
+	database       *db.DB
+	configFn       ConfigFunc
+	enrichStatusFn EnrichmentStatusFunc
 }
 
 // New wires the gRPC server. configFn may be nil — when absent, user-display
@@ -30,6 +37,14 @@ type Server struct {
 // not provisioned any JWT config.
 func New(pipeline *logger.Pipeline, database *db.DB, configFn ConfigFunc) *Server {
 	return &Server{pipeline: pipeline, database: database, configFn: configFn}
+}
+
+// SetEnrichmentStatusFn registers the callback used to answer
+// GetEnrichmentStatus. Setter pattern keeps the New() signature stable while
+// the optional dependency is passed in from the binary that owns the
+// enrichment lifecycle (cmd/dialog-siem).
+func (s *Server) SetEnrichmentStatusFn(fn EnrichmentStatusFunc) {
+	s.enrichStatusFn = fn
 }
 
 // --- Log Ingest ---
@@ -126,11 +141,21 @@ func (s *Server) SearchLogs(ctx context.Context, req *pb.SearchLogsRequest) (*pb
 	return resp, nil
 }
 
-// displayClaimsForHost returns the ordered list of JWT claim keys to
-// treat as "user display" candidates. It reads from the host's own
-// override when present (so a cevik host with user_id,holding_id gets
-// user_id first) and falls back to the global list. Returning nil means
-// "no JWT config at all" — callers then skip user enrichment for reads.
+// displayClaimsForHost returns the ordered list of JWT claim keys to treat
+// as "user display" candidates.
+//
+//   - host == "" means "across all hosts" (e.g. the dashboard with no host
+//     filter). We return the deduplicated union of every host's claim list,
+//     preserving each host's priority order, with the global list appended
+//     last. This is what makes Top Users panel work in a multi-tenant front
+//     where each tenant signs tokens with its own claim vocabulary
+//     (user_id for cevik, sub for vize360, ...). The previous fallback to
+//     the global list silently dropped every cevik claim.
+//   - host != "" returns that host's override when present, otherwise the
+//     global list.
+//
+// Returning nil means "no JWT config at all" — callers then skip user
+// enrichment for reads.
 func (s *Server) displayClaimsForHost(host string) []string {
 	if s.configFn == nil {
 		return nil
@@ -143,8 +168,33 @@ func (s *Server) displayClaimsForHost(host string) []string {
 		if hc, ok := cfg.Hosts[host]; ok && len(hc.JWTClaims) > 0 {
 			return hc.JWTClaims
 		}
+		return cfg.Global.JWTClaims
 	}
-	return cfg.Global.JWTClaims
+
+	// host == "" — union across hosts. Stable ordering for COALESCE: host
+	// claims first (so a tenant-specific claim like user_id wins for that
+	// tenant's rows), global claims last as the catch-all.
+	seen := make(map[string]struct{}, 8)
+	out := make([]string, 0, 8)
+	add := func(keys []string) {
+		for _, k := range keys {
+			if k == "" {
+				continue
+			}
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, k)
+		}
+	}
+	for _, hc := range cfg.Hosts {
+		if hc != nil && hc.JWTIdentityEnabled {
+			add(hc.JWTClaims)
+		}
+	}
+	add(cfg.Global.JWTClaims)
+	return out
 }
 
 // extractUserDisplay picks the first non-empty claim from priorityKeys.
@@ -227,6 +277,44 @@ func (s *Server) GetLogStats(ctx context.Context, req *pb.GetLogStatsRequest) (*
 		resp.TopUsersJson = string(b)
 	}
 	return resp, nil
+}
+
+// --- Reveal raw JWT ---
+
+// GetLogRawJWT returns the raw bearer token captured for a log row. Audit
+// logging happens on the MUVON admin side, where the requesting user is
+// known; this RPC is unauthenticated for callers inside the trust zone
+// (Unix socket) and authenticated by api key on the agent TCP listener.
+func (s *Server) GetLogRawJWT(ctx context.Context, req *pb.GetLogRawJWTRequest) (*pb.GetLogRawJWTResponse, error) {
+	if req.RequestId == "" {
+		return nil, fmt.Errorf("request_id is required")
+	}
+	token, host, err := s.database.GetLogRawJWT(ctx, req.RequestId)
+	if err != nil {
+		return nil, fmt.Errorf("get log raw jwt: %w", err)
+	}
+	return &pb.GetLogRawJWTResponse{Token: token, Host: host}, nil
+}
+
+// --- Enrichment health ---
+
+// GetEnrichmentStatus reports whether GeoIP / JWT identity enrichment are
+// actually loaded. The admin panel uses this to surface "GeoIP enabled but
+// failing to load" as a visible warning instead of empty country columns.
+func (s *Server) GetEnrichmentStatus(_ context.Context, _ *pb.EnrichmentStatusRequest) (*pb.EnrichmentStatusResponse, error) {
+	if s.enrichStatusFn == nil {
+		return &pb.EnrichmentStatusResponse{
+			GeoipState:        "disabled",
+			JwtIdentityState:  "disabled",
+		}, nil
+	}
+	if resp := s.enrichStatusFn(); resp != nil {
+		return resp, nil
+	}
+	return &pb.EnrichmentStatusResponse{
+		GeoipState:        "disabled",
+		JwtIdentityState:  "disabled",
+	}, nil
 }
 
 // --- Stream ---

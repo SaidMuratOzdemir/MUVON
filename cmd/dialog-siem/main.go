@@ -16,8 +16,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"sync/atomic"
-
 	"muvon/internal/alerting"
 	"muvon/internal/config"
 	"muvon/internal/correlation"
@@ -97,40 +95,41 @@ func main() {
 	flushInterval := time.Duration(*flushMs) * time.Millisecond
 	pipeline := logger.NewPipeline(database.Pool, *bufSize, *workers, *batchSize, flushInterval)
 
-	// GeoIP — load if configured; enriches all incoming log entries centrally
-	var geoPtr atomic.Pointer[geoip.Reader]
+	// GeoIP — central enrichment for every log entry, regardless of whether
+	// the entry came from the local Unix socket or an agent's TCP gRPC. The
+	// Manager owns load state so a misconfigured path surfaces as a status
+	// the admin UI can show instead of failing silently.
+	geoMgr := geoip.NewManager()
 	if cfg := ch.Get(); cfg.Global.GeoIPEnabled && cfg.Global.GeoIPDBPath != "" {
-		if gr, err := geoip.Open(cfg.Global.GeoIPDBPath); err != nil {
-			slog.Warn("GeoIP load failed", "path", cfg.Global.GeoIPDBPath, "error", err)
-		} else {
-			geoPtr.Store(gr)
-			slog.Info("GeoIP database loaded", "path", cfg.Global.GeoIPDBPath)
+		if err := geoMgr.Apply(true, cfg.Global.GeoIPDBPath); err != nil {
+			slog.Warn("GeoIP initial load failed; banner will display in admin UI", "error", err)
 		}
 	}
 	ch.OnReload(func(newCfg *config.Config) {
-		if !newCfg.Global.GeoIPEnabled || newCfg.Global.GeoIPDBPath == "" {
-			return
-		}
-		if cur := geoPtr.Load(); cur == nil {
-			if gr, err := geoip.Open(newCfg.Global.GeoIPDBPath); err == nil {
-				geoPtr.Store(gr)
-			}
-		} else {
-			cur.Reload(newCfg.Global.GeoIPDBPath)
-		}
+		// Apply is idempotent: only reopens when (enabled, path) actually
+		// changes, so the 5-second background reload does not thrash the
+		// .mmdb file on every tick.
+		_ = geoMgr.Apply(newCfg.Global.GeoIPEnabled, newCfg.Global.GeoIPDBPath)
 	})
-	pipeline.SetGeoEnricher(func(ip string) (string, string) {
-		if gr := geoPtr.Load(); gr != nil {
-			return gr.Lookup(ip)
-		}
-		return "", ""
-	})
+	pipeline.SetGeoEnricher(geoMgr.Lookup)
 
 	// JWT identity enrichment — extracts claims from Authorization header
 	// centrally. Host-scoped override wins when that host's override is
 	// enabled; otherwise we fall back to the global config. This lets a
 	// single MUVON front multiple tenant apps that sign with different
 	// secrets.
+	pipeline.SetIdentityHeaderResolver(func(host string) string {
+		cfg := ch.Get()
+		if hc, ok := cfg.Hosts[host]; ok && hc.IdentityHeaderName != "" {
+			return hc.IdentityHeaderName
+		}
+		return "Authorization"
+	})
+	pipeline.SetRawTokenPolicy(func(host string) bool {
+		cfg := ch.Get()
+		hc, ok := cfg.Hosts[host]
+		return ok && hc.StoreRawJWT
+	})
 	idExtractor := &identity.Extractor{}
 	pipeline.SetIdentityEnricher(func(host, authHeader string) *logger.UserIdentity {
 		cfg := ch.Get()
@@ -207,6 +206,25 @@ func main() {
 	// live config, with the global list as fallback. No hard-coded claim
 	// vocabulary in the server itself.
 	logSrv := loggrpc.New(pipeline, database, ch.Get)
+	logSrv.SetEnrichmentStatusFn(func() *pb.EnrichmentStatusResponse {
+		gs := geoMgr.GetStatus()
+		resp := &pb.EnrichmentStatusResponse{
+			GeoipState: gs.State,
+			GeoipPath:  gs.Path,
+			GeoipError: gs.Error,
+		}
+		if !gs.LoadedAt.IsZero() {
+			resp.GeoipLoadedAt = gs.LoadedAt.UTC().Format(time.RFC3339)
+		}
+		cfg := ch.Get()
+		if cfg.Global.JWTIdentityEnabled || hasHostJWTOverride(cfg) {
+			resp.JwtIdentityState = "ok"
+		} else {
+			resp.JwtIdentityState = "disabled"
+		}
+		resp.JwtIdentityHostOverrides = int32(countHostJWTOverrides(cfg))
+		return resp
+	})
 	pb.RegisterLogServiceServer(grpcServer, logSrv)
 
 	// TCP gRPC server — for agents sending logs over the network
@@ -226,9 +244,7 @@ func main() {
 		corrEngine.Stop()
 		pipeline.Stop()
 		alertMgr.Stop()
-		if gr := geoPtr.Load(); gr != nil {
-			gr.Close()
-		}
+		_ = geoMgr.Close()
 		cancel()
 	}()
 	if *tcpAddr != "" {
@@ -314,6 +330,35 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// hasHostJWTOverride returns true when at least one host has its own JWT
+// identity config turned on. The overall enrichment state is still "ok" in
+// that case even when the global toggle is off, because the SIEM will pick
+// up identities for those hosts.
+func hasHostJWTOverride(cfg *config.Config) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, hc := range cfg.Hosts {
+		if hc.JWTIdentityEnabled {
+			return true
+		}
+	}
+	return false
+}
+
+func countHostJWTOverrides(cfg *config.Config) int {
+	if cfg == nil {
+		return 0
+	}
+	n := 0
+	for _, hc := range cfg.Hosts {
+		if hc.JWTIdentityEnabled {
+			n++
+		}
+	}
+	return n
 }
 
 func intEnvOr(key string, fallback int) int {

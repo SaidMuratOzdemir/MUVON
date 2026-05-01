@@ -31,6 +31,16 @@ type HostConfig struct {
 	JWTIdentityMode    string
 	JWTClaims          []string
 	JWTSecret          string
+	// IdentityHeaderName is the request header the SIEM identity enricher
+	// inspects for a bearer-style token. Defaults to "Authorization" when
+	// empty. Per-host so tenants that authenticate via X-Auth-Token aren't
+	// silently skipped.
+	IdentityHeaderName string
+	// StoreRawJWT opts the pipeline into stamping the raw bearer token
+	// onto the log row. The token only flows from the pipeline to the
+	// http_logs.raw_jwt column when this is true; otherwise it is read,
+	// used for enrichment, and dropped.
+	StoreRawJWT bool
 }
 
 type RouteRule struct {
@@ -184,6 +194,8 @@ func LoadFromDB(ctx context.Context, database *db.DB, box *secret.Box) (*Config,
 		if h.JWTSecret != "" {
 			hc.JWTSecret = decryptSetting(box, h.JWTSecret, "host:"+h.Domain+":jwt_secret")
 		}
+		hc.IdentityHeaderName = h.IdentityHeaderName
+		hc.StoreRawJWT = h.StoreRawJWT
 		cfg.Hosts[h.Domain] = hc
 	}
 
@@ -445,12 +457,18 @@ func getStrSetting(m map[string]json.RawMessage, key string, def string) string 
 	return unquoteJSON(raw)
 }
 
+// unquoteJSON pulls a string out of a JSONB settings cell and trims surrounding
+// whitespace. Trim happens here on purpose: the admin panel forgives a trailing
+// space in a path or hostname, but downstream consumers (geoip.Open, ACME host
+// policy, regex compilers) treat the literal value and a leaked space silently
+// disables the feature. Numeric/bool getters layered on top inherit the same
+// trim, which is also safe — strconv parsers reject whitespace anyway.
 func unquoteJSON(raw json.RawMessage) string {
 	var s string
 	if err := json.Unmarshal(raw, &s); err != nil {
-		return string(raw)
+		return strings.TrimSpace(string(raw))
 	}
-	return s
+	return strings.TrimSpace(s)
 }
 
 // decryptSetting decrypts a secret value using the provided Box.

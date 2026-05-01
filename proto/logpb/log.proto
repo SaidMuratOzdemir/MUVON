@@ -24,6 +24,21 @@ service LogService {
   // --- Not / Star ---
   rpc UpsertNote(UpsertNoteRequest) returns (Ack);
   rpc ToggleStar(ToggleStarRequest) returns (Ack);
+
+  // --- Enrichment health ---
+  // Reports whether GeoIP and JWT identity enrichment are actually wired up
+  // and operating. The admin panel uses this to show an actionable banner
+  // when a setting is enabled but the underlying loader has failed (e.g. a
+  // mistyped path, a missing file). Without this signal the symptom is just
+  // empty country / user fields with no visible cause.
+  rpc GetEnrichmentStatus(EnrichmentStatusRequest) returns (EnrichmentStatusResponse);
+
+  // --- Reveal raw JWT ---
+  // Fetches the raw bearer token captured on a single log row. Available
+  // only when the host opted into hosts.store_raw_jwt. Callers (admin) are
+  // expected to wrap this in an audit log entry — the SIEM does not record
+  // who pulled the token.
+  rpc GetLogRawJWT(GetLogRawJWTRequest) returns (GetLogRawJWTResponse);
 }
 
 // ===== Log Ingest =====
@@ -174,4 +189,34 @@ message UpsertNoteRequest {
 
 message ToggleStarRequest {
   string request_id = 1;
+}
+
+// ===== Enrichment status =====
+
+message EnrichmentStatusRequest {}
+
+message GetLogRawJWTRequest {
+  string request_id = 1;
+}
+
+message GetLogRawJWTResponse {
+  // Empty when the host did not opt in or the token was not captured for
+  // this row. The caller must distinguish this from "log not found"
+  // (returned as a NotFound gRPC status).
+  string token = 1;
+  string host  = 2;
+}
+
+message EnrichmentStatusResponse {
+  // GeoIP — file-backed MaxMind reader.
+  // state ∈ {"disabled","ok","error"}.
+  string geoip_state          = 1;
+  string geoip_path           = 2;  // path the loader tried (post-trim)
+  string geoip_error          = 3;  // last error if state == "error"
+  string geoip_loaded_at      = 4;  // RFC3339, empty when not loaded
+
+  // JWT identity — global toggle plus a non-zero indicator that some host
+  // override is active. We do not return secrets here.
+  string jwt_identity_state    = 5; // "disabled" | "ok"
+  int32  jwt_identity_host_overrides = 6;
 }

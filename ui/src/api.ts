@@ -372,12 +372,12 @@ export async function getLogDetail(
 }
 
 export async function getLogStats(
-  from?: string,
-  to?: string,
+  opts: { host?: string; from?: string; to?: string } = {},
 ): Promise<LogStats> {
   const qs = new URLSearchParams();
-  if (from) qs.set("from", from);
-  if (to) qs.set("to", to);
+  if (opts.host) qs.set("host", opts.host);
+  if (opts.from) qs.set("from", opts.from);
+  if (opts.to) qs.set("to", opts.to);
   const query = qs.toString();
   return request<LogStats>(
     "GET",
@@ -493,6 +493,19 @@ export async function toggleLogStar(id: string | number): Promise<{ is_starred?:
 
 export async function upsertLogNote(id: string | number, note: string): Promise<void> {
   return request<void>("PUT", `/api/logs/${id}/note`, { note });
+}
+
+// Reveal the raw bearer token captured for a log row. Only succeeds when
+// the host opted into store_raw_jwt and the row carried an Authorization
+// header. Each reveal is audit-logged on the backend, including the
+// requesting admin user.
+export async function revealLogJWT(
+  id: string | number,
+): Promise<{ request_id: string; host: string; token: string }> {
+  return request<{ request_id: string; host: string; token: string }>(
+    "GET",
+    `/api/logs/${id}/jwt`,
+  );
 }
 
 // ---------------------------------------------------------------------------

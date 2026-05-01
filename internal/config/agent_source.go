@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,13 @@ type AgentSource struct {
 	centralURL string
 	apiKey     string
 	httpClient *http.Client
+
+	// lastVersion tracks the snapshot we last applied, so subsequent
+	// requests can echo it back via X-Config-Version. Central uses that
+	// header to record which config version each agent is actually
+	// running, separate from "agent is alive on the SSE channel".
+	lastVersionMu sync.RWMutex
+	lastVersion   string
 }
 
 func NewAgentSource(centralURL, apiKey string) *AgentSource {
@@ -28,6 +36,19 @@ func NewAgentSource(centralURL, apiKey string) *AgentSource {
 	}
 }
 
+// LastVersion returns the most recent config version this agent has applied.
+func (s *AgentSource) LastVersion() string {
+	s.lastVersionMu.RLock()
+	defer s.lastVersionMu.RUnlock()
+	return s.lastVersion
+}
+
+func (s *AgentSource) setLastVersion(v string) {
+	s.lastVersionMu.Lock()
+	s.lastVersion = v
+	s.lastVersionMu.Unlock()
+}
+
 // Load fetches the current config from the central server.
 func (s *AgentSource) Load(ctx context.Context) (*Config, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", s.centralURL+"/api/v1/agent/config", nil)
@@ -35,6 +56,12 @@ func (s *AgentSource) Load(ctx context.Context) (*Config, error) {
 		return nil, fmt.Errorf("agent source: %w", err)
 	}
 	req.Header.Set("X-Api-Key", s.apiKey)
+	if v := s.LastVersion(); v != "" {
+		// Lets central distinguish "agent missed a push" from "agent is
+		// reapplying the same snapshot" without us having to emit a
+		// separate heartbeat endpoint.
+		req.Header.Set("X-Config-Version", v)
+	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -52,8 +79,12 @@ func (s *AgentSource) Load(ctx context.Context) (*Config, error) {
 		return nil, fmt.Errorf("agent source: decode failed: %w", err)
 	}
 
+	if payload.Version != "" {
+		s.setLastVersion(payload.Version)
+	}
+
 	cfg := payload.ToConfig()
-	slog.Info("config loaded from central", "hosts", len(cfg.Hosts))
+	slog.Info("config loaded from central", "hosts", len(cfg.Hosts), "version", payload.Version)
 	return cfg, nil
 }
 

@@ -219,9 +219,27 @@ export default function Routes() {
                   )}
                 </span>
                 <span>
-                  {route.waf_enabled
-                    ? <Badge variant="outline" className="text-[10px] text-primary border-primary/40">WAF</Badge>
-                    : <span className="text-xs text-muted-foreground/40">—</span>}
+                  {(() => {
+                    if (!route.waf_enabled) return <span className="text-xs text-muted-foreground/40">—</span>
+                    const until = route.waf_detection_only_until ? new Date(route.waf_detection_only_until) : null
+                    const inSoak = until && until.getTime() > Date.now()
+                    if (inSoak) {
+                      const days = Math.max(1, Math.ceil((until.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+                      return (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] text-amber-400 border-amber-400/40"
+                          title={`Detection-only until ${until.toLocaleString()} — blocks downgraded to logs while admin reviews false positives`}
+                        >
+                          WAF · soak {days}d
+                        </Badge>
+                      )
+                    }
+                    if (route.waf_detection_only) {
+                      return <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/40">WAF · detect</Badge>
+                    }
+                    return <Badge variant="outline" className="text-[10px] text-primary border-primary/40">WAF</Badge>
+                  })()}
                 </span>
                 <span>
                   {route.rate_limit_rps && route.rate_limit_rps > 0

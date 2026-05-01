@@ -13,6 +13,11 @@ type AgentPayload struct {
 	Routes    []db.Route    `json:"routes"`
 	Settings  AgentSettings `json:"settings"`
 	UpdatedAt string        `json:"updated_at"`
+	// Version is an opaque short string identifying this snapshot. Agents
+	// echo it back via X-Config-Version on the next pull / SSE reconnect
+	// so central can distinguish "agent missed the push" from "agent
+	// reapplied an older snapshot".
+	Version   string        `json:"version,omitempty"`
 }
 
 // AgentSettings is the subset of GlobalConfig that agents need to operate.
@@ -43,7 +48,12 @@ type AgentSettings struct {
 	JWTIdentityEnabled bool     `json:"jwt_identity_enabled"`
 	JWTIdentityMode    string   `json:"jwt_identity_mode"`
 	JWTClaims          []string `json:"jwt_claims"`
-	JWTSecret          string   `json:"jwt_secret"`
+	// JWTSecret is intentionally NOT serialised to agents. JWT identity
+	// enrichment happens centrally on diaLOG; agents only forward raw log
+	// entries (with the original Authorization header) and never need the
+	// signing secret. Sending it would leak a high-value credential to
+	// every edge node.
+	JWTSecret          string   `json:"-"`
 
 	GeoIPEnabled bool   `json:"geoip_enabled"`
 	GeoIPDBPath  string `json:"geoip_db_path"`
@@ -137,7 +147,8 @@ func globalToAgentSettings(g GlobalConfig) AgentSettings {
 		JWTIdentityEnabled: g.JWTIdentityEnabled,
 		JWTIdentityMode:    g.JWTIdentityMode,
 		JWTClaims:          g.JWTClaims,
-		JWTSecret:          g.JWTSecret,
+		// JWTSecret deliberately omitted from the agent payload — see the
+		// json:"-" tag on AgentSettings.JWTSecret for reasoning.
 
 		GeoIPEnabled: g.GeoIPEnabled,
 		GeoIPDBPath:  g.GeoIPDBPath,
@@ -178,7 +189,7 @@ func agentSettingsToGlobal(s AgentSettings) GlobalConfig {
 		JWTIdentityEnabled: s.JWTIdentityEnabled,
 		JWTIdentityMode:    s.JWTIdentityMode,
 		JWTClaims:          claims,
-		JWTSecret:          s.JWTSecret,
+		// JWTSecret is never populated agent-side — central holds the secret.
 
 		GeoIPEnabled: s.GeoIPEnabled,
 		GeoIPDBPath:  s.GeoIPDBPath,
