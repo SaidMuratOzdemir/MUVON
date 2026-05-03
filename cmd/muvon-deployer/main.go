@@ -115,10 +115,11 @@ func main() {
 					"error", err)
 			} else {
 				logshipMgr = logship.New(dockerClient, dialog, spool, logship.Options{
-					HostID:    "central",
-					MaxLine:   *maxLine,
-					BatchSize: *logshipBatchSize,
-					Flush:     time.Duration(*logshipFlushMs) * time.Millisecond,
+					HostID:      "central",
+					MaxLine:     *maxLine,
+					BatchSize:   *logshipBatchSize,
+					Flush:       time.Duration(*logshipFlushMs) * time.Millisecond,
+					ManagedOnly: true,
 				})
 				deployerSrv.SetShipperReporter(logshipMgr.ActiveCount)
 				go logshipMgr.Run(ctx)

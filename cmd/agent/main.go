@@ -8,10 +8,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
 	"muvon/internal/config"
+	"muvon/internal/deployer"
+	"muvon/internal/deployer/logship"
 	"muvon/internal/health"
 	logclient "muvon/internal/logger/grpcclient"
 	"muvon/internal/proxy"
@@ -30,6 +34,20 @@ func main() {
 		wafSocket   = flag.String("waf-socket", envOr("AGENT_WAF_SOCKET", "/tmp/muwaf.sock"), "Local muWAF Unix socket path")
 		tlsCacheDir = flag.String("tls-cache", envOr("AGENT_TLS_CACHE", "/var/lib/agent/tls"), "Directory for ACME cert cache")
 		logLevel    = flag.String("log-level", envOr("AGENT_LOG_LEVEL", "info"), "Log level")
+		// Container log shipping (dockerwatch) — when AGENT_DOCKER_SOCKET
+		// is reachable, ships every container's stdout/stderr to central
+		// dialog-siem over the same TCP gRPC channel that already carries
+		// HTTP logs. host_id distinguishes agent hosts from central in
+		// the SIEM. Silently disabled when the socket is unreadable.
+		dockerSocket    = flag.String("docker-socket", envOr("AGENT_DOCKER_SOCKET", "unix:///var/run/docker.sock"), "Local Docker daemon socket for container log capture (empty/unreadable = disabled)")
+		dockerwatch     = flag.Bool("dockerwatch", boolEnvOr("AGENT_DOCKERWATCH_ENABLED", true), "Enable container log shipping to central dialog-siem")
+		dwHostID        = flag.String("dockerwatch-host-id", envOr("AGENT_HOST_ID", ""), "Identifier for this agent host in shipped logs (default: hostname)")
+		dwSpoolDir      = flag.String("dockerwatch-spool-dir", envOr("AGENT_DOCKERWATCH_SPOOL_DIR", "/var/lib/agent/logship"), "Local on-disk spool for container log batches when central is unreachable")
+		dwSpoolMaxBytes = flag.Int64("dockerwatch-spool-max-bytes", int64EnvOr("AGENT_DOCKERWATCH_SPOOL_MAX_BYTES", 256*1024*1024), "Total spool disk budget in bytes")
+		dwBatchSize     = flag.Int("dockerwatch-batch", intEnvOr("AGENT_DOCKERWATCH_BATCH", 500), "Lines per shipping batch")
+		dwFlushMs       = flag.Int("dockerwatch-flush-ms", intEnvOr("AGENT_DOCKERWATCH_FLUSH_MS", 1000), "Time between forced flushes (ms)")
+		dwMaxLine       = flag.Int("dockerwatch-max-line", intEnvOr("AGENT_DOCKERWATCH_MAX_LINE", 16384), "Per-line truncation threshold")
+		dwManagedOnly   = flag.Bool("dockerwatch-managed-only", boolEnvOr("AGENT_DOCKERWATCH_MANAGED_ONLY", false), "Tail only containers labelled muvon.managed=true (default false on agent — operators rarely paint that label themselves)")
 	)
 	flag.Parse()
 	setupLogger(*logLevel)
@@ -95,8 +113,10 @@ func main() {
 
 	// Log client — send logs to central diaLOG over TCP
 	var logSink proxy.LogSink
+	var logClient *logclient.RemoteLogSink
 	if *logAddr != "" {
-		logClient, err := logclient.DialTCP(*logAddr, *apiKey)
+		var err error
+		logClient, err = logclient.DialTCP(*logAddr, *apiKey)
 		if err != nil {
 			slog.Warn("central diaLOG connection failed, running without logging", "error", err)
 		} else {
@@ -105,6 +125,45 @@ func main() {
 		}
 	} else {
 		slog.Warn("AGENT_LOG_ADDR not set, log ingestion disabled")
+	}
+
+	// Container log shipping — reuses the central diaLOG TCP connection
+	// and the same x-api-key auth. host_id defaults to os.Hostname so
+	// the SIEM groups logs per agent without any extra config.
+	if *dockerwatch && logClient != nil && *dockerSocket != "" {
+		hostID := strings.TrimSpace(*dwHostID)
+		if hostID == "" {
+			if h, err := os.Hostname(); err == nil && h != "" {
+				hostID = "agent:" + h
+			} else {
+				hostID = "agent"
+			}
+		}
+		if dockerCli, err := deployer.NewDockerClient(*dockerSocket); err != nil {
+			slog.Info("dockerwatch: docker socket unreachable; container log shipping disabled",
+				"socket", *dockerSocket, "error", err)
+		} else if spool, err := logship.NewSpool(*dwSpoolDir, *dwSpoolMaxBytes, *dwSpoolMaxBytes/16); err != nil {
+			slog.Warn("dockerwatch: spool init failed; container log shipping disabled",
+				"dir", *dwSpoolDir, "error", err)
+		} else {
+			mgr := logship.New(dockerCli, logClient, spool, logship.Options{
+				HostID:      hostID,
+				MaxLine:     *dwMaxLine,
+				BatchSize:   *dwBatchSize,
+				Flush:       time.Duration(*dwFlushMs) * time.Millisecond,
+				ManagedOnly: *dwManagedOnly,
+			})
+			go mgr.Run(ctx)
+			slog.Info("dockerwatch: started",
+				"host_id", hostID,
+				"docker_socket", *dockerSocket,
+				"spool_dir", *dwSpoolDir,
+				"managed_only", *dwManagedOnly)
+		}
+	} else if !*dockerwatch {
+		slog.Info("dockerwatch: disabled (AGENT_DOCKERWATCH_ENABLED=false)")
+	} else if logClient == nil {
+		slog.Info("dockerwatch: skipped (no central diaLOG connection)")
 	}
 
 	// Transport + Router
@@ -210,4 +269,40 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func intEnvOr(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return n
+	}
+	return def
+}
+
+func int64EnvOr(key string, def int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return n
+	}
+	return def
+}
+
+func boolEnvOr(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes":
+		return true
+	case "0", "false", "no":
+		return false
+	}
+	return def
 }

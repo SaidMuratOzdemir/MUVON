@@ -16,8 +16,23 @@ services:
       AGENT_LOG_ADDR: ${AGENT_LOG_ADDR:-}
       AGENT_LOG_LEVEL: ${LOG_LEVEL:-info}
       # AGENT_WAF_SOCKET: /run/sockets/muwaf.sock  # muwaf varsa uncomment
+      # ── Container log shipping (dockerwatch) ─────────────────────────
+      # When the docker socket is mounted below, the agent ships every
+      # container's stdout/stderr to central dialog-siem over the same
+      # AGENT_LOG_ADDR connection. host_id defaults to "agent:<hostname>"
+      # — set AGENT_HOST_ID to override (e.g. a friendly customer name).
+      # AGENT_DOCKERWATCH_ENABLED: "true"
+      # AGENT_HOST_ID: "${AGENT_HOST_ID:-}"
+      # AGENT_DOCKERWATCH_MANAGED_ONLY: "false"  # ship every container
     volumes:
       - tls_cache:/var/lib/app/tls
+      - logship:/var/lib/agent/logship  # spool when central is unreachable
+      # ── Opt-in: local docker socket (read-only) ──────────────────────
+      # Required for AGENT_DOCKERWATCH_ENABLED=true; without this mount
+      # the agent silently disables container log shipping. Mount RO so
+      # the agent cannot start/stop containers — only ContainerLogs +
+      # ContainerInspect + EventsStream succeed under RO socket.
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
       # - sockets:/run/sockets  # muwaf varsa uncomment
 
   # ── Opsiyonel: local muWAF ────────────────────────────────────────────────
@@ -29,4 +44,5 @@ services:
 
 volumes:
   tls_cache:
+  logship:
   # sockets:

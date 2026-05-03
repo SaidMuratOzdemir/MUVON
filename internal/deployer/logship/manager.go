@@ -37,10 +37,15 @@ type Manager struct {
 	docker      *deployer.DockerClient
 	sink        *logclient.RemoteLogSink
 	spool       *Spool
-	hostID      string // "central" or agent UUID
+	hostID      string // "central" or agent UUID/hostname
 	maxLine     int
 	batchSize   int
 	flushEvery  time.Duration
+	// managedOnly=true filters tails to containers carrying
+	// muvon.managed=true (central host: only deploys we control).
+	// =false ships every container on the host (agent host: operator
+	// has no deployer painting the label, so we cover everything).
+	managedOnly bool
 
 	// Active tails keyed by container_id.
 	mu     sync.Mutex
@@ -74,11 +79,15 @@ type ContainerMeta struct {
 
 // Options tunes the manager. Zero values fall back to safe defaults.
 type Options struct {
-	HostID    string
-	MaxLine   int
-	BatchSize int
-	Flush     time.Duration
+	HostID      string
+	MaxLine     int
+	BatchSize   int
+	Flush       time.Duration
 	OnLagUpdate func(spoolBytes, oldestUnix int64)
+	// ManagedOnly: when true (default for central), only containers
+	// labelled muvon.managed=true are tailed. When false (agent host),
+	// every container on the local Docker daemon is tailed.
+	ManagedOnly bool
 }
 
 // New wires a Manager. docker + sink + spool are required; opts may be
@@ -104,6 +113,7 @@ func New(docker *deployer.DockerClient, sink *logclient.RemoteLogSink, spool *Sp
 		maxLine:       opts.MaxLine,
 		batchSize:     opts.BatchSize,
 		flushEvery:    opts.Flush,
+		managedOnly:   opts.ManagedOnly,
 		tails:         make(map[string]*tailState),
 		pipelineLagFn: opts.OnLagUpdate,
 	}
@@ -157,11 +167,11 @@ func (m *Manager) shutdown() {
 	m.active.Store(0)
 }
 
-// attachExisting lists every managed container and starts a tail for
-// each one not already active. Used at startup and as a safety net
-// after the events stream reconnects (we may have missed `start`).
+// attachExisting lists every running container the manager cares about
+// (managed-only or all per options) and starts a tail for each. Safety
+// net after events-stream reconnects.
 func (m *Manager) attachExisting(ctx context.Context) error {
-	containers, err := m.docker.ContainerListAll(ctx, true)
+	containers, err := m.docker.ContainerListAll(ctx, m.managedOnly)
 	if err != nil {
 		return err
 	}
@@ -214,9 +224,11 @@ func (m *Manager) runEventsLoop(ctx context.Context) {
 }
 
 func (m *Manager) handleEvent(ctx context.Context, ev deployer.ContainerEvent) {
-	if ev.Labels["muvon.managed"] != "true" {
-		// We only ship logs for managed containers in v1 (matches the
-		// E3 product decision: app logs only, not platform).
+	if m.managedOnly && ev.Labels["muvon.managed"] != "true" {
+		// On central we only ship logs for containers we deploy
+		// (matches the E3 product decision: app logs only, not
+		// platform). On agent hosts (managedOnly=false) we ship every
+		// container the operator runs.
 		return
 	}
 	switch ev.Kind {
