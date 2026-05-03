@@ -37,6 +37,15 @@ func main() {
 		workers    = flag.Int("workers", intEnvOr("DIALOG_WORKERS", 4), "Log pipeline worker count")
 		batchSize  = flag.Int("batch", intEnvOr("DIALOG_BATCH", 1000), "Log pipeline batch size")
 		flushMs    = flag.Int("flush-ms", intEnvOr("DIALOG_FLUSH_MS", 2000), "Log pipeline flush interval (ms)")
+		// Container log pipeline — parallel to the http path; lower
+		// defaults because container stdout volume is typically a
+		// fraction of HTTP traffic (and we'd rather pay an extra worker
+		// later than burn DB connections for nothing).
+		cBufSize   = flag.Int("container-buffer", intEnvOr("DIALOG_CONTAINER_BUFFER", 10000), "Container log pipeline buffer size")
+		cWorkers   = flag.Int("container-workers", intEnvOr("DIALOG_CONTAINER_WORKERS", 2), "Container log pipeline worker count")
+		cBatch     = flag.Int("container-batch", intEnvOr("DIALOG_CONTAINER_BATCH", 1000), "Container log pipeline batch size")
+		cFlushMs   = flag.Int("container-flush-ms", intEnvOr("DIALOG_CONTAINER_FLUSH_MS", 2000), "Container log pipeline flush interval (ms)")
+		containerIngestEnabled = flag.Bool("container-ingest", boolEnvOr("DIALOG_CONTAINER_INGEST", true), "Enable container log ingest pipeline")
 		logLevel      = flag.String("log-level", envOr("DIALOG_LOG_LEVEL", "info"), "Log level")
 		encryptionKey = flag.String("encryption-key", envOr("MUVON_ENCRYPTION_KEY", ""), "AES-256-GCM encryption key for secrets in DB")
 	)
@@ -94,6 +103,18 @@ func main() {
 	// Log pipeline
 	flushInterval := time.Duration(*flushMs) * time.Millisecond
 	pipeline := logger.NewPipeline(database.Pool, *bufSize, *workers, *batchSize, flushInterval)
+
+	// Container log pipeline — runs only when ingest is on. Producers
+	// (deployer logship, agent dockerwatch) push batches via gRPC;
+	// SendContainerLogBatch on the registered server fans them through
+	// this pipeline to the container_logs hypertable.
+	var containerPipeline *logger.ContainerPipeline
+	if *containerIngestEnabled {
+		containerFlushInterval := time.Duration(*cFlushMs) * time.Millisecond
+		containerPipeline = logger.NewContainerPipeline(database.Pool, *cBufSize, *cWorkers, *cBatch, containerFlushInterval)
+	} else {
+		slog.Info("container log ingest disabled (DIALOG_CONTAINER_INGEST=false)")
+	}
 
 	// GeoIP — central enrichment for every log entry, regardless of whether
 	// the entry came from the local Unix socket or an agent's TCP gRPC. The
@@ -206,6 +227,9 @@ func main() {
 	// live config, with the global list as fallback. No hard-coded claim
 	// vocabulary in the server itself.
 	logSrv := loggrpc.New(pipeline, database, ch.Get)
+	if containerPipeline != nil {
+		logSrv.SetContainerPipeline(containerPipeline)
+	}
 	logSrv.SetEnrichmentStatusFn(func() *pb.EnrichmentStatusResponse {
 		gs := geoMgr.GetStatus()
 		resp := &pb.EnrichmentStatusResponse{
@@ -243,6 +267,9 @@ func main() {
 		}
 		corrEngine.Stop()
 		pipeline.Stop()
+		if containerPipeline != nil {
+			containerPipeline.Stop()
+		}
 		alertMgr.Stop()
 		_ = geoMgr.Close()
 		cancel()
@@ -367,6 +394,20 @@ func intEnvOr(key string, fallback int) int {
 		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
 			return n
 		}
+	}
+	return fallback
+}
+
+func boolEnvOr(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	switch v {
+	case "1", "true", "TRUE", "True", "yes", "YES":
+		return true
+	case "0", "false", "FALSE", "False", "no", "NO":
+		return false
 	}
 	return fallback
 }

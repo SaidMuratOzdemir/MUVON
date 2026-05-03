@@ -190,6 +190,50 @@ func (r *RemoteLogSink) EnrichmentStatus(ctx context.Context) (*pb.EnrichmentSta
 	return r.client.GetEnrichmentStatus(ctx, &pb.EnrichmentStatusRequest{})
 }
 
+// ==================== Container Log Methods ====================
+
+// SendContainerLogBatch ships a batch of container log records to
+// dialog-siem. Synchronous — caller's context governs timeout. Caller
+// (the deployer's logship or the agent's dockerwatch) handles retry +
+// spool when this errors.
+func (r *RemoteLogSink) SendContainerLogBatch(ctx context.Context, batch *pb.ContainerLogBatch) error {
+	_, err := r.client.SendContainerLogBatch(ctx, batch)
+	return err
+}
+
+// SearchContainerLogs runs a paginated container-log search. 30s timeout
+// matches the http log search ceiling — older chunks fall back to seq
+// scan once compressed.
+func (r *RemoteLogSink) SearchContainerLogs(ctx context.Context, req *pb.SearchContainerLogsRequest) (*pb.SearchContainerLogsResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return r.client.SearchContainerLogs(ctx, req)
+}
+
+// ListContainersFromDialog lists dimension-table rows. Distinct method
+// name so callers can tell it apart from the deployerclient method that
+// returns live Docker state.
+func (r *RemoteLogSink) ListContainersFromDialog(ctx context.Context, req *pb.ListContainersRequest) (*pb.ListContainersResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return r.client.ListContainers(ctx, req)
+}
+
+// GetContainerLogContext fetches ±N lines around an anchor row.
+func (r *RemoteLogSink) GetContainerLogContext(ctx context.Context, anchorID string, n int) (*pb.SearchContainerLogsResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return r.client.GetContainerLogContext(ctx, &pb.GetContainerLogContextRequest{Id: anchorID, N: int32(n)})
+}
+
+// GetIngestStatus reports container-log shipper health (spool size, lag,
+// last-batch time). The admin UI banner reads this.
+func (r *RemoteLogSink) GetIngestStatus(ctx context.Context) (*pb.IngestStatusResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	return r.client.GetIngestStatus(ctx, &pb.IngestStatusRequest{})
+}
+
 // ==================== Converters ====================
 
 func entryToProto(e logger.Entry) *pb.LogEntry {
