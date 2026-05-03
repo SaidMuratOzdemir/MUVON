@@ -19,7 +19,15 @@ type Service struct {
 	docker       *DockerClient
 	pollInterval time.Duration
 	healthClient *http.Client
+	// onTick is called once per loop iteration. Optional — the binary
+	// uses this to keep the gRPC Health response fresh ("deployer is up
+	// but stuck" is otherwise invisible).
+	onTick func()
 }
+
+// SetOnTick registers a callback fired once per tick. Safe to call once
+// at startup; the callback fires inline so it should be cheap.
+func (s *Service) SetOnTick(fn func()) { s.onTick = fn }
 
 func NewService(database *db.DB, docker *DockerClient, pollInterval time.Duration) *Service {
 	if pollInterval <= 0 {
@@ -48,6 +56,9 @@ func (s *Service) Run(ctx context.Context) error {
 	for {
 		if err := s.tick(ctx); err != nil {
 			slog.Error("deployer tick failed", "error", err)
+		}
+		if s.onTick != nil {
+			s.onTick()
 		}
 		select {
 		case <-ctx.Done():
