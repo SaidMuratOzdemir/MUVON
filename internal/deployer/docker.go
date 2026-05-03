@@ -310,8 +310,13 @@ func (c *DockerClient) ContainerRemove(ctx context.Context, id string, force boo
 }
 
 type ContainerSummary struct {
-	ID     string
-	Labels map[string]string
+	ID      string
+	Names   []string
+	Image   string
+	Labels  map[string]string
+	State   string // running, exited, paused, ...
+	Status  string // human readable: "Up 5 minutes (healthy)"
+	Created int64
 }
 
 func (c *DockerClient) ContainerList(ctx context.Context, labelFilter string) ([]ContainerSummary, error) {
@@ -325,17 +330,323 @@ func (c *DockerClient) ContainerList(ctx context.Context, labelFilter string) ([
 		return nil, dockerError(resp)
 	}
 	var raw []struct {
-		ID     string            `json:"Id"`
-		Labels map[string]string `json:"Labels"`
+		ID      string            `json:"Id"`
+		Names   []string          `json:"Names"`
+		Image   string            `json:"Image"`
+		Labels  map[string]string `json:"Labels"`
+		State   string            `json:"State"`
+		Status  string            `json:"Status"`
+		Created int64             `json:"Created"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, err
 	}
 	out := make([]ContainerSummary, len(raw))
 	for i, r := range raw {
-		out[i] = ContainerSummary{ID: r.ID, Labels: r.Labels}
+		out[i] = ContainerSummary{
+			ID:      r.ID,
+			Names:   r.Names,
+			Image:   r.Image,
+			Labels:  r.Labels,
+			State:   r.State,
+			Status:  r.Status,
+			Created: r.Created,
+		}
 	}
 	return out, nil
+}
+
+// ContainerListAll lists containers across all states. Pass managedOnly=true
+// to filter to muvon.managed=true (the typical shipper enumeration).
+func (c *DockerClient) ContainerListAll(ctx context.Context, managedOnly bool) ([]ContainerSummary, error) {
+	q := "all=1"
+	if managedOnly {
+		filterJSON, _ := json.Marshal(map[string][]string{"label": {"muvon.managed=true"}})
+		q += "&filters=" + url.QueryEscape(string(filterJSON))
+	}
+	resp, err := c.do(ctx, http.MethodGet, "/containers/json?"+q, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, dockerError(resp)
+	}
+	var raw []struct {
+		ID      string            `json:"Id"`
+		Names   []string          `json:"Names"`
+		Image   string            `json:"Image"`
+		Labels  map[string]string `json:"Labels"`
+		State   string            `json:"State"`
+		Status  string            `json:"Status"`
+		Created int64             `json:"Created"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	out := make([]ContainerSummary, len(raw))
+	for i, r := range raw {
+		out[i] = ContainerSummary{
+			ID:      r.ID,
+			Names:   r.Names,
+			Image:   r.Image,
+			Labels:  r.Labels,
+			State:   r.State,
+			Status:  r.Status,
+			Created: r.Created,
+		}
+	}
+	return out, nil
+}
+
+// ContainerInspectResult captures the fields we use from /containers/{id}/json.
+type ContainerInspectResult struct {
+	ID         string
+	Name       string
+	Image      string // "sha256:..." digest
+	ImageRef   string // human image reference from Config.Image
+	Labels     map[string]string
+	State      string // running, exited, paused, ...
+	Status     string // human readable
+	StartedAt  time.Time
+	FinishedAt time.Time
+	ExitCode   int
+}
+
+func (c *DockerClient) ContainerInspect(ctx context.Context, id string) (ContainerInspectResult, error) {
+	var out ContainerInspectResult
+	resp, err := c.do(ctx, http.MethodGet, "/containers/"+url.PathEscape(id)+"/json", nil)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return out, dockerError(resp)
+	}
+	var raw struct {
+		ID    string `json:"Id"`
+		Name  string `json:"Name"`
+		Image string `json:"Image"`
+		State struct {
+			Status     string `json:"Status"`
+			Running    bool   `json:"Running"`
+			ExitCode   int    `json:"ExitCode"`
+			StartedAt  string `json:"StartedAt"`
+			FinishedAt string `json:"FinishedAt"`
+		} `json:"State"`
+		Config struct {
+			Image  string            `json:"Image"`
+			Labels map[string]string `json:"Labels"`
+		} `json:"Config"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return out, err
+	}
+	out.ID = raw.ID
+	out.Name = strings.TrimPrefix(raw.Name, "/")
+	out.Image = raw.Image
+	out.ImageRef = raw.Config.Image
+	out.Labels = raw.Config.Labels
+	out.State = raw.State.Status
+	out.Status = raw.State.Status
+	out.ExitCode = raw.State.ExitCode
+	if t, err := time.Parse(time.RFC3339Nano, raw.State.StartedAt); err == nil && !t.IsZero() {
+		out.StartedAt = t
+	}
+	if t, err := time.Parse(time.RFC3339Nano, raw.State.FinishedAt); err == nil && !t.IsZero() && t.Year() > 1 {
+		out.FinishedAt = t
+	}
+	return out, nil
+}
+
+// ContainerLogsOptions configures the /containers/{id}/logs streaming
+// request. Mirrors the Docker Engine API querystring; zero values mean
+// "use API default" (e.g. Tail=0 == "all").
+type ContainerLogsOptions struct {
+	Stdout     bool
+	Stderr     bool
+	Follow     bool
+	Timestamps bool
+	Since      time.Time // empty = no filter
+	Until      time.Time
+	Tail       string // "all", "100", or empty (= all on follow=false, 0 on follow=true)
+}
+
+// ContainerLogs returns the daemon's multiplexed log stream for the
+// container. The caller must Close the body to terminate the daemon's
+// tail goroutine. The stream uses Docker's 8-byte header framing — pair
+// with NewLogDemuxer to get individual stdout/stderr lines.
+//
+// Timeout is intentionally zero on this client (set in NewDockerClient);
+// follow streams are unbounded by design.
+func (c *DockerClient) ContainerLogs(ctx context.Context, id string, opts ContainerLogsOptions) (io.ReadCloser, error) {
+	q := url.Values{}
+	if opts.Stdout {
+		q.Set("stdout", "1")
+	}
+	if opts.Stderr {
+		q.Set("stderr", "1")
+	}
+	if opts.Follow {
+		q.Set("follow", "1")
+	}
+	if opts.Timestamps {
+		q.Set("timestamps", "1")
+	}
+	if !opts.Since.IsZero() {
+		q.Set("since", fmt.Sprintf("%d.%09d", opts.Since.Unix(), opts.Since.Nanosecond()))
+	}
+	if !opts.Until.IsZero() {
+		q.Set("until", fmt.Sprintf("%d.%09d", opts.Until.Unix(), opts.Until.Nanosecond()))
+	}
+	if opts.Tail != "" {
+		q.Set("tail", opts.Tail)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/containers/"+url.PathEscape(id)+"/logs?"+q.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		body := dockerError(resp)
+		resp.Body.Close()
+		return nil, body
+	}
+	return resp.Body, nil
+}
+
+// ContainerEventKind enumerates the events we forward to subscribers.
+// Other Docker event types (image, network, ...) are dropped silently.
+type ContainerEventKind string
+
+const (
+	ContainerEventStart   ContainerEventKind = "start"
+	ContainerEventDie     ContainerEventKind = "die"
+	ContainerEventDestroy ContainerEventKind = "destroy"
+	ContainerEventStop    ContainerEventKind = "stop"
+)
+
+// ContainerEvent describes a relevant container lifecycle event. ID is
+// always set; the rest is best-effort (Docker's events stream gives us
+// labels + image on the same payload).
+type ContainerEvent struct {
+	Time    time.Time
+	Kind    ContainerEventKind
+	ID      string
+	Name    string
+	Image   string
+	Labels  map[string]string
+}
+
+// EventsStream subscribes to /events?type=container and emits one
+// ContainerEvent per relevant Docker event. The returned channel closes
+// when ctx is canceled or the stream errors. errCh receives the terminal
+// error (nil on clean exit).
+//
+// Filter is server-side (type=container), so unrelated events never hit
+// the wire. Reconnects are the caller's responsibility — the shipper's
+// manager wraps this in a backoff loop.
+func (c *DockerClient) EventsStream(ctx context.Context) (<-chan ContainerEvent, <-chan error, error) {
+	filterJSON, _ := json.Marshal(map[string][]string{"type": {"container"}})
+	q := url.Values{}
+	q.Set("filters", string(filterJSON))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/events?"+q.Encode(), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resp.StatusCode >= 300 {
+		err := dockerError(resp)
+		resp.Body.Close()
+		return nil, nil, err
+	}
+
+	out := make(chan ContainerEvent, 64)
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(out)
+		defer close(errCh)
+		defer resp.Body.Close()
+		dec := json.NewDecoder(resp.Body)
+		for {
+			if ctx.Err() != nil {
+				errCh <- ctx.Err()
+				return
+			}
+			var raw struct {
+				Type   string `json:"Type"`
+				Action string `json:"Action"`
+				Time   int64  `json:"time"`
+				Actor  struct {
+					ID         string            `json:"ID"`
+					Attributes map[string]string `json:"Attributes"`
+				} `json:"Actor"`
+			}
+			if err := dec.Decode(&raw); err != nil {
+				if errors.Is(err, io.EOF) || ctx.Err() != nil {
+					errCh <- ctx.Err()
+					return
+				}
+				errCh <- err
+				return
+			}
+			if raw.Type != "container" {
+				continue
+			}
+			var kind ContainerEventKind
+			switch raw.Action {
+			case "start":
+				kind = ContainerEventStart
+			case "die":
+				kind = ContainerEventDie
+			case "destroy":
+				kind = ContainerEventDestroy
+			case "stop":
+				kind = ContainerEventStop
+			default:
+				continue
+			}
+			ev := ContainerEvent{
+				Time:   time.Unix(raw.Time, 0),
+				Kind:   kind,
+				ID:     raw.Actor.ID,
+				Name:   raw.Actor.Attributes["name"],
+				Image:  raw.Actor.Attributes["image"],
+				Labels: copyLabelMap(raw.Actor.Attributes),
+			}
+			select {
+			case out <- ev:
+			case <-ctx.Done():
+				errCh <- ctx.Err()
+				return
+			}
+		}
+	}()
+	return out, errCh, nil
+}
+
+// copyLabelMap strips Docker's synthetic "name"/"image" attributes from
+// the actor map so we don't double-record them; the rest is treated as
+// container labels.
+func copyLabelMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		if k == "name" || k == "image" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 func (c *DockerClient) ContainerWait(ctx context.Context, id string) (int64, error) {
