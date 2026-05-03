@@ -39,6 +39,31 @@ service LogService {
   // expected to wrap this in an audit log entry — the SIEM does not record
   // who pulled the token.
   rpc GetLogRawJWT(GetLogRawJWTRequest) returns (GetLogRawJWTResponse);
+
+  // --- Container Logs (stdout/stderr from managed containers) ---
+  // SendContainerLogBatch ingests a batch of container log lines emitted by
+  // muvon-deployer (central host) or the agent's dockerwatch (remote hosts).
+  // Fire-and-forget — caller does not wait for write to PostgreSQL.
+  rpc SendContainerLogBatch(ContainerLogBatch) returns (Ack);
+
+  // SearchContainerLogs queries persisted container logs with filters and
+  // cursor-based pagination on UUIDv7 ids. Supports free-text ILIKE and
+  // structured attrs (jsonb_path_ops) lookup.
+  rpc SearchContainerLogs(SearchContainerLogsRequest) returns (SearchContainerLogsResponse);
+
+  // ListContainers returns dimension-table rows (one per container ever
+  // seen). Survives container deletion — used by the UI picker so silently
+  // dead containers (the user's incident scenario) remain selectable.
+  rpc ListContainers(ListContainersRequest) returns (ListContainersResponse);
+
+  // GetContainerLogContext returns N lines around a given log id (same
+  // container_id). Lets the UI's "View context" surface ±50 lines.
+  rpc GetContainerLogContext(GetContainerLogContextRequest) returns (SearchContainerLogsResponse);
+
+  // GetIngestStatus reports container-log shipper health (spool size, lag,
+  // last batch received). The admin UI surfaces this as an "ingestion
+  // degraded" banner so operators can act before the spool overflows.
+  rpc GetIngestStatus(IngestStatusRequest) returns (IngestStatusResponse);
 }
 
 // ===== Log Ingest =====
@@ -219,4 +244,165 @@ message EnrichmentStatusResponse {
   // override is active. We do not return secrets here.
   string jwt_identity_state    = 5; // "disabled" | "ok"
   int32  jwt_identity_host_overrides = 6;
+}
+
+// ===== Container Logs =====
+
+// ContainerLogEntry is one stdout/stderr record captured from a Docker
+// container. Timestamps come from the Docker daemon (RFC3339Nano). seq is
+// a monotonic per-container counter set on the shipper side so two lines
+// that share a microsecond still preserve order.
+message ContainerLogEntry {
+  string timestamp     = 1;   // RFC3339Nano, daemon-provided
+  string stream        = 2;   // "stdout" | "stderr"
+  string line          = 3;   // raw line (after demux), no trailing newline
+  bool   truncated     = 4;   // true when source line exceeded max_line and was split
+  int64  seq           = 5;   // shipper-assigned monotonic per-container counter
+  // attrs is optional structured data parsed from `line` when it is a
+  // top-level JSON object. Pipeline-side detection only — callers may
+  // leave this empty and let the SIEM populate it.
+  map<string, string> attrs = 6;
+}
+
+// ContainerMeta enriches every batch with the dimension-table fields so
+// dialog-siem can upsert the `containers` row without an extra round-trip
+// to look the labels up. Sent on every batch; the SIEM upserts idempotently.
+message ContainerMeta {
+  string container_id   = 1;   // full Docker ID (sha256 hex)
+  string container_name = 2;
+  string image          = 3;
+  string image_digest   = 4;
+  string project        = 5;   // muvon.project label
+  string component      = 6;   // muvon.component label
+  string release_id     = 7;   // muvon.release_id label
+  string deployment_id  = 8;   // optional UUID; empty when not known
+  string host_id        = 9;   // "central" or agent UUID
+  map<string, string> labels = 10;
+  string started_at     = 11;  // RFC3339; first time the shipper saw it alive
+  // finished_at + exit_code are populated only on the final batch the
+  // shipper sends after observing container exit.
+  string finished_at    = 12;  // RFC3339, empty while running
+  int32  exit_code      = 13;
+}
+
+message ContainerLogBatch {
+  ContainerMeta            meta    = 1;
+  repeated ContainerLogEntry entries = 2;
+}
+
+// ===== Container Logs: Search =====
+
+// SearchContainerLogsRequest filters by container/project/release/host
+// dimensions and a free-text + attrs search. Cursor pagination uses UUIDv7
+// ids: `before` returns rows with id < cursor (older), `after` returns
+// rows with id > cursor (newer). At most one of `before`/`after` should
+// be set.
+message SearchContainerLogsRequest {
+  string container_id  = 1;
+  string container_name = 2;
+  string project       = 3;
+  string component     = 4;
+  string release_id    = 5;
+  string deployment_id = 6;
+  string host_id       = 7;
+  string stream        = 8;   // "" | "stdout" | "stderr"
+  string from          = 9;   // RFC3339
+  string to            = 10;
+  string q             = 11;  // free-text ILIKE on line
+  bool   regex         = 12;  // when true, use POSIX regex with statement timeout
+  // attrs containment — server treats as JSONB @> {key:value, ...}
+  map<string, string> attrs = 13;
+  int32  limit         = 14;
+  string before        = 15;  // cursor: row id; return older rows
+  string after         = 16;  // cursor: row id; return newer rows
+}
+
+message SearchContainerLogsResponse {
+  repeated ContainerLogRow rows = 1;
+  // next_before_cursor / next_after_cursor are the row IDs the UI should
+  // pass back for the previous/next page. Empty when at end.
+  string next_before_cursor = 2;
+  string next_after_cursor  = 3;
+}
+
+message ContainerLogRow {
+  string id            = 1;   // UUIDv7
+  string timestamp     = 2;   // RFC3339Nano
+  string received_at   = 3;
+  string host_id       = 4;
+  string container_id  = 5;
+  string container_name = 6;
+  string image         = 7;
+  string project       = 8;
+  string component     = 9;
+  string release_id    = 10;
+  string deployment_id = 11;
+  string stream        = 12;
+  string line          = 13;
+  bool   truncated     = 14;
+  int64  seq           = 15;
+  string attrs_json    = 16;  // raw JSONB, opaque on the wire
+}
+
+// ===== Container Logs: List =====
+
+message ListContainersRequest {
+  string project   = 1;
+  string component = 2;
+  string host_id   = 3;
+  // state filter: "" (any), "running" (finished_at IS NULL), "exited"
+  // (finished_at IS NOT NULL).
+  string state     = 4;
+  int32  limit     = 5;
+  string before    = 6;
+}
+
+message ListContainersResponse {
+  repeated Container containers = 1;
+  string next_before_cursor = 2;
+}
+
+message Container {
+  string id            = 1;
+  string container_id  = 2;
+  string container_name = 3;
+  string image         = 4;
+  string image_digest  = 5;
+  string project       = 6;
+  string component     = 7;
+  string release_id    = 8;
+  string deployment_id = 9;
+  string host_id       = 10;
+  string labels_json   = 11;
+  string started_at    = 12;
+  string finished_at   = 13;
+  int32  exit_code     = 14;
+  string last_log_at   = 15;
+}
+
+// ===== Container Logs: Context =====
+
+message GetContainerLogContextRequest {
+  string id = 1;       // anchor row id
+  int32  n  = 2;       // ±N lines around the anchor (default 50)
+}
+
+// ===== Container Logs: Ingest health =====
+
+message IngestStatusRequest {}
+
+message IngestStatusResponse {
+  // Pipeline counters
+  int64 enqueued_total = 1;
+  int64 dropped_total  = 2;
+  int32 queue_len      = 3;
+
+  // Shipper-reported state — set when the shipper has registered itself.
+  // When no shipper has reported in DIALOG_CONTAINER_REPORT_STALE_SECONDS,
+  // these are zero and `degraded` is true.
+  int64 spool_bytes        = 4;
+  int64 spool_oldest_seconds = 5;
+  bool  degraded           = 6;
+  string last_batch_at     = 7;  // RFC3339Nano, empty when never received
+  int64  containers_active = 8;  // shipper-reported number of currently tailed containers
 }

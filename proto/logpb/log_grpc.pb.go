@@ -19,16 +19,21 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	LogService_SendEntry_FullMethodName           = "/logpb.LogService/SendEntry"
-	LogService_SendBatch_FullMethodName           = "/logpb.LogService/SendBatch"
-	LogService_SearchLogs_FullMethodName          = "/logpb.LogService/SearchLogs"
-	LogService_GetLog_FullMethodName              = "/logpb.LogService/GetLog"
-	LogService_GetLogStats_FullMethodName         = "/logpb.LogService/GetLogStats"
-	LogService_StreamLogs_FullMethodName          = "/logpb.LogService/StreamLogs"
-	LogService_UpsertNote_FullMethodName          = "/logpb.LogService/UpsertNote"
-	LogService_ToggleStar_FullMethodName          = "/logpb.LogService/ToggleStar"
-	LogService_GetEnrichmentStatus_FullMethodName = "/logpb.LogService/GetEnrichmentStatus"
-	LogService_GetLogRawJWT_FullMethodName        = "/logpb.LogService/GetLogRawJWT"
+	LogService_SendEntry_FullMethodName              = "/logpb.LogService/SendEntry"
+	LogService_SendBatch_FullMethodName              = "/logpb.LogService/SendBatch"
+	LogService_SearchLogs_FullMethodName             = "/logpb.LogService/SearchLogs"
+	LogService_GetLog_FullMethodName                 = "/logpb.LogService/GetLog"
+	LogService_GetLogStats_FullMethodName            = "/logpb.LogService/GetLogStats"
+	LogService_StreamLogs_FullMethodName             = "/logpb.LogService/StreamLogs"
+	LogService_UpsertNote_FullMethodName             = "/logpb.LogService/UpsertNote"
+	LogService_ToggleStar_FullMethodName             = "/logpb.LogService/ToggleStar"
+	LogService_GetEnrichmentStatus_FullMethodName    = "/logpb.LogService/GetEnrichmentStatus"
+	LogService_GetLogRawJWT_FullMethodName           = "/logpb.LogService/GetLogRawJWT"
+	LogService_SendContainerLogBatch_FullMethodName  = "/logpb.LogService/SendContainerLogBatch"
+	LogService_SearchContainerLogs_FullMethodName    = "/logpb.LogService/SearchContainerLogs"
+	LogService_ListContainers_FullMethodName         = "/logpb.LogService/ListContainers"
+	LogService_GetContainerLogContext_FullMethodName = "/logpb.LogService/GetContainerLogContext"
+	LogService_GetIngestStatus_FullMethodName        = "/logpb.LogService/GetIngestStatus"
 )
 
 // LogServiceClient is the client API for LogService service.
@@ -64,6 +69,26 @@ type LogServiceClient interface {
 	// expected to wrap this in an audit log entry — the SIEM does not record
 	// who pulled the token.
 	GetLogRawJWT(ctx context.Context, in *GetLogRawJWTRequest, opts ...grpc.CallOption) (*GetLogRawJWTResponse, error)
+	// --- Container Logs (stdout/stderr from managed containers) ---
+	// SendContainerLogBatch ingests a batch of container log lines emitted by
+	// muvon-deployer (central host) or the agent's dockerwatch (remote hosts).
+	// Fire-and-forget — caller does not wait for write to PostgreSQL.
+	SendContainerLogBatch(ctx context.Context, in *ContainerLogBatch, opts ...grpc.CallOption) (*Ack, error)
+	// SearchContainerLogs queries persisted container logs with filters and
+	// cursor-based pagination on UUIDv7 ids. Supports free-text ILIKE and
+	// structured attrs (jsonb_path_ops) lookup.
+	SearchContainerLogs(ctx context.Context, in *SearchContainerLogsRequest, opts ...grpc.CallOption) (*SearchContainerLogsResponse, error)
+	// ListContainers returns dimension-table rows (one per container ever
+	// seen). Survives container deletion — used by the UI picker so silently
+	// dead containers (the user's incident scenario) remain selectable.
+	ListContainers(ctx context.Context, in *ListContainersRequest, opts ...grpc.CallOption) (*ListContainersResponse, error)
+	// GetContainerLogContext returns N lines around a given log id (same
+	// container_id). Lets the UI's "View context" surface ±50 lines.
+	GetContainerLogContext(ctx context.Context, in *GetContainerLogContextRequest, opts ...grpc.CallOption) (*SearchContainerLogsResponse, error)
+	// GetIngestStatus reports container-log shipper health (spool size, lag,
+	// last batch received). The admin UI surfaces this as an "ingestion
+	// degraded" banner so operators can act before the spool overflows.
+	GetIngestStatus(ctx context.Context, in *IngestStatusRequest, opts ...grpc.CallOption) (*IngestStatusResponse, error)
 }
 
 type logServiceClient struct {
@@ -183,6 +208,56 @@ func (c *logServiceClient) GetLogRawJWT(ctx context.Context, in *GetLogRawJWTReq
 	return out, nil
 }
 
+func (c *logServiceClient) SendContainerLogBatch(ctx context.Context, in *ContainerLogBatch, opts ...grpc.CallOption) (*Ack, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Ack)
+	err := c.cc.Invoke(ctx, LogService_SendContainerLogBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *logServiceClient) SearchContainerLogs(ctx context.Context, in *SearchContainerLogsRequest, opts ...grpc.CallOption) (*SearchContainerLogsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SearchContainerLogsResponse)
+	err := c.cc.Invoke(ctx, LogService_SearchContainerLogs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *logServiceClient) ListContainers(ctx context.Context, in *ListContainersRequest, opts ...grpc.CallOption) (*ListContainersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListContainersResponse)
+	err := c.cc.Invoke(ctx, LogService_ListContainers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *logServiceClient) GetContainerLogContext(ctx context.Context, in *GetContainerLogContextRequest, opts ...grpc.CallOption) (*SearchContainerLogsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SearchContainerLogsResponse)
+	err := c.cc.Invoke(ctx, LogService_GetContainerLogContext_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *logServiceClient) GetIngestStatus(ctx context.Context, in *IngestStatusRequest, opts ...grpc.CallOption) (*IngestStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IngestStatusResponse)
+	err := c.cc.Invoke(ctx, LogService_GetIngestStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LogServiceServer is the server API for LogService service.
 // All implementations must embed UnimplementedLogServiceServer
 // for forward compatibility.
@@ -216,6 +291,26 @@ type LogServiceServer interface {
 	// expected to wrap this in an audit log entry — the SIEM does not record
 	// who pulled the token.
 	GetLogRawJWT(context.Context, *GetLogRawJWTRequest) (*GetLogRawJWTResponse, error)
+	// --- Container Logs (stdout/stderr from managed containers) ---
+	// SendContainerLogBatch ingests a batch of container log lines emitted by
+	// muvon-deployer (central host) or the agent's dockerwatch (remote hosts).
+	// Fire-and-forget — caller does not wait for write to PostgreSQL.
+	SendContainerLogBatch(context.Context, *ContainerLogBatch) (*Ack, error)
+	// SearchContainerLogs queries persisted container logs with filters and
+	// cursor-based pagination on UUIDv7 ids. Supports free-text ILIKE and
+	// structured attrs (jsonb_path_ops) lookup.
+	SearchContainerLogs(context.Context, *SearchContainerLogsRequest) (*SearchContainerLogsResponse, error)
+	// ListContainers returns dimension-table rows (one per container ever
+	// seen). Survives container deletion — used by the UI picker so silently
+	// dead containers (the user's incident scenario) remain selectable.
+	ListContainers(context.Context, *ListContainersRequest) (*ListContainersResponse, error)
+	// GetContainerLogContext returns N lines around a given log id (same
+	// container_id). Lets the UI's "View context" surface ±50 lines.
+	GetContainerLogContext(context.Context, *GetContainerLogContextRequest) (*SearchContainerLogsResponse, error)
+	// GetIngestStatus reports container-log shipper health (spool size, lag,
+	// last batch received). The admin UI surfaces this as an "ingestion
+	// degraded" banner so operators can act before the spool overflows.
+	GetIngestStatus(context.Context, *IngestStatusRequest) (*IngestStatusResponse, error)
 	mustEmbedUnimplementedLogServiceServer()
 }
 
@@ -255,6 +350,21 @@ func (UnimplementedLogServiceServer) GetEnrichmentStatus(context.Context, *Enric
 }
 func (UnimplementedLogServiceServer) GetLogRawJWT(context.Context, *GetLogRawJWTRequest) (*GetLogRawJWTResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetLogRawJWT not implemented")
+}
+func (UnimplementedLogServiceServer) SendContainerLogBatch(context.Context, *ContainerLogBatch) (*Ack, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendContainerLogBatch not implemented")
+}
+func (UnimplementedLogServiceServer) SearchContainerLogs(context.Context, *SearchContainerLogsRequest) (*SearchContainerLogsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SearchContainerLogs not implemented")
+}
+func (UnimplementedLogServiceServer) ListContainers(context.Context, *ListContainersRequest) (*ListContainersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListContainers not implemented")
+}
+func (UnimplementedLogServiceServer) GetContainerLogContext(context.Context, *GetContainerLogContextRequest) (*SearchContainerLogsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetContainerLogContext not implemented")
+}
+func (UnimplementedLogServiceServer) GetIngestStatus(context.Context, *IngestStatusRequest) (*IngestStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetIngestStatus not implemented")
 }
 func (UnimplementedLogServiceServer) mustEmbedUnimplementedLogServiceServer() {}
 func (UnimplementedLogServiceServer) testEmbeddedByValue()                    {}
@@ -450,6 +560,96 @@ func _LogService_GetLogRawJWT_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LogService_SendContainerLogBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ContainerLogBatch)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).SendContainerLogBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_SendContainerLogBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).SendContainerLogBatch(ctx, req.(*ContainerLogBatch))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LogService_SearchContainerLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SearchContainerLogsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).SearchContainerLogs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_SearchContainerLogs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).SearchContainerLogs(ctx, req.(*SearchContainerLogsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LogService_ListContainers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListContainersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).ListContainers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_ListContainers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).ListContainers(ctx, req.(*ListContainersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LogService_GetContainerLogContext_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetContainerLogContextRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).GetContainerLogContext(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_GetContainerLogContext_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).GetContainerLogContext(ctx, req.(*GetContainerLogContextRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LogService_GetIngestStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IngestStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).GetIngestStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_GetIngestStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).GetIngestStatus(ctx, req.(*IngestStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LogService_ServiceDesc is the grpc.ServiceDesc for LogService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -492,6 +692,26 @@ var LogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetLogRawJWT",
 			Handler:    _LogService_GetLogRawJWT_Handler,
+		},
+		{
+			MethodName: "SendContainerLogBatch",
+			Handler:    _LogService_SendContainerLogBatch_Handler,
+		},
+		{
+			MethodName: "SearchContainerLogs",
+			Handler:    _LogService_SearchContainerLogs_Handler,
+		},
+		{
+			MethodName: "ListContainers",
+			Handler:    _LogService_ListContainers_Handler,
+		},
+		{
+			MethodName: "GetContainerLogContext",
+			Handler:    _LogService_GetContainerLogContext_Handler,
+		},
+		{
+			MethodName: "GetIngestStatus",
+			Handler:    _LogService_GetIngestStatus_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package deployerpb;
+
+option go_package = "muvon/proto/deployerpb";
+
+// DeployerService — muvon-deployer'in container introspection ve canli
+// log akisi sunan gRPC API'si. Sadece muvon admin'in dialerli oldugu
+// /run/muvon/deployer.sock Unix soketi uzerinden konusur. Docker socket
+// erisimi yalnizca muvon-deployer'da kalir; admin bu RPC ile sinirli bir
+// yuzeyden gecer.
+service DeployerService {
+  // ListContainers active + son acılmış container'ları gosterir. Filtreler
+  // ister managed-only ister tum container'lar icin uygulanir. Admin UI'in
+  // "Live tail" picker'i bunu cagirir.
+  rpc ListContainers(ListContainersRequest) returns (ListContainersResponse);
+
+  // GetContainer tek bir container icin durum + label snapshot'ini doner.
+  rpc GetContainer(GetContainerRequest) returns (ContainerDetail);
+
+  // StreamContainerLogs Docker daemon'a `?follow=1&timestamps=1` ile baglanir,
+  // multiplexed stream'i demuks edip her satiri ayri bir mesaj olarak yollar.
+  // Yavas tuketici icin sunucu drop-oldest backpressure uygular ve sentetik
+  // bir "[muvon] dropped N lines" satiri ile kayip bilgisini akıtır.
+  rpc StreamContainerLogs(StreamContainerLogsRequest) returns (stream ContainerLogChunk);
+
+  // Health basit bir liveness probe; admin UI deployer down banner'ini
+  // bunun başarısızlığına bağlar.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+// ===== ListContainers =====
+
+message ListContainersRequest {
+  // managed_only=true sadece muvon.managed=true label'li container'lar.
+  bool   managed_only = 1;
+  string project      = 2;
+  string component    = 3;
+  // state ∈ {"", "running", "exited"}; bos = her ikisi.
+  string state        = 4;
+}
+
+message ListContainersResponse {
+  repeated ContainerDetail containers = 1;
+}
+
+// ===== GetContainer =====
+
+message GetContainerRequest {
+  string container_id = 1;  // full ID veya prefix
+}
+
+message ContainerDetail {
+  string container_id   = 1;
+  string container_name = 2;
+  string image          = 3;
+  string image_digest   = 4;
+  // state ∈ Docker'in dondurdugu kanonik degerler: created, running,
+  // paused, restarting, removing, exited, dead.
+  string state          = 5;
+  // status — Docker UI'inin gosterdigi insan-okunabilir cumle, ornek:
+  // "Up 5 minutes (healthy)".
+  string status         = 6;
+  map<string, string> labels = 7;
+  // RFC3339; container start anı (Up için State.StartedAt).
+  string started_at     = 8;
+  // RFC3339; çıkış varsa State.FinishedAt; aktif container'larda boş.
+  string finished_at    = 9;
+  int32  exit_code      = 10;
+  // Inspect'ten cıkarılan label-derived bilgiler — admin UI'in arama
+  // alanlarinı doldurmasını kolaylaştırır.
+  string project        = 11;  // muvon.project
+  string component      = 12;  // muvon.component
+  string release_id     = 13;  // muvon.release_id
+}
+
+// ===== StreamContainerLogs =====
+
+message StreamContainerLogsRequest {
+  string container_id = 1;
+  // tail = ilk bagli sirasinda gonderilecek son N satir; 0 = sadece yeni
+  // satirlar; <0 = tum mevcut log (baslangıc icin maliyetli, kullanmayin).
+  int32  tail         = 2;
+  // follow=true bagli kalir ve container son bulana kadar yeni satirlari
+  // surekli gonderir.
+  bool   follow       = 3;
+  // streams: bos = "stdout,stderr"; yoksa istenenleri filtrele. Docker
+  // API tarafindaki ayar; sunucu varsayilani stdout+stderr.
+  repeated string streams = 4;
+  // since RFC3339 — sadece bu zamandan sonraki satirlari gonder. Boş
+  // ise Docker'in docker logs default davranisi.
+  string since        = 5;
+}
+
+message ContainerLogChunk {
+  // timestamp Docker daemon'in sagladigi RFC3339Nano.
+  string timestamp = 1;
+  // stream ∈ {"stdout","stderr"} — multiplexed stream header'dan cıkarılır.
+  string stream    = 2;
+  // line — newline-strip edilmis tek bir log satiri.
+  string line      = 3;
+  // truncated=true: kaynak satir max_line'i astigi icin server tarafindan
+  // bolundu. UI bu satiri "..." ile birlestirebilir.
+  bool   truncated = 4;
+  // seq — server'in tail goroutine'i icinde monoton artan sayac. Iki
+  // satir ayni microsaniyeyi paylasirsa siralama icin kullanilir.
+  int64  seq       = 5;
+  // synthetic=true: bu satir muvon tarafından üretilmiştir (örn. "dropped
+  // N lines"). UI bunları farklı renderleyebilir.
+  bool   synthetic = 6;
+}
+
+// ===== Health =====
+
+message HealthRequest {}
+
+message HealthResponse {
+  // ok = true ise deployer + Docker daemon erisimi calisiyor.
+  bool ok = 1;
+  // last_tick_age_seconds = deployer'in son tick'inden bu yana gecen sure.
+  // 0 = ulasilamiyor.
+  int64 last_tick_age_seconds = 2;
+  // active_tail_streams = o anda canli olan StreamContainerLogs sayisi.
+  int32 active_tail_streams = 3;
+  // shipper_active = logship aktif container sayisi (persistans icin
+  // tail edilenler).
+  int32 shipper_active_containers = 4;
+}

@@ -1439,6 +1439,1176 @@ func (x *EnrichmentStatusResponse) GetJwtIdentityHostOverrides() int32 {
 	return 0
 }
 
+// ContainerLogEntry is one stdout/stderr record captured from a Docker
+// container. Timestamps come from the Docker daemon (RFC3339Nano). seq is
+// a monotonic per-container counter set on the shipper side so two lines
+// that share a microsecond still preserve order.
+type ContainerLogEntry struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp string                 `protobuf:"bytes,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`  // RFC3339Nano, daemon-provided
+	Stream    string                 `protobuf:"bytes,2,opt,name=stream,proto3" json:"stream,omitempty"`        // "stdout" | "stderr"
+	Line      string                 `protobuf:"bytes,3,opt,name=line,proto3" json:"line,omitempty"`            // raw line (after demux), no trailing newline
+	Truncated bool                   `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"` // true when source line exceeded max_line and was split
+	Seq       int64                  `protobuf:"varint,5,opt,name=seq,proto3" json:"seq,omitempty"`             // shipper-assigned monotonic per-container counter
+	// attrs is optional structured data parsed from `line` when it is a
+	// top-level JSON object. Pipeline-side detection only — callers may
+	// leave this empty and let the SIEM populate it.
+	Attrs         map[string]string `protobuf:"bytes,6,rep,name=attrs,proto3" json:"attrs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerLogEntry) Reset() {
+	*x = ContainerLogEntry{}
+	mi := &file_proto_logpb_log_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerLogEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerLogEntry) ProtoMessage() {}
+
+func (x *ContainerLogEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerLogEntry.ProtoReflect.Descriptor instead.
+func (*ContainerLogEntry) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *ContainerLogEntry) GetTimestamp() string {
+	if x != nil {
+		return x.Timestamp
+	}
+	return ""
+}
+
+func (x *ContainerLogEntry) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *ContainerLogEntry) GetLine() string {
+	if x != nil {
+		return x.Line
+	}
+	return ""
+}
+
+func (x *ContainerLogEntry) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+func (x *ContainerLogEntry) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *ContainerLogEntry) GetAttrs() map[string]string {
+	if x != nil {
+		return x.Attrs
+	}
+	return nil
+}
+
+// ContainerMeta enriches every batch with the dimension-table fields so
+// dialog-siem can upsert the `containers` row without an extra round-trip
+// to look the labels up. Sent on every batch; the SIEM upserts idempotently.
+type ContainerMeta struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ContainerId   string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"` // full Docker ID (sha256 hex)
+	ContainerName string                 `protobuf:"bytes,2,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
+	Image         string                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	ImageDigest   string                 `protobuf:"bytes,4,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
+	Project       string                 `protobuf:"bytes,5,opt,name=project,proto3" json:"project,omitempty"`                               // muvon.project label
+	Component     string                 `protobuf:"bytes,6,opt,name=component,proto3" json:"component,omitempty"`                           // muvon.component label
+	ReleaseId     string                 `protobuf:"bytes,7,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`          // muvon.release_id label
+	DeploymentId  string                 `protobuf:"bytes,8,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"` // optional UUID; empty when not known
+	HostId        string                 `protobuf:"bytes,9,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"`                   // "central" or agent UUID
+	Labels        map[string]string      `protobuf:"bytes,10,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	StartedAt     string                 `protobuf:"bytes,11,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"` // RFC3339; first time the shipper saw it alive
+	// finished_at + exit_code are populated only on the final batch the
+	// shipper sends after observing container exit.
+	FinishedAt    string `protobuf:"bytes,12,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"` // RFC3339, empty while running
+	ExitCode      int32  `protobuf:"varint,13,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerMeta) Reset() {
+	*x = ContainerMeta{}
+	mi := &file_proto_logpb_log_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerMeta) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerMeta) ProtoMessage() {}
+
+func (x *ContainerMeta) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerMeta.ProtoReflect.Descriptor instead.
+func (*ContainerMeta) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ContainerMeta) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetContainerName() string {
+	if x != nil {
+		return x.ContainerName
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetImageDigest() string {
+	if x != nil {
+		return x.ImageDigest
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetComponent() string {
+	if x != nil {
+		return x.Component
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetHostId() string {
+	if x != nil {
+		return x.HostId
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *ContainerMeta) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetFinishedAt() string {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return ""
+}
+
+func (x *ContainerMeta) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+type ContainerLogBatch struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Meta          *ContainerMeta         `protobuf:"bytes,1,opt,name=meta,proto3" json:"meta,omitempty"`
+	Entries       []*ContainerLogEntry   `protobuf:"bytes,2,rep,name=entries,proto3" json:"entries,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerLogBatch) Reset() {
+	*x = ContainerLogBatch{}
+	mi := &file_proto_logpb_log_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerLogBatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerLogBatch) ProtoMessage() {}
+
+func (x *ContainerLogBatch) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerLogBatch.ProtoReflect.Descriptor instead.
+func (*ContainerLogBatch) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ContainerLogBatch) GetMeta() *ContainerMeta {
+	if x != nil {
+		return x.Meta
+	}
+	return nil
+}
+
+func (x *ContainerLogBatch) GetEntries() []*ContainerLogEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+// SearchContainerLogsRequest filters by container/project/release/host
+// dimensions and a free-text + attrs search. Cursor pagination uses UUIDv7
+// ids: `before` returns rows with id < cursor (older), `after` returns
+// rows with id > cursor (newer). At most one of `before`/`after` should
+// be set.
+type SearchContainerLogsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ContainerId   string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	ContainerName string                 `protobuf:"bytes,2,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
+	Project       string                 `protobuf:"bytes,3,opt,name=project,proto3" json:"project,omitempty"`
+	Component     string                 `protobuf:"bytes,4,opt,name=component,proto3" json:"component,omitempty"`
+	ReleaseId     string                 `protobuf:"bytes,5,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	DeploymentId  string                 `protobuf:"bytes,6,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	HostId        string                 `protobuf:"bytes,7,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"`
+	Stream        string                 `protobuf:"bytes,8,opt,name=stream,proto3" json:"stream,omitempty"` // "" | "stdout" | "stderr"
+	From          string                 `protobuf:"bytes,9,opt,name=from,proto3" json:"from,omitempty"`     // RFC3339
+	To            string                 `protobuf:"bytes,10,opt,name=to,proto3" json:"to,omitempty"`
+	Q             string                 `protobuf:"bytes,11,opt,name=q,proto3" json:"q,omitempty"`          // free-text ILIKE on line
+	Regex         bool                   `protobuf:"varint,12,opt,name=regex,proto3" json:"regex,omitempty"` // when true, use POSIX regex with statement timeout
+	// attrs containment — server treats as JSONB @> {key:value, ...}
+	Attrs         map[string]string `protobuf:"bytes,13,rep,name=attrs,proto3" json:"attrs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Limit         int32             `protobuf:"varint,14,opt,name=limit,proto3" json:"limit,omitempty"`
+	Before        string            `protobuf:"bytes,15,opt,name=before,proto3" json:"before,omitempty"` // cursor: row id; return older rows
+	After         string            `protobuf:"bytes,16,opt,name=after,proto3" json:"after,omitempty"`   // cursor: row id; return newer rows
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SearchContainerLogsRequest) Reset() {
+	*x = SearchContainerLogsRequest{}
+	mi := &file_proto_logpb_log_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SearchContainerLogsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SearchContainerLogsRequest) ProtoMessage() {}
+
+func (x *SearchContainerLogsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SearchContainerLogsRequest.ProtoReflect.Descriptor instead.
+func (*SearchContainerLogsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *SearchContainerLogsRequest) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetContainerName() string {
+	if x != nil {
+		return x.ContainerName
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetComponent() string {
+	if x != nil {
+		return x.Component
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetHostId() string {
+	if x != nil {
+		return x.HostId
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetFrom() string {
+	if x != nil {
+		return x.From
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetQ() string {
+	if x != nil {
+		return x.Q
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetRegex() bool {
+	if x != nil {
+		return x.Regex
+	}
+	return false
+}
+
+func (x *SearchContainerLogsRequest) GetAttrs() map[string]string {
+	if x != nil {
+		return x.Attrs
+	}
+	return nil
+}
+
+func (x *SearchContainerLogsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *SearchContainerLogsRequest) GetBefore() string {
+	if x != nil {
+		return x.Before
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsRequest) GetAfter() string {
+	if x != nil {
+		return x.After
+	}
+	return ""
+}
+
+type SearchContainerLogsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Rows  []*ContainerLogRow     `protobuf:"bytes,1,rep,name=rows,proto3" json:"rows,omitempty"`
+	// next_before_cursor / next_after_cursor are the row IDs the UI should
+	// pass back for the previous/next page. Empty when at end.
+	NextBeforeCursor string `protobuf:"bytes,2,opt,name=next_before_cursor,json=nextBeforeCursor,proto3" json:"next_before_cursor,omitempty"`
+	NextAfterCursor  string `protobuf:"bytes,3,opt,name=next_after_cursor,json=nextAfterCursor,proto3" json:"next_after_cursor,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *SearchContainerLogsResponse) Reset() {
+	*x = SearchContainerLogsResponse{}
+	mi := &file_proto_logpb_log_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SearchContainerLogsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SearchContainerLogsResponse) ProtoMessage() {}
+
+func (x *SearchContainerLogsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SearchContainerLogsResponse.ProtoReflect.Descriptor instead.
+func (*SearchContainerLogsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *SearchContainerLogsResponse) GetRows() []*ContainerLogRow {
+	if x != nil {
+		return x.Rows
+	}
+	return nil
+}
+
+func (x *SearchContainerLogsResponse) GetNextBeforeCursor() string {
+	if x != nil {
+		return x.NextBeforeCursor
+	}
+	return ""
+}
+
+func (x *SearchContainerLogsResponse) GetNextAfterCursor() string {
+	if x != nil {
+		return x.NextAfterCursor
+	}
+	return ""
+}
+
+type ContainerLogRow struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`               // UUIDv7
+	Timestamp     string                 `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // RFC3339Nano
+	ReceivedAt    string                 `protobuf:"bytes,3,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"`
+	HostId        string                 `protobuf:"bytes,4,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"`
+	ContainerId   string                 `protobuf:"bytes,5,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	ContainerName string                 `protobuf:"bytes,6,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
+	Image         string                 `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
+	Project       string                 `protobuf:"bytes,8,opt,name=project,proto3" json:"project,omitempty"`
+	Component     string                 `protobuf:"bytes,9,opt,name=component,proto3" json:"component,omitempty"`
+	ReleaseId     string                 `protobuf:"bytes,10,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	DeploymentId  string                 `protobuf:"bytes,11,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	Stream        string                 `protobuf:"bytes,12,opt,name=stream,proto3" json:"stream,omitempty"`
+	Line          string                 `protobuf:"bytes,13,opt,name=line,proto3" json:"line,omitempty"`
+	Truncated     bool                   `protobuf:"varint,14,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	Seq           int64                  `protobuf:"varint,15,opt,name=seq,proto3" json:"seq,omitempty"`
+	AttrsJson     string                 `protobuf:"bytes,16,opt,name=attrs_json,json=attrsJson,proto3" json:"attrs_json,omitempty"` // raw JSONB, opaque on the wire
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ContainerLogRow) Reset() {
+	*x = ContainerLogRow{}
+	mi := &file_proto_logpb_log_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContainerLogRow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContainerLogRow) ProtoMessage() {}
+
+func (x *ContainerLogRow) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContainerLogRow.ProtoReflect.Descriptor instead.
+func (*ContainerLogRow) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ContainerLogRow) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetTimestamp() string {
+	if x != nil {
+		return x.Timestamp
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetReceivedAt() string {
+	if x != nil {
+		return x.ReceivedAt
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetHostId() string {
+	if x != nil {
+		return x.HostId
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetContainerName() string {
+	if x != nil {
+		return x.ContainerName
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetComponent() string {
+	if x != nil {
+		return x.Component
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetLine() string {
+	if x != nil {
+		return x.Line
+	}
+	return ""
+}
+
+func (x *ContainerLogRow) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+func (x *ContainerLogRow) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *ContainerLogRow) GetAttrsJson() string {
+	if x != nil {
+		return x.AttrsJson
+	}
+	return ""
+}
+
+type ListContainersRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Project   string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
+	Component string                 `protobuf:"bytes,2,opt,name=component,proto3" json:"component,omitempty"`
+	HostId    string                 `protobuf:"bytes,3,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"`
+	// state filter: "" (any), "running" (finished_at IS NULL), "exited"
+	// (finished_at IS NOT NULL).
+	State         string `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
+	Limit         int32  `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
+	Before        string `protobuf:"bytes,6,opt,name=before,proto3" json:"before,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListContainersRequest) Reset() {
+	*x = ListContainersRequest{}
+	mi := &file_proto_logpb_log_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListContainersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListContainersRequest) ProtoMessage() {}
+
+func (x *ListContainersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListContainersRequest.ProtoReflect.Descriptor instead.
+func (*ListContainersRequest) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *ListContainersRequest) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *ListContainersRequest) GetComponent() string {
+	if x != nil {
+		return x.Component
+	}
+	return ""
+}
+
+func (x *ListContainersRequest) GetHostId() string {
+	if x != nil {
+		return x.HostId
+	}
+	return ""
+}
+
+func (x *ListContainersRequest) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *ListContainersRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListContainersRequest) GetBefore() string {
+	if x != nil {
+		return x.Before
+	}
+	return ""
+}
+
+type ListContainersResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Containers       []*Container           `protobuf:"bytes,1,rep,name=containers,proto3" json:"containers,omitempty"`
+	NextBeforeCursor string                 `protobuf:"bytes,2,opt,name=next_before_cursor,json=nextBeforeCursor,proto3" json:"next_before_cursor,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ListContainersResponse) Reset() {
+	*x = ListContainersResponse{}
+	mi := &file_proto_logpb_log_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListContainersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListContainersResponse) ProtoMessage() {}
+
+func (x *ListContainersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListContainersResponse.ProtoReflect.Descriptor instead.
+func (*ListContainersResponse) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ListContainersResponse) GetContainers() []*Container {
+	if x != nil {
+		return x.Containers
+	}
+	return nil
+}
+
+func (x *ListContainersResponse) GetNextBeforeCursor() string {
+	if x != nil {
+		return x.NextBeforeCursor
+	}
+	return ""
+}
+
+type Container struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ContainerId   string                 `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	ContainerName string                 `protobuf:"bytes,3,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
+	Image         string                 `protobuf:"bytes,4,opt,name=image,proto3" json:"image,omitempty"`
+	ImageDigest   string                 `protobuf:"bytes,5,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
+	Project       string                 `protobuf:"bytes,6,opt,name=project,proto3" json:"project,omitempty"`
+	Component     string                 `protobuf:"bytes,7,opt,name=component,proto3" json:"component,omitempty"`
+	ReleaseId     string                 `protobuf:"bytes,8,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"`
+	DeploymentId  string                 `protobuf:"bytes,9,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	HostId        string                 `protobuf:"bytes,10,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"`
+	LabelsJson    string                 `protobuf:"bytes,11,opt,name=labels_json,json=labelsJson,proto3" json:"labels_json,omitempty"`
+	StartedAt     string                 `protobuf:"bytes,12,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	FinishedAt    string                 `protobuf:"bytes,13,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	ExitCode      int32                  `protobuf:"varint,14,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	LastLogAt     string                 `protobuf:"bytes,15,opt,name=last_log_at,json=lastLogAt,proto3" json:"last_log_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Container) Reset() {
+	*x = Container{}
+	mi := &file_proto_logpb_log_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Container) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Container) ProtoMessage() {}
+
+func (x *Container) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Container.ProtoReflect.Descriptor instead.
+func (*Container) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *Container) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Container) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *Container) GetContainerName() string {
+	if x != nil {
+		return x.ContainerName
+	}
+	return ""
+}
+
+func (x *Container) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *Container) GetImageDigest() string {
+	if x != nil {
+		return x.ImageDigest
+	}
+	return ""
+}
+
+func (x *Container) GetProject() string {
+	if x != nil {
+		return x.Project
+	}
+	return ""
+}
+
+func (x *Container) GetComponent() string {
+	if x != nil {
+		return x.Component
+	}
+	return ""
+}
+
+func (x *Container) GetReleaseId() string {
+	if x != nil {
+		return x.ReleaseId
+	}
+	return ""
+}
+
+func (x *Container) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *Container) GetHostId() string {
+	if x != nil {
+		return x.HostId
+	}
+	return ""
+}
+
+func (x *Container) GetLabelsJson() string {
+	if x != nil {
+		return x.LabelsJson
+	}
+	return ""
+}
+
+func (x *Container) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
+func (x *Container) GetFinishedAt() string {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return ""
+}
+
+func (x *Container) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *Container) GetLastLogAt() string {
+	if x != nil {
+		return x.LastLogAt
+	}
+	return ""
+}
+
+type GetContainerLogContextRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // anchor row id
+	N             int32                  `protobuf:"varint,2,opt,name=n,proto3" json:"n,omitempty"`  // ±N lines around the anchor (default 50)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetContainerLogContextRequest) Reset() {
+	*x = GetContainerLogContextRequest{}
+	mi := &file_proto_logpb_log_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetContainerLogContextRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetContainerLogContextRequest) ProtoMessage() {}
+
+func (x *GetContainerLogContextRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetContainerLogContextRequest.ProtoReflect.Descriptor instead.
+func (*GetContainerLogContextRequest) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *GetContainerLogContextRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *GetContainerLogContextRequest) GetN() int32 {
+	if x != nil {
+		return x.N
+	}
+	return 0
+}
+
+type IngestStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IngestStatusRequest) Reset() {
+	*x = IngestStatusRequest{}
+	mi := &file_proto_logpb_log_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestStatusRequest) ProtoMessage() {}
+
+func (x *IngestStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestStatusRequest.ProtoReflect.Descriptor instead.
+func (*IngestStatusRequest) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{28}
+}
+
+type IngestStatusResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Pipeline counters
+	EnqueuedTotal int64 `protobuf:"varint,1,opt,name=enqueued_total,json=enqueuedTotal,proto3" json:"enqueued_total,omitempty"`
+	DroppedTotal  int64 `protobuf:"varint,2,opt,name=dropped_total,json=droppedTotal,proto3" json:"dropped_total,omitempty"`
+	QueueLen      int32 `protobuf:"varint,3,opt,name=queue_len,json=queueLen,proto3" json:"queue_len,omitempty"`
+	// Shipper-reported state — set when the shipper has registered itself.
+	// When no shipper has reported in DIALOG_CONTAINER_REPORT_STALE_SECONDS,
+	// these are zero and `degraded` is true.
+	SpoolBytes         int64  `protobuf:"varint,4,opt,name=spool_bytes,json=spoolBytes,proto3" json:"spool_bytes,omitempty"`
+	SpoolOldestSeconds int64  `protobuf:"varint,5,opt,name=spool_oldest_seconds,json=spoolOldestSeconds,proto3" json:"spool_oldest_seconds,omitempty"`
+	Degraded           bool   `protobuf:"varint,6,opt,name=degraded,proto3" json:"degraded,omitempty"`
+	LastBatchAt        string `protobuf:"bytes,7,opt,name=last_batch_at,json=lastBatchAt,proto3" json:"last_batch_at,omitempty"`               // RFC3339Nano, empty when never received
+	ContainersActive   int64  `protobuf:"varint,8,opt,name=containers_active,json=containersActive,proto3" json:"containers_active,omitempty"` // shipper-reported number of currently tailed containers
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *IngestStatusResponse) Reset() {
+	*x = IngestStatusResponse{}
+	mi := &file_proto_logpb_log_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestStatusResponse) ProtoMessage() {}
+
+func (x *IngestStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestStatusResponse.ProtoReflect.Descriptor instead.
+func (*IngestStatusResponse) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *IngestStatusResponse) GetEnqueuedTotal() int64 {
+	if x != nil {
+		return x.EnqueuedTotal
+	}
+	return 0
+}
+
+func (x *IngestStatusResponse) GetDroppedTotal() int64 {
+	if x != nil {
+		return x.DroppedTotal
+	}
+	return 0
+}
+
+func (x *IngestStatusResponse) GetQueueLen() int32 {
+	if x != nil {
+		return x.QueueLen
+	}
+	return 0
+}
+
+func (x *IngestStatusResponse) GetSpoolBytes() int64 {
+	if x != nil {
+		return x.SpoolBytes
+	}
+	return 0
+}
+
+func (x *IngestStatusResponse) GetSpoolOldestSeconds() int64 {
+	if x != nil {
+		return x.SpoolOldestSeconds
+	}
+	return 0
+}
+
+func (x *IngestStatusResponse) GetDegraded() bool {
+	if x != nil {
+		return x.Degraded
+	}
+	return false
+}
+
+func (x *IngestStatusResponse) GetLastBatchAt() string {
+	if x != nil {
+		return x.LastBatchAt
+	}
+	return ""
+}
+
+func (x *IngestStatusResponse) GetContainersActive() int64 {
+	if x != nil {
+		return x.ContainersActive
+	}
+	return 0
+}
+
 var File_proto_logpb_log_proto protoreflect.FileDescriptor
 
 const file_proto_logpb_log_proto_rawDesc = "" +
@@ -1590,7 +2760,137 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"geoipError\x12&\n" +
 	"\x0fgeoip_loaded_at\x18\x04 \x01(\tR\rgeoipLoadedAt\x12,\n" +
 	"\x12jwt_identity_state\x18\x05 \x01(\tR\x10jwtIdentityState\x12=\n" +
-	"\x1bjwt_identity_host_overrides\x18\x06 \x01(\x05R\x18jwtIdentityHostOverrides2\xdc\x04\n" +
+	"\x1bjwt_identity_host_overrides\x18\x06 \x01(\x05R\x18jwtIdentityHostOverrides\"\x82\x02\n" +
+	"\x11ContainerLogEntry\x12\x1c\n" +
+	"\ttimestamp\x18\x01 \x01(\tR\ttimestamp\x12\x16\n" +
+	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
+	"\x04line\x18\x03 \x01(\tR\x04line\x12\x1c\n" +
+	"\ttruncated\x18\x04 \x01(\bR\ttruncated\x12\x10\n" +
+	"\x03seq\x18\x05 \x01(\x03R\x03seq\x129\n" +
+	"\x05attrs\x18\x06 \x03(\v2#.logpb.ContainerLogEntry.AttrsEntryR\x05attrs\x1a8\n" +
+	"\n" +
+	"AttrsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf9\x03\n" +
+	"\rContainerMeta\x12!\n" +
+	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\x12%\n" +
+	"\x0econtainer_name\x18\x02 \x01(\tR\rcontainerName\x12\x14\n" +
+	"\x05image\x18\x03 \x01(\tR\x05image\x12!\n" +
+	"\fimage_digest\x18\x04 \x01(\tR\vimageDigest\x12\x18\n" +
+	"\aproject\x18\x05 \x01(\tR\aproject\x12\x1c\n" +
+	"\tcomponent\x18\x06 \x01(\tR\tcomponent\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\a \x01(\tR\treleaseId\x12#\n" +
+	"\rdeployment_id\x18\b \x01(\tR\fdeploymentId\x12\x17\n" +
+	"\ahost_id\x18\t \x01(\tR\x06hostId\x128\n" +
+	"\x06labels\x18\n" +
+	" \x03(\v2 .logpb.ContainerMeta.LabelsEntryR\x06labels\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\v \x01(\tR\tstartedAt\x12\x1f\n" +
+	"\vfinished_at\x18\f \x01(\tR\n" +
+	"finishedAt\x12\x1b\n" +
+	"\texit_code\x18\r \x01(\x05R\bexitCode\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"q\n" +
+	"\x11ContainerLogBatch\x12(\n" +
+	"\x04meta\x18\x01 \x01(\v2\x14.logpb.ContainerMetaR\x04meta\x122\n" +
+	"\aentries\x18\x02 \x03(\v2\x18.logpb.ContainerLogEntryR\aentries\"\x9d\x04\n" +
+	"\x1aSearchContainerLogsRequest\x12!\n" +
+	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\x12%\n" +
+	"\x0econtainer_name\x18\x02 \x01(\tR\rcontainerName\x12\x18\n" +
+	"\aproject\x18\x03 \x01(\tR\aproject\x12\x1c\n" +
+	"\tcomponent\x18\x04 \x01(\tR\tcomponent\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\x05 \x01(\tR\treleaseId\x12#\n" +
+	"\rdeployment_id\x18\x06 \x01(\tR\fdeploymentId\x12\x17\n" +
+	"\ahost_id\x18\a \x01(\tR\x06hostId\x12\x16\n" +
+	"\x06stream\x18\b \x01(\tR\x06stream\x12\x12\n" +
+	"\x04from\x18\t \x01(\tR\x04from\x12\x0e\n" +
+	"\x02to\x18\n" +
+	" \x01(\tR\x02to\x12\f\n" +
+	"\x01q\x18\v \x01(\tR\x01q\x12\x14\n" +
+	"\x05regex\x18\f \x01(\bR\x05regex\x12B\n" +
+	"\x05attrs\x18\r \x03(\v2,.logpb.SearchContainerLogsRequest.AttrsEntryR\x05attrs\x12\x14\n" +
+	"\x05limit\x18\x0e \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06before\x18\x0f \x01(\tR\x06before\x12\x14\n" +
+	"\x05after\x18\x10 \x01(\tR\x05after\x1a8\n" +
+	"\n" +
+	"AttrsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa3\x01\n" +
+	"\x1bSearchContainerLogsResponse\x12*\n" +
+	"\x04rows\x18\x01 \x03(\v2\x16.logpb.ContainerLogRowR\x04rows\x12,\n" +
+	"\x12next_before_cursor\x18\x02 \x01(\tR\x10nextBeforeCursor\x12*\n" +
+	"\x11next_after_cursor\x18\x03 \x01(\tR\x0fnextAfterCursor\"\xd0\x03\n" +
+	"\x0fContainerLogRow\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
+	"\ttimestamp\x18\x02 \x01(\tR\ttimestamp\x12\x1f\n" +
+	"\vreceived_at\x18\x03 \x01(\tR\n" +
+	"receivedAt\x12\x17\n" +
+	"\ahost_id\x18\x04 \x01(\tR\x06hostId\x12!\n" +
+	"\fcontainer_id\x18\x05 \x01(\tR\vcontainerId\x12%\n" +
+	"\x0econtainer_name\x18\x06 \x01(\tR\rcontainerName\x12\x14\n" +
+	"\x05image\x18\a \x01(\tR\x05image\x12\x18\n" +
+	"\aproject\x18\b \x01(\tR\aproject\x12\x1c\n" +
+	"\tcomponent\x18\t \x01(\tR\tcomponent\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\n" +
+	" \x01(\tR\treleaseId\x12#\n" +
+	"\rdeployment_id\x18\v \x01(\tR\fdeploymentId\x12\x16\n" +
+	"\x06stream\x18\f \x01(\tR\x06stream\x12\x12\n" +
+	"\x04line\x18\r \x01(\tR\x04line\x12\x1c\n" +
+	"\ttruncated\x18\x0e \x01(\bR\ttruncated\x12\x10\n" +
+	"\x03seq\x18\x0f \x01(\x03R\x03seq\x12\x1d\n" +
+	"\n" +
+	"attrs_json\x18\x10 \x01(\tR\tattrsJson\"\xac\x01\n" +
+	"\x15ListContainersRequest\x12\x18\n" +
+	"\aproject\x18\x01 \x01(\tR\aproject\x12\x1c\n" +
+	"\tcomponent\x18\x02 \x01(\tR\tcomponent\x12\x17\n" +
+	"\ahost_id\x18\x03 \x01(\tR\x06hostId\x12\x14\n" +
+	"\x05state\x18\x04 \x01(\tR\x05state\x12\x14\n" +
+	"\x05limit\x18\x05 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06before\x18\x06 \x01(\tR\x06before\"x\n" +
+	"\x16ListContainersResponse\x120\n" +
+	"\n" +
+	"containers\x18\x01 \x03(\v2\x10.logpb.ContainerR\n" +
+	"containers\x12,\n" +
+	"\x12next_before_cursor\x18\x02 \x01(\tR\x10nextBeforeCursor\"\xd1\x03\n" +
+	"\tContainer\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
+	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12%\n" +
+	"\x0econtainer_name\x18\x03 \x01(\tR\rcontainerName\x12\x14\n" +
+	"\x05image\x18\x04 \x01(\tR\x05image\x12!\n" +
+	"\fimage_digest\x18\x05 \x01(\tR\vimageDigest\x12\x18\n" +
+	"\aproject\x18\x06 \x01(\tR\aproject\x12\x1c\n" +
+	"\tcomponent\x18\a \x01(\tR\tcomponent\x12\x1d\n" +
+	"\n" +
+	"release_id\x18\b \x01(\tR\treleaseId\x12#\n" +
+	"\rdeployment_id\x18\t \x01(\tR\fdeploymentId\x12\x17\n" +
+	"\ahost_id\x18\n" +
+	" \x01(\tR\x06hostId\x12\x1f\n" +
+	"\vlabels_json\x18\v \x01(\tR\n" +
+	"labelsJson\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\f \x01(\tR\tstartedAt\x12\x1f\n" +
+	"\vfinished_at\x18\r \x01(\tR\n" +
+	"finishedAt\x12\x1b\n" +
+	"\texit_code\x18\x0e \x01(\x05R\bexitCode\x12\x1e\n" +
+	"\vlast_log_at\x18\x0f \x01(\tR\tlastLogAt\"=\n" +
+	"\x1dGetContainerLogContextRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\f\n" +
+	"\x01n\x18\x02 \x01(\x05R\x01n\"\x15\n" +
+	"\x13IngestStatusRequest\"\xbf\x02\n" +
+	"\x14IngestStatusResponse\x12%\n" +
+	"\x0eenqueued_total\x18\x01 \x01(\x03R\renqueuedTotal\x12#\n" +
+	"\rdropped_total\x18\x02 \x01(\x03R\fdroppedTotal\x12\x1b\n" +
+	"\tqueue_len\x18\x03 \x01(\x05R\bqueueLen\x12\x1f\n" +
+	"\vspool_bytes\x18\x04 \x01(\x03R\n" +
+	"spoolBytes\x120\n" +
+	"\x14spool_oldest_seconds\x18\x05 \x01(\x03R\x12spoolOldestSeconds\x12\x1a\n" +
+	"\bdegraded\x18\x06 \x01(\bR\bdegraded\x12\"\n" +
+	"\rlast_batch_at\x18\a \x01(\tR\vlastBatchAt\x12+\n" +
+	"\x11containers_active\x18\b \x01(\x03R\x10containersActive2\xf8\a\n" +
 	"\n" +
 	"LogService\x12(\n" +
 	"\tSendEntry\x12\x0f.logpb.LogEntry\x1a\n" +
@@ -1610,7 +2910,13 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"ToggleStar\x12\x18.logpb.ToggleStarRequest\x1a\n" +
 	".logpb.Ack\x12V\n" +
 	"\x13GetEnrichmentStatus\x12\x1e.logpb.EnrichmentStatusRequest\x1a\x1f.logpb.EnrichmentStatusResponse\x12G\n" +
-	"\fGetLogRawJWT\x12\x1a.logpb.GetLogRawJWTRequest\x1a\x1b.logpb.GetLogRawJWTResponseB\x14Z\x12dialog/proto/logpbb\x06proto3"
+	"\fGetLogRawJWT\x12\x1a.logpb.GetLogRawJWTRequest\x1a\x1b.logpb.GetLogRawJWTResponse\x12=\n" +
+	"\x15SendContainerLogBatch\x12\x18.logpb.ContainerLogBatch\x1a\n" +
+	".logpb.Ack\x12\\\n" +
+	"\x13SearchContainerLogs\x12!.logpb.SearchContainerLogsRequest\x1a\".logpb.SearchContainerLogsResponse\x12M\n" +
+	"\x0eListContainers\x12\x1c.logpb.ListContainersRequest\x1a\x1d.logpb.ListContainersResponse\x12b\n" +
+	"\x16GetContainerLogContext\x12$.logpb.GetContainerLogContextRequest\x1a\".logpb.SearchContainerLogsResponse\x12J\n" +
+	"\x0fGetIngestStatus\x12\x1a.logpb.IngestStatusRequest\x1a\x1b.logpb.IngestStatusResponseB\x14Z\x12dialog/proto/logpbb\x06proto3"
 
 var (
 	file_proto_logpb_log_proto_rawDescOnce sync.Once
@@ -1624,65 +2930,97 @@ func file_proto_logpb_log_proto_rawDescGZIP() []byte {
 	return file_proto_logpb_log_proto_rawDescData
 }
 
-var file_proto_logpb_log_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_proto_logpb_log_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_proto_logpb_log_proto_goTypes = []any{
-	(*LogEntry)(nil),                 // 0: logpb.LogEntry
-	(*UserIdentity)(nil),             // 1: logpb.UserIdentity
-	(*LogBatch)(nil),                 // 2: logpb.LogBatch
-	(*Ack)(nil),                      // 3: logpb.Ack
-	(*SearchLogsRequest)(nil),        // 4: logpb.SearchLogsRequest
-	(*SearchLogsResponse)(nil),       // 5: logpb.SearchLogsResponse
-	(*LogSummary)(nil),               // 6: logpb.LogSummary
-	(*GetLogRequest)(nil),            // 7: logpb.GetLogRequest
-	(*LogDetail)(nil),                // 8: logpb.LogDetail
-	(*GetLogStatsRequest)(nil),       // 9: logpb.GetLogStatsRequest
-	(*LogStatsResponse)(nil),         // 10: logpb.LogStatsResponse
-	(*StreamLogsRequest)(nil),        // 11: logpb.StreamLogsRequest
-	(*UpsertNoteRequest)(nil),        // 12: logpb.UpsertNoteRequest
-	(*ToggleStarRequest)(nil),        // 13: logpb.ToggleStarRequest
-	(*EnrichmentStatusRequest)(nil),  // 14: logpb.EnrichmentStatusRequest
-	(*GetLogRawJWTRequest)(nil),      // 15: logpb.GetLogRawJWTRequest
-	(*GetLogRawJWTResponse)(nil),     // 16: logpb.GetLogRawJWTResponse
-	(*EnrichmentStatusResponse)(nil), // 17: logpb.EnrichmentStatusResponse
-	nil,                              // 18: logpb.LogEntry.RequestHeadersEntry
-	nil,                              // 19: logpb.LogEntry.ResponseHeadersEntry
-	nil,                              // 20: logpb.UserIdentity.ClaimsEntry
-	nil,                              // 21: logpb.LogStatsResponse.StatusDistributionEntry
+	(*LogEntry)(nil),                      // 0: logpb.LogEntry
+	(*UserIdentity)(nil),                  // 1: logpb.UserIdentity
+	(*LogBatch)(nil),                      // 2: logpb.LogBatch
+	(*Ack)(nil),                           // 3: logpb.Ack
+	(*SearchLogsRequest)(nil),             // 4: logpb.SearchLogsRequest
+	(*SearchLogsResponse)(nil),            // 5: logpb.SearchLogsResponse
+	(*LogSummary)(nil),                    // 6: logpb.LogSummary
+	(*GetLogRequest)(nil),                 // 7: logpb.GetLogRequest
+	(*LogDetail)(nil),                     // 8: logpb.LogDetail
+	(*GetLogStatsRequest)(nil),            // 9: logpb.GetLogStatsRequest
+	(*LogStatsResponse)(nil),              // 10: logpb.LogStatsResponse
+	(*StreamLogsRequest)(nil),             // 11: logpb.StreamLogsRequest
+	(*UpsertNoteRequest)(nil),             // 12: logpb.UpsertNoteRequest
+	(*ToggleStarRequest)(nil),             // 13: logpb.ToggleStarRequest
+	(*EnrichmentStatusRequest)(nil),       // 14: logpb.EnrichmentStatusRequest
+	(*GetLogRawJWTRequest)(nil),           // 15: logpb.GetLogRawJWTRequest
+	(*GetLogRawJWTResponse)(nil),          // 16: logpb.GetLogRawJWTResponse
+	(*EnrichmentStatusResponse)(nil),      // 17: logpb.EnrichmentStatusResponse
+	(*ContainerLogEntry)(nil),             // 18: logpb.ContainerLogEntry
+	(*ContainerMeta)(nil),                 // 19: logpb.ContainerMeta
+	(*ContainerLogBatch)(nil),             // 20: logpb.ContainerLogBatch
+	(*SearchContainerLogsRequest)(nil),    // 21: logpb.SearchContainerLogsRequest
+	(*SearchContainerLogsResponse)(nil),   // 22: logpb.SearchContainerLogsResponse
+	(*ContainerLogRow)(nil),               // 23: logpb.ContainerLogRow
+	(*ListContainersRequest)(nil),         // 24: logpb.ListContainersRequest
+	(*ListContainersResponse)(nil),        // 25: logpb.ListContainersResponse
+	(*Container)(nil),                     // 26: logpb.Container
+	(*GetContainerLogContextRequest)(nil), // 27: logpb.GetContainerLogContextRequest
+	(*IngestStatusRequest)(nil),           // 28: logpb.IngestStatusRequest
+	(*IngestStatusResponse)(nil),          // 29: logpb.IngestStatusResponse
+	nil,                                   // 30: logpb.LogEntry.RequestHeadersEntry
+	nil,                                   // 31: logpb.LogEntry.ResponseHeadersEntry
+	nil,                                   // 32: logpb.UserIdentity.ClaimsEntry
+	nil,                                   // 33: logpb.LogStatsResponse.StatusDistributionEntry
+	nil,                                   // 34: logpb.ContainerLogEntry.AttrsEntry
+	nil,                                   // 35: logpb.ContainerMeta.LabelsEntry
+	nil,                                   // 36: logpb.SearchContainerLogsRequest.AttrsEntry
 }
 var file_proto_logpb_log_proto_depIdxs = []int32{
-	18, // 0: logpb.LogEntry.request_headers:type_name -> logpb.LogEntry.RequestHeadersEntry
-	19, // 1: logpb.LogEntry.response_headers:type_name -> logpb.LogEntry.ResponseHeadersEntry
+	30, // 0: logpb.LogEntry.request_headers:type_name -> logpb.LogEntry.RequestHeadersEntry
+	31, // 1: logpb.LogEntry.response_headers:type_name -> logpb.LogEntry.ResponseHeadersEntry
 	1,  // 2: logpb.LogEntry.user_identity:type_name -> logpb.UserIdentity
-	20, // 3: logpb.UserIdentity.claims:type_name -> logpb.UserIdentity.ClaimsEntry
+	32, // 3: logpb.UserIdentity.claims:type_name -> logpb.UserIdentity.ClaimsEntry
 	0,  // 4: logpb.LogBatch.entries:type_name -> logpb.LogEntry
 	6,  // 5: logpb.SearchLogsResponse.logs:type_name -> logpb.LogSummary
 	0,  // 6: logpb.LogDetail.entry:type_name -> logpb.LogEntry
-	21, // 7: logpb.LogStatsResponse.status_distribution:type_name -> logpb.LogStatsResponse.StatusDistributionEntry
-	0,  // 8: logpb.LogService.SendEntry:input_type -> logpb.LogEntry
-	2,  // 9: logpb.LogService.SendBatch:input_type -> logpb.LogBatch
-	4,  // 10: logpb.LogService.SearchLogs:input_type -> logpb.SearchLogsRequest
-	7,  // 11: logpb.LogService.GetLog:input_type -> logpb.GetLogRequest
-	9,  // 12: logpb.LogService.GetLogStats:input_type -> logpb.GetLogStatsRequest
-	11, // 13: logpb.LogService.StreamLogs:input_type -> logpb.StreamLogsRequest
-	12, // 14: logpb.LogService.UpsertNote:input_type -> logpb.UpsertNoteRequest
-	13, // 15: logpb.LogService.ToggleStar:input_type -> logpb.ToggleStarRequest
-	14, // 16: logpb.LogService.GetEnrichmentStatus:input_type -> logpb.EnrichmentStatusRequest
-	15, // 17: logpb.LogService.GetLogRawJWT:input_type -> logpb.GetLogRawJWTRequest
-	3,  // 18: logpb.LogService.SendEntry:output_type -> logpb.Ack
-	3,  // 19: logpb.LogService.SendBatch:output_type -> logpb.Ack
-	5,  // 20: logpb.LogService.SearchLogs:output_type -> logpb.SearchLogsResponse
-	8,  // 21: logpb.LogService.GetLog:output_type -> logpb.LogDetail
-	10, // 22: logpb.LogService.GetLogStats:output_type -> logpb.LogStatsResponse
-	0,  // 23: logpb.LogService.StreamLogs:output_type -> logpb.LogEntry
-	3,  // 24: logpb.LogService.UpsertNote:output_type -> logpb.Ack
-	3,  // 25: logpb.LogService.ToggleStar:output_type -> logpb.Ack
-	17, // 26: logpb.LogService.GetEnrichmentStatus:output_type -> logpb.EnrichmentStatusResponse
-	16, // 27: logpb.LogService.GetLogRawJWT:output_type -> logpb.GetLogRawJWTResponse
-	18, // [18:28] is the sub-list for method output_type
-	8,  // [8:18] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	33, // 7: logpb.LogStatsResponse.status_distribution:type_name -> logpb.LogStatsResponse.StatusDistributionEntry
+	34, // 8: logpb.ContainerLogEntry.attrs:type_name -> logpb.ContainerLogEntry.AttrsEntry
+	35, // 9: logpb.ContainerMeta.labels:type_name -> logpb.ContainerMeta.LabelsEntry
+	19, // 10: logpb.ContainerLogBatch.meta:type_name -> logpb.ContainerMeta
+	18, // 11: logpb.ContainerLogBatch.entries:type_name -> logpb.ContainerLogEntry
+	36, // 12: logpb.SearchContainerLogsRequest.attrs:type_name -> logpb.SearchContainerLogsRequest.AttrsEntry
+	23, // 13: logpb.SearchContainerLogsResponse.rows:type_name -> logpb.ContainerLogRow
+	26, // 14: logpb.ListContainersResponse.containers:type_name -> logpb.Container
+	0,  // 15: logpb.LogService.SendEntry:input_type -> logpb.LogEntry
+	2,  // 16: logpb.LogService.SendBatch:input_type -> logpb.LogBatch
+	4,  // 17: logpb.LogService.SearchLogs:input_type -> logpb.SearchLogsRequest
+	7,  // 18: logpb.LogService.GetLog:input_type -> logpb.GetLogRequest
+	9,  // 19: logpb.LogService.GetLogStats:input_type -> logpb.GetLogStatsRequest
+	11, // 20: logpb.LogService.StreamLogs:input_type -> logpb.StreamLogsRequest
+	12, // 21: logpb.LogService.UpsertNote:input_type -> logpb.UpsertNoteRequest
+	13, // 22: logpb.LogService.ToggleStar:input_type -> logpb.ToggleStarRequest
+	14, // 23: logpb.LogService.GetEnrichmentStatus:input_type -> logpb.EnrichmentStatusRequest
+	15, // 24: logpb.LogService.GetLogRawJWT:input_type -> logpb.GetLogRawJWTRequest
+	20, // 25: logpb.LogService.SendContainerLogBatch:input_type -> logpb.ContainerLogBatch
+	21, // 26: logpb.LogService.SearchContainerLogs:input_type -> logpb.SearchContainerLogsRequest
+	24, // 27: logpb.LogService.ListContainers:input_type -> logpb.ListContainersRequest
+	27, // 28: logpb.LogService.GetContainerLogContext:input_type -> logpb.GetContainerLogContextRequest
+	28, // 29: logpb.LogService.GetIngestStatus:input_type -> logpb.IngestStatusRequest
+	3,  // 30: logpb.LogService.SendEntry:output_type -> logpb.Ack
+	3,  // 31: logpb.LogService.SendBatch:output_type -> logpb.Ack
+	5,  // 32: logpb.LogService.SearchLogs:output_type -> logpb.SearchLogsResponse
+	8,  // 33: logpb.LogService.GetLog:output_type -> logpb.LogDetail
+	10, // 34: logpb.LogService.GetLogStats:output_type -> logpb.LogStatsResponse
+	0,  // 35: logpb.LogService.StreamLogs:output_type -> logpb.LogEntry
+	3,  // 36: logpb.LogService.UpsertNote:output_type -> logpb.Ack
+	3,  // 37: logpb.LogService.ToggleStar:output_type -> logpb.Ack
+	17, // 38: logpb.LogService.GetEnrichmentStatus:output_type -> logpb.EnrichmentStatusResponse
+	16, // 39: logpb.LogService.GetLogRawJWT:output_type -> logpb.GetLogRawJWTResponse
+	3,  // 40: logpb.LogService.SendContainerLogBatch:output_type -> logpb.Ack
+	22, // 41: logpb.LogService.SearchContainerLogs:output_type -> logpb.SearchContainerLogsResponse
+	25, // 42: logpb.LogService.ListContainers:output_type -> logpb.ListContainersResponse
+	22, // 43: logpb.LogService.GetContainerLogContext:output_type -> logpb.SearchContainerLogsResponse
+	29, // 44: logpb.LogService.GetIngestStatus:output_type -> logpb.IngestStatusResponse
+	30, // [30:45] is the sub-list for method output_type
+	15, // [15:30] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_proto_logpb_log_proto_init() }
@@ -1696,7 +3034,7 @@ func file_proto_logpb_log_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_logpb_log_proto_rawDesc), len(file_proto_logpb_log_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
