@@ -18,6 +18,7 @@ import (
 	"muvon/internal/agentsvc"
 	"muvon/internal/config"
 	"muvon/internal/db"
+	deployerclient "muvon/internal/deployer/grpcclient"
 	"muvon/internal/health"
 	logclient "muvon/internal/logger/grpcclient"
 	"muvon/internal/middleware"
@@ -27,17 +28,18 @@ import (
 )
 
 type Server struct {
-	db           *db.DB
-	auth         *Auth
-	configHolder *config.Holder
-	secretBox    *secret.Box
-	wafClient    *wafclient.RemoteInspector // nil = muWAF unavailable
-	logClient    *logclient.RemoteLogSink   // nil = diaLOG unavailable
-	tlsManager   *tlspkg.Manager
-	healthMgr    *health.Manager
-	agentSvc     *agentsvc.Service // nil = agent API disabled
-	frontendFS   fs.FS
-	startTime    time.Time
+	db             *db.DB
+	auth           *Auth
+	configHolder   *config.Holder
+	secretBox      *secret.Box
+	wafClient      *wafclient.RemoteInspector       // nil = muWAF unavailable
+	logClient      *logclient.RemoteLogSink         // nil = diaLOG unavailable
+	deployerClient *deployerclient.RemoteDeployer   // nil = deployer unavailable (no live tail / live container list)
+	tlsManager     *tlspkg.Manager
+	healthMgr      *health.Manager
+	agentSvc       *agentsvc.Service // nil = agent API disabled
+	frontendFS     fs.FS
+	startTime      time.Time
 }
 
 func NewServer(
@@ -46,23 +48,25 @@ func NewServer(
 	ch *config.Holder,
 	wc *wafclient.RemoteInspector,
 	lc *logclient.RemoteLogSink,
+	dc *deployerclient.RemoteDeployer,
 	tlsMgr *tlspkg.Manager,
 	hm *health.Manager,
 	agentSvc *agentsvc.Service,
 	frontendFS fs.FS,
 ) *Server {
 	return &Server{
-		db:           database,
-		auth:         NewAuth(jwtSecret),
-		configHolder: ch,
-		secretBox:    ch.Box(),
-		wafClient:    wc,
-		logClient:    lc,
-		tlsManager:   tlsMgr,
-		healthMgr:    hm,
-		agentSvc:     agentSvc,
-		frontendFS:   frontendFS,
-		startTime:    time.Now(),
+		db:             database,
+		auth:           NewAuth(jwtSecret),
+		configHolder:   ch,
+		secretBox:      ch.Box(),
+		wafClient:      wc,
+		logClient:      lc,
+		deployerClient: dc,
+		tlsManager:     tlsMgr,
+		healthMgr:      hm,
+		agentSvc:       agentSvc,
+		frontendFS:     frontendFS,
+		startTime:      time.Now(),
 	}
 }
 
@@ -182,6 +186,14 @@ func (s *Server) Handler() http.Handler {
 	// Alerting channel tests (sends a synthetic alert via the real notifier)
 	api.HandleFunc("POST /api/alerting/test/slack", s.handleTestSlackAlert)
 	api.HandleFunc("POST /api/alerting/test/smtp", s.handleTestSMTPAlert)
+
+	// Container Logs — proxied to muvon-deployer (live) and diaLOG (history)
+	api.HandleFunc("GET /api/containers", s.handleListContainers)
+	api.HandleFunc("GET /api/containers/{id}", s.handleGetContainer)
+	api.HandleFunc("GET /api/containers/{id}/logs/stream", s.handleStreamContainerLogs)
+	api.HandleFunc("GET /api/container-logs", s.handleSearchContainerLogs)
+	api.HandleFunc("GET /api/container-logs/{id}/context", s.handleContainerLogContext)
+	api.HandleFunc("GET /api/system/health/ingest", s.handleIngestHealth)
 
 	// Managed application deploys
 	api.HandleFunc("GET /api/deploy/projects", s.handleListDeployProjects)

@@ -19,6 +19,7 @@ import (
 	"muvon/internal/agentsvc"
 	"muvon/internal/config"
 	"muvon/internal/db"
+	deployerclient "muvon/internal/deployer/grpcclient"
 	"muvon/internal/health"
 	logclient "muvon/internal/logger/grpcclient"
 	"muvon/internal/proxy"
@@ -38,6 +39,7 @@ func main() {
 		jwtSecret            = flag.String("jwt-secret", envOr("MUVON_JWT_SECRET", "change-me-in-production"), "JWT signing secret")
 		wafSocket            = flag.String("waf-socket", envOr("MUVON_WAF_SOCKET", "/tmp/muwaf.sock"), "muWAF Unix socket path")
 		logSocket            = flag.String("log-socket", envOr("MUVON_LOG_SOCKET", "/tmp/dialog.sock"), "diaLOG Unix socket path")
+		deployerSocket       = flag.String("deployer-socket", envOr("MUVON_DEPLOYER_SOCKET", "/run/muvon/deployer.sock"), "muvon-deployer Unix socket path (live container introspection + log tail)")
 		logLevel             = flag.String("log-level", envOr("MUVON_LOG_LEVEL", "info"), "Log level")
 		encryptionKey        = flag.String("encryption-key", envOr("MUVON_ENCRYPTION_KEY", ""), "AES-256-GCM encryption key for secrets in DB")
 		configReloadInterval = flag.Duration("config-reload-interval", envDuration("MUVON_CONFIG_RELOAD_INTERVAL", 5*time.Second), "Background config reload interval")
@@ -163,6 +165,18 @@ func main() {
 		slog.Info("connected to diaLOG", "socket", *logSocket)
 	}
 
+	// Deployer client — live container introspection + log tail bridge.
+	// Same fail-open shape as muWAF / diaLOG: if the socket is missing
+	// the admin handlers return 503 and the UI shows a degraded banner,
+	// but the proxy keeps serving traffic.
+	var deployerClient *deployerclient.RemoteDeployer
+	if dc, err := deployerclient.Dial(*deployerSocket); err != nil {
+		slog.Warn("muvon-deployer connection failed, running without live container tail", "error", err)
+	} else {
+		deployerClient = dc
+		slog.Info("connected to muvon-deployer", "socket", *deployerSocket)
+	}
+
 	// Frontend FS
 	frontendFS, err := fs.Sub(dialog.FrontendFS, "frontend/dist")
 	if err != nil {
@@ -174,7 +188,7 @@ func main() {
 	transport := proxy.NewTransport()
 
 	// Admin server — central admin gateway
-	adminSrv := admin.NewServer(database, *jwtSecret, ch, wafInspector, logClient, tlsMgr, hm, agentSvc, frontendFS)
+	adminSrv := admin.NewServer(database, *jwtSecret, ch, wafInspector, logClient, deployerClient, tlsMgr, hm, agentSvc, frontendFS)
 	if err := adminSrv.EnsureDefaultAdmin(ctx); err != nil {
 		slog.Warn("admin check failed", "error", err)
 	}
@@ -252,6 +266,9 @@ func main() {
 		}
 		if logClient != nil {
 			logClient.Close()
+		}
+		if deployerClient != nil {
+			deployerClient.Close()
 		}
 		database.Close()
 		os.Exit(0)
