@@ -314,6 +314,21 @@ export interface DeployProject {
   updated_at: string;
 }
 
+export interface Mount {
+  type: "bind" | "volume" | "tmpfs";
+  source?: string;
+  target: string;
+  read_only?: boolean;
+  bind_options?: {
+    propagation?: string;
+    create_mountpoint?: boolean;
+  };
+  volume_options?: {
+    no_copy?: boolean;
+    labels?: Record<string, string>;
+  };
+}
+
 export interface DeployComponent {
   id: number;
   project_id: number;
@@ -332,6 +347,7 @@ export interface DeployComponent {
   networks: string[];
   env_file_path: string;
   env: Record<string, string>;
+  mounts: Mount[];
   is_routable: boolean;
   created_at: string;
   updated_at: string;

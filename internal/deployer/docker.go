@@ -63,10 +63,34 @@ type containerCreateRequest struct {
 type hostConfig struct {
 	NetworkMode   string        `json:"NetworkMode,omitempty"`
 	RestartPolicy restartPolicy `json:"RestartPolicy,omitempty"`
+	Mounts        []dockerMount `json:"Mounts,omitempty"`
 }
 
 type restartPolicy struct {
 	Name string `json:"Name,omitempty"`
+}
+
+// dockerMount maps to the Docker Engine "Mount" object embedded in
+// HostConfig.Mounts. Only the fields MUVON populates are declared;
+// omitempty keeps unused options out of the wire payload so Docker
+// applies its own defaults.
+type dockerMount struct {
+	Type          string                     `json:"Type"`
+	Source        string                     `json:"Source,omitempty"`
+	Target        string                     `json:"Target"`
+	ReadOnly      bool                       `json:"ReadOnly,omitempty"`
+	BindOptions   *dockerMountBindOptions    `json:"BindOptions,omitempty"`
+	VolumeOptions *dockerMountVolumeOptions  `json:"VolumeOptions,omitempty"`
+}
+
+type dockerMountBindOptions struct {
+	Propagation      string `json:"Propagation,omitempty"`
+	CreateMountpoint bool   `json:"CreateMountpoint,omitempty"`
+}
+
+type dockerMountVolumeOptions struct {
+	NoCopy bool              `json:"NoCopy,omitempty"`
+	Labels map[string]string `json:"Labels,omitempty"`
 }
 
 type networkingConfig struct {

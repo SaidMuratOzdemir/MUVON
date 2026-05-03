@@ -20,6 +20,34 @@ type DeployProject struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// Mount mirrors the subset of the Docker Engine API "Mount" object that
+// MUVON cares about. Persisted in the deploy_components.mounts JSONB
+// column and applied verbatim when the deployer creates candidate (and
+// migration) containers. JSON tags use snake_case so SQL seed payloads
+// and admin tooling can author the column directly without a wrapper.
+type Mount struct {
+	Type          string              `json:"type"`                     // "bind" | "volume" | "tmpfs"
+	Source        string              `json:"source,omitempty"`         // host path for bind, volume name for volume
+	Target        string              `json:"target"`                   // path inside the container
+	ReadOnly      bool                `json:"read_only,omitempty"`      //
+	BindOptions   *MountBindOptions   `json:"bind_options,omitempty"`   // bind-only
+	VolumeOptions *MountVolumeOptions `json:"volume_options,omitempty"` // volume-only
+}
+
+type MountBindOptions struct {
+	// Propagation: "rprivate" | "private" | "rshared" | "shared" | "rslave" | "slave"
+	Propagation string `json:"propagation,omitempty"`
+	// CreateMountpoint asks Docker to create the host source path if it
+	// is missing. We default this true on bind mounts when applying so
+	// fresh hosts don't fail the first deploy.
+	CreateMountpoint bool `json:"create_mountpoint,omitempty"`
+}
+
+type MountVolumeOptions struct {
+	NoCopy bool              `json:"no_copy,omitempty"`
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
 type DeployComponent struct {
 	ID                      int               `json:"id"`
 	ProjectID               int               `json:"project_id"`
@@ -38,6 +66,7 @@ type DeployComponent struct {
 	Networks                []string          `json:"networks"`
 	EnvFilePath             string            `json:"env_file_path"`
 	Env                     map[string]string `json:"env"`
+	Mounts                  []Mount           `json:"mounts"`
 	IsRoutable              bool              `json:"is_routable"`
 	CreatedAt               time.Time         `json:"created_at"`
 	UpdatedAt               time.Time         `json:"updated_at"`
@@ -167,12 +196,12 @@ func scanDeployProject(scan func(...any) error) (DeployProject, error) {
 
 func scanDeployComponent(scan func(...any) error) (DeployComponent, error) {
 	var c DeployComponent
-	var envRaw []byte
+	var envRaw, mountsRaw []byte
 	err := scan(
 		&c.ID, &c.ProjectID, &c.ProjectSlug, &c.Slug, &c.Name, &c.SourceRepo, &c.ImageRepo,
 		&c.InternalPort, &c.HealthPath, &c.HealthExpectedStatus, &c.MigrationCommand,
 		&c.RestartRetries, &c.DrainTimeoutSeconds, &c.LongDrainTimeoutSeconds, &c.Networks,
-		&c.EnvFilePath, &envRaw, &c.IsRoutable, &c.CreatedAt, &c.UpdatedAt,
+		&c.EnvFilePath, &envRaw, &mountsRaw, &c.IsRoutable, &c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return c, err
@@ -182,6 +211,12 @@ func scanDeployComponent(scan func(...any) error) (DeployComponent, error) {
 	}
 	if c.Env == nil {
 		c.Env = map[string]string{}
+	}
+	if len(mountsRaw) > 0 {
+		_ = json.Unmarshal(mountsRaw, &c.Mounts)
+	}
+	if c.Mounts == nil {
+		c.Mounts = []Mount{}
 	}
 	return c, nil
 }
@@ -251,7 +286,7 @@ func (d *DB) ListDeployComponents(ctx context.Context, projectID int) ([]DeployC
 		`SELECT c.id, c.project_id, p.slug, c.slug, c.name, c.source_repo, c.image_repo,
 		        c.internal_port, c.health_path, c.health_expected_status, c.migration_command,
 		        c.restart_retries, c.drain_timeout_seconds, c.long_drain_timeout_seconds, c.networks,
-		        c.env_file_path, c.env, c.is_routable, c.created_at, c.updated_at
+		        c.env_file_path, c.env, c.mounts, c.is_routable, c.created_at, c.updated_at
 		 FROM deploy_components c
 		 JOIN deploy_projects p ON p.id = c.project_id
 		 WHERE c.project_id = $1
@@ -448,7 +483,7 @@ func (d *DB) LoadDeploymentPlan(ctx context.Context, deploymentID string) (Deplo
 		`SELECT c.id, c.project_id, p.slug, c.slug, c.name, c.source_repo, c.image_repo,
 		        c.internal_port, c.health_path, c.health_expected_status, c.migration_command,
 		        c.restart_retries, c.drain_timeout_seconds, c.long_drain_timeout_seconds, c.networks,
-		        c.env_file_path, c.env, c.is_routable, c.created_at, c.updated_at,
+		        c.env_file_path, c.env, c.mounts, c.is_routable, c.created_at, c.updated_at,
 		        rc.release_uuid::text, rc.component_id, c.slug, rc.image_ref, rc.image_digest, rc.status, rc.created_at, rc.updated_at
 		 FROM deploy_release_components rc
 		 JOIN deploy_components c ON c.id = rc.component_id
@@ -462,13 +497,13 @@ func (d *DB) LoadDeploymentPlan(ctx context.Context, deploymentID string) (Deplo
 
 	for rows.Next() {
 		var item DeploymentPlanComponent
-		var envRaw []byte
+		var envRaw, mountsRaw []byte
 		if err := rows.Scan(
 			&item.Component.ID, &item.Component.ProjectID, &item.Component.ProjectSlug, &item.Component.Slug,
 			&item.Component.Name, &item.Component.SourceRepo, &item.Component.ImageRepo, &item.Component.InternalPort,
 			&item.Component.HealthPath, &item.Component.HealthExpectedStatus, &item.Component.MigrationCommand,
 			&item.Component.RestartRetries, &item.Component.DrainTimeoutSeconds, &item.Component.LongDrainTimeoutSeconds,
-			&item.Component.Networks, &item.Component.EnvFilePath, &envRaw, &item.Component.IsRoutable,
+			&item.Component.Networks, &item.Component.EnvFilePath, &envRaw, &mountsRaw, &item.Component.IsRoutable,
 			&item.Component.CreatedAt, &item.Component.UpdatedAt,
 			&item.Release.ReleaseUUID, &item.Release.ComponentID, &item.Release.Slug, &item.Release.ImageRef,
 			&item.Release.ImageDigest, &item.Release.Status, &item.Release.CreatedAt, &item.Release.UpdatedAt,
@@ -480,6 +515,12 @@ func (d *DB) LoadDeploymentPlan(ctx context.Context, deploymentID string) (Deplo
 		}
 		if item.Component.Env == nil {
 			item.Component.Env = map[string]string{}
+		}
+		if len(mountsRaw) > 0 {
+			_ = json.Unmarshal(mountsRaw, &item.Component.Mounts)
+		}
+		if item.Component.Mounts == nil {
+			item.Component.Mounts = []Mount{}
 		}
 		plan.Components = append(plan.Components, item)
 	}

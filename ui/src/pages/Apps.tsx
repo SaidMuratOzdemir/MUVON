@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Rocket, RefreshCw, GitBranch, Clock, RotateCcw,
-  GitCommit, Tag, Eye, EyeOff, Copy, Settings, Server, Play,
+  GitCommit, Tag, Eye, EyeOff, Copy, Settings, Server, Play, HardDrive,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import * as api from '@/api'
@@ -312,6 +312,21 @@ function ProjectSettingsDialog({
                         {' · '}Health <span className="font-mono">{c.health_path}</span>
                         {' · '}Retries {c.restart_retries}
                       </p>
+                      {c.mounts && c.mounts.length > 0 && (
+                        <div className="pl-5 space-y-0.5">
+                          {c.mounts.map((m, idx) => (
+                            <p key={idx} className="text-xs text-muted-foreground flex items-center gap-1.5">
+                              <HardDrive className="h-3 w-3 shrink-0" />
+                              <span className="font-mono break-all">
+                                {m.type === 'tmpfs'
+                                  ? `tmpfs → ${m.target}`
+                                  : `${m.source ?? '(anon)'} → ${m.target}`}
+                              </span>
+                              <span className="text-[10px] uppercase opacity-70">{m.type}{m.read_only ? '·ro' : ''}</span>
+                            </p>
+                          ))}
+                        </div>
+                      )}
                       {inst && (
                         <p className="text-xs pl-5">
                           <span className="text-muted-foreground">Release </span>

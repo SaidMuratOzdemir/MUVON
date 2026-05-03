@@ -120,6 +120,10 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 			}
 		}
 
+		mounts, err := buildDockerMounts(component.Mounts)
+		if err != nil {
+			return fmt.Errorf("invalid mounts for %s: %w", component.Slug, err)
+		}
 		containerName := containerName(plan.Project.Slug, component.Slug, plan.Release.ReleaseID)
 		createReq := containerCreateRequest{
 			Image: imageRef,
@@ -135,6 +139,7 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 				RestartPolicy: restartPolicy{
 					Name: "unless-stopped",
 				},
+				Mounts: mounts,
 			},
 			NetworkingConfig: networkConfig(component.Networks, component.Slug),
 		}
@@ -176,6 +181,10 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 
 func (s *Service) runMigration(ctx context.Context, deploymentID string, plan db.DeploymentPlan, component db.DeployComponent, imageRef string, env map[string]string) error {
 	_ = s.db.AddDeploymentEvent(ctx, deploymentID, "migration", "Running migration", map[string]any{"component": component.Slug, "command": component.MigrationCommand})
+	mounts, err := buildDockerMounts(component.Mounts)
+	if err != nil {
+		return fmt.Errorf("invalid mounts for %s migration: %w", component.Slug, err)
+	}
 	name := containerName(plan.Project.Slug, component.Slug+"-migration", plan.Release.ReleaseID)
 	req := containerCreateRequest{
 		Image: imageRef,
@@ -188,7 +197,7 @@ func (s *Service) runMigration(ctx context.Context, deploymentID string, plan db
 			"muvon.managed":    "true",
 			"muvon.job":        "migration",
 		},
-		HostConfig:       hostConfig{NetworkMode: firstNetwork(component.Networks)},
+		HostConfig:       hostConfig{NetworkMode: firstNetwork(component.Networks), Mounts: mounts},
 		NetworkingConfig: networkConfig(component.Networks, component.Slug+"-migration"),
 	}
 	containerID, err := s.docker.ContainerCreate(ctx, name, req)
@@ -453,4 +462,63 @@ func normalizePath(path string) string {
 		return path
 	}
 	return "/" + path
+}
+
+// buildDockerMounts converts the persisted db.Mount specs into the
+// Docker Engine API representation used in HostConfig.Mounts. It
+// validates each entry up front so a bad mount fails the deployment
+// before any container is created. Returns an empty (nil) slice when
+// the component has no mounts so we don't ship an empty Mounts array
+// to Docker.
+func buildDockerMounts(mounts []db.Mount) ([]dockerMount, error) {
+	if len(mounts) == 0 {
+		return nil, nil
+	}
+	out := make([]dockerMount, 0, len(mounts))
+	for i, m := range mounts {
+		mountType := strings.ToLower(strings.TrimSpace(m.Type))
+		target := strings.TrimSpace(m.Target)
+		source := strings.TrimSpace(m.Source)
+		if target == "" {
+			return nil, fmt.Errorf("mount[%d]: target is required", i)
+		}
+		if !strings.HasPrefix(target, "/") {
+			return nil, fmt.Errorf("mount[%d]: target %q must be absolute", i, target)
+		}
+		dm := dockerMount{Type: mountType, Source: source, Target: target, ReadOnly: m.ReadOnly}
+		switch mountType {
+		case "bind":
+			if source == "" {
+				return nil, fmt.Errorf("mount[%d]: bind source is required", i)
+			}
+			if !strings.HasPrefix(source, "/") {
+				return nil, fmt.Errorf("mount[%d]: bind source %q must be absolute", i, source)
+			}
+			// Default CreateMountpoint=true so a fresh host doesn't
+			// fail the first deploy when the host directory has
+			// not been pre-created.
+			bopts := dockerMountBindOptions{CreateMountpoint: true}
+			if m.BindOptions != nil {
+				bopts.Propagation = m.BindOptions.Propagation
+				bopts.CreateMountpoint = m.BindOptions.CreateMountpoint
+			}
+			dm.BindOptions = &bopts
+		case "volume":
+			// source may be empty -> Docker creates an anonymous volume.
+			if m.VolumeOptions != nil {
+				dm.VolumeOptions = &dockerMountVolumeOptions{
+					NoCopy: m.VolumeOptions.NoCopy,
+					Labels: m.VolumeOptions.Labels,
+				}
+			}
+		case "tmpfs":
+			if source != "" {
+				return nil, fmt.Errorf("mount[%d]: tmpfs must not have a source", i)
+			}
+		default:
+			return nil, fmt.Errorf("mount[%d]: unknown type %q (want bind|volume|tmpfs)", i, m.Type)
+		}
+		out = append(out, dm)
+	}
+	return out, nil
 }

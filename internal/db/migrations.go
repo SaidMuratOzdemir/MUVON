@@ -1454,4 +1454,42 @@ ALTER TABLE hosts
 ALTER TABLE http_logs
   ADD COLUMN IF NOT EXISTS raw_jwt TEXT;`,
 	},
+	// Per-component mount specs. Persistent storage (uploads, caches,
+	// SQLite databases, etc.) must survive container replacement during
+	// deploys; without an explicit mount, Django/etc. write into the
+	// container's writable layer and the data is lost on the next
+	// release. Stored as a JSONB array of Docker Engine API "Mount"
+	// objects ({type,source,target,read_only,bind_options,volume_options})
+	// — structured rather than legacy "host:container[:ro]" binds so we
+	// can carry options (e.g. CreateMountpoint, named-volume labels)
+	// without parsing strings. Empty array == no extra mounts (current
+	// behaviour preserved).
+	{
+		name: "add_deploy_components_mounts", product: "muvon",
+		sql: `
+ALTER TABLE deploy_components
+  ADD COLUMN IF NOT EXISTS mounts JSONB NOT NULL DEFAULT '[]'::jsonb;`,
+	},
+	// One-time seed: ensure the hrsystem-backend component (if it exists
+	// in this environment) has its /app/media directory backed by a host
+	// bind mount. Idempotent — only updates rows whose mounts column is
+	// still the empty default, so re-running or hand-edited mounts are
+	// not overwritten.
+	{
+		name: "seed_hrsystem_backend_media_mount", product: "muvon",
+		sql: `
+UPDATE deploy_components
+SET mounts = '[
+  {
+    "type": "bind",
+    "source": "/var/lib/muvon/hrsystem/media",
+    "target": "/app/media",
+    "read_only": false,
+    "bind_options": {"create_mountpoint": true}
+  }
+]'::jsonb,
+    updated_at = now()
+WHERE slug = 'hrsystem-backend'
+  AND mounts = '[]'::jsonb;`,
+	},
 }
