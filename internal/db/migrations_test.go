@@ -35,6 +35,7 @@ func TestHypertableMigrationsAreIdempotent(t *testing.T) {
 		"create_http_log_bodies_hypertable",
 		"create_waf_events_hypertable",
 		"create_alerts_table",
+		"create_container_logs_hypertable",
 	} {
 		var sql string
 		for _, m := range migrations {

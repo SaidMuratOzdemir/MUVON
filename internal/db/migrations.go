@@ -1517,4 +1517,89 @@ WHERE p.id = c.project_id
   AND c.slug = 'backend'
   AND c.mounts = '[]'::jsonb;`,
 	},
+	// ── Container Logs ─────────────────────────────────────────────────────
+	// Dimension table for every container the shipper has ever attached
+	// to. Survives container deletion so the admin UI's picker can still
+	// list "muvon-cevik-backend-aef3a8a-…" weeks after Docker removed it.
+	// Tiny rows, no Timescale — retention here is much longer than the
+	// hypertable's so a deployment can be looked up after the actual logs
+	// have aged out.
+	{
+		name: "create_containers_dimension_table", product: "dialog",
+		sql: `
+CREATE TABLE IF NOT EXISTS containers (
+    id              UUID PRIMARY KEY DEFAULT gen_uuidv7(),
+    container_id    TEXT NOT NULL UNIQUE,
+    container_name  TEXT NOT NULL,
+    image           TEXT NOT NULL DEFAULT '',
+    image_digest    TEXT NOT NULL DEFAULT '',
+    project         TEXT,
+    component       TEXT,
+    release_id      TEXT,
+    deployment_id   UUID,
+    host_id         TEXT NOT NULL DEFAULT 'central',
+    labels          JSONB NOT NULL DEFAULT '{}',
+    started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at     TIMESTAMPTZ,
+    exit_code       INTEGER,
+    last_log_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_containers_project_release ON containers (project, component, release_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_containers_started_at      ON containers (started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_containers_finished_at     ON containers (finished_at DESC) WHERE finished_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_containers_host_id         ON containers (host_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_containers_release_only    ON containers (release_id, started_at DESC) WHERE release_id IS NOT NULL;`,
+	},
+	// container_logs hypertable. One row per stdout/stderr record. seq is
+	// the shipper-assigned monotonic counter — protects ordering when two
+	// lines share a microsecond. Trigram GIN on `line` + jsonb_path_ops
+	// on `attrs` cover the common search patterns (free-text and
+	// {level: ERROR}-style structured filters); BM25 deliberately avoided
+	// after the http_logs experience (pg_search BM25 does not propagate
+	// to hypertable chunks in 0.22.5).
+	{
+		name: "create_container_logs_hypertable", product: "dialog",
+		sql: `
+CREATE TABLE IF NOT EXISTS container_logs (
+    id             UUID DEFAULT gen_uuidv7() NOT NULL,
+    timestamp      TIMESTAMPTZ NOT NULL,
+    received_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    host_id        TEXT NOT NULL DEFAULT 'central',
+    container_id   TEXT NOT NULL,
+    container_name TEXT NOT NULL,
+    image          TEXT,
+    project        TEXT,
+    component      TEXT,
+    release_id     TEXT,
+    deployment_id  UUID,
+    stream         TEXT NOT NULL CHECK (stream IN ('stdout','stderr')),
+    line           TEXT NOT NULL,
+    truncated      BOOLEAN NOT NULL DEFAULT FALSE,
+    seq            BIGINT NOT NULL DEFAULT 0,
+    attrs          JSONB,
+    PRIMARY KEY (id, timestamp)
+);
+SELECT create_hypertable('container_logs', by_range('timestamp', INTERVAL '1 day'), if_not_exists => true);
+CREATE INDEX IF NOT EXISTS idx_container_logs_container_ts ON container_logs (container_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_container_logs_project_ts   ON container_logs (project, component, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_container_logs_release_ts   ON container_logs (release_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_container_logs_deploy_ts    ON container_logs (deployment_id, timestamp DESC) WHERE deployment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_container_logs_host_ts      ON container_logs (host_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_container_logs_line_trgm    ON container_logs USING gin (line gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_container_logs_attrs_gin    ON container_logs USING gin (attrs jsonb_path_ops) WHERE attrs IS NOT NULL;`,
+	},
+	// Compression after 7 days, drop after 30. segment_by container_id
+	// keeps a single-container search inside one segment; the typical
+	// "show me everything from backend-aef3a8a" path stays cheap.
+	{
+		name: "add_container_logs_compression_retention", product: "dialog",
+		sql: `
+ALTER TABLE container_logs SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'container_id',
+    timescaledb.compress_orderby = 'timestamp DESC, seq DESC'
+);
+SELECT add_compression_policy('container_logs', INTERVAL '7 days', if_not_exists => true);
+SELECT add_retention_policy('container_logs', INTERVAL '30 days', if_not_exists => true);`,
+	},
 }
