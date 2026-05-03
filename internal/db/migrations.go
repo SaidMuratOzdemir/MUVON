@@ -1492,4 +1492,29 @@ SET mounts = '[
 WHERE slug = 'hrsystem-backend'
   AND mounts = '[]'::jsonb;`,
 	},
+	// The previous seed used the wrong slug; the actual component is
+	// project=cevik, slug=backend (image_repo points at the
+	// humanresourcessystem-backend GHCR image). Re-target the seed at
+	// that pair so a fresh environment also gets the media mount.
+	// Idempotent: only writes when mounts is still the empty default.
+	{
+		name: "seed_cevik_backend_media_mount", product: "muvon",
+		sql: `
+UPDATE deploy_components c
+SET mounts = '[
+  {
+    "type": "bind",
+    "source": "/var/lib/muvon/cevik/backend/media",
+    "target": "/app/media",
+    "read_only": false,
+    "bind_options": {"create_mountpoint": true}
+  }
+]'::jsonb,
+    updated_at = now()
+FROM deploy_projects p
+WHERE p.id = c.project_id
+  AND p.slug = 'cevik'
+  AND c.slug = 'backend'
+  AND c.mounts = '[]'::jsonb;`,
+	},
 }
