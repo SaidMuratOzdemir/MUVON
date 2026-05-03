@@ -17,6 +17,8 @@ import (
 	"muvon/internal/db"
 	"muvon/internal/deployer"
 	deployergrpc "muvon/internal/deployer/grpcserver"
+	"muvon/internal/deployer/logship"
+	logclient "muvon/internal/logger/grpcclient"
 	pb "muvon/proto/deployerpb"
 )
 
@@ -36,6 +38,14 @@ func main() {
 		maxViewersPerContainer = flag.Int("max-viewers-per-container", intEnvOr("MUVON_CONTAINER_LOG_MAX_VIEWERS_PER_CONTAINER", 4), "Concurrent live-tail viewers allowed per container")
 		maxViewersGlobal       = flag.Int("max-viewers-global", intEnvOr("MUVON_CONTAINER_LOG_MAX_VIEWERS_GLOBAL", 64), "Concurrent live-tail viewers allowed globally")
 		maxLine                = flag.Int("max-line", intEnvOr("MUVON_CONTAINER_LOG_MAX_LINE", 16384), "Max bytes per emitted log line; longer lines split with truncated=true")
+		// Logship — persists managed-container stdout/stderr to dialog-siem.
+		// Disabled when dialog-siem socket is unset/unreachable.
+		logshipEnabled       = flag.Bool("logship", boolEnvOr("MUVON_DEPLOYER_LOGSHIP_ENABLED", true), "Enable persistent container log shipping to dialog-siem")
+		logshipDialogSocket  = flag.String("logship-dialog-socket", envOr("MUVON_DEPLOYER_LOGSHIP_DIALOG_SOCKET", "/run/muvon/dialog.sock"), "Unix socket of dialog-siem for log shipping")
+		logshipSpoolDir      = flag.String("logship-spool-dir", envOr("MUVON_DEPLOYER_LOGSHIP_SPOOL_DIR", "/var/lib/muvon/logship"), "Local on-disk spool directory")
+		logshipSpoolMaxBytes = flag.Int64("logship-spool-max-bytes", int64EnvOr("MUVON_DEPLOYER_LOGSHIP_SPOOL_MAX_BYTES", 256*1024*1024), "Total spool disk budget in bytes")
+		logshipBatchSize     = flag.Int("logship-batch", intEnvOr("MUVON_DEPLOYER_LOGSHIP_BATCH", 500), "Lines per shipping batch")
+		logshipFlushMs       = flag.Int("logship-flush-ms", intEnvOr("MUVON_DEPLOYER_LOGSHIP_FLUSH_MS", 1000), "Time between forced flushes")
 	)
 	flag.Parse()
 	setupLogger(*logLevel)
@@ -86,6 +96,42 @@ func main() {
 	// freshness rather than just liveness.
 	service.SetOnTick(deployerSrv.MarkTick)
 
+	// Logship — fire-and-forget shipper that streams every managed
+	// container's stdout/stderr to dialog-siem with on-disk spool
+	// fallback. Failure to dial dialog-siem is logged but does NOT
+	// stop the deployer (fail-open).
+	var logshipMgr *logship.Manager
+	if *logshipEnabled {
+		dialog, err := logclient.Dial(*logshipDialogSocket)
+		if err != nil {
+			slog.Warn("logship: dialog-siem connection failed; container log shipping disabled until restart",
+				"socket", *logshipDialogSocket,
+				"error", err)
+		} else {
+			spool, err := logship.NewSpool(*logshipSpoolDir, *logshipSpoolMaxBytes, *logshipSpoolMaxBytes/16)
+			if err != nil {
+				slog.Warn("logship: spool init failed; container log shipping disabled",
+					"dir", *logshipSpoolDir,
+					"error", err)
+			} else {
+				logshipMgr = logship.New(dockerClient, dialog, spool, logship.Options{
+					HostID:    "central",
+					MaxLine:   *maxLine,
+					BatchSize: *logshipBatchSize,
+					Flush:     time.Duration(*logshipFlushMs) * time.Millisecond,
+				})
+				deployerSrv.SetShipperReporter(logshipMgr.ActiveCount)
+				go logshipMgr.Run(ctx)
+				slog.Info("logship: started",
+					"dialog_socket", *logshipDialogSocket,
+					"spool_dir", *logshipSpoolDir,
+					"spool_max_bytes", *logshipSpoolMaxBytes)
+			}
+		}
+	} else {
+		slog.Info("logship: disabled (MUVON_DEPLOYER_LOGSHIP_ENABLED=false)")
+	}
+
 	go func() {
 		<-ctx.Done()
 		slog.Info("muvon-deployer shutting down")
@@ -134,6 +180,31 @@ func intEnvOr(key string, def int) int {
 	}
 	if n, err := strconv.Atoi(v); err == nil {
 		return n
+	}
+	return def
+}
+
+func int64EnvOr(key string, def int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+		return n
+	}
+	return def
+}
+
+func boolEnvOr(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes":
+		return true
+	case "0", "false", "no":
+		return false
 	}
 	return def
 }
