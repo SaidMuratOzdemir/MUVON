@@ -160,6 +160,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/envfiles:/opt/envfiles:ro
+      # Registry credentials — without this the deployer's loadDocker
+      # ConfigAuths returns nil and ImagePull goes anonymous. Public
+      # images keep working (and locally-cached private layers ride
+      # the daemon's cache) but the first private-image pull on a
+      # fresh tag fails with "registry: unauthorized". Mounting the
+      # host's docker login lets ImagePull send X-Registry-Auth.
+      - /root/.docker/config.json:/root/.docker/config.json:ro
       # Shared tmpfs sockets — same volume muwaf and dialog-siem use.
       # Carries deployer.sock (out) and dialog.sock (in for log ship).
       - sockets:/run/muvon
