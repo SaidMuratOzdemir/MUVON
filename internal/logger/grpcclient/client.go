@@ -234,6 +234,23 @@ func (r *RemoteLogSink) GetIngestStatus(ctx context.Context) (*pb.IngestStatusRe
 	return r.client.GetIngestStatus(ctx, &pb.IngestStatusRequest{})
 }
 
+// GetContainerLastLogAt fetches the latest ingested timestamp for the
+// container, used by logship to compute `since` on reconnect. Returns
+// zero time when the SIEM has no rows yet (cold container).
+func (r *RemoteLogSink) GetContainerLastLogAt(ctx context.Context, containerID string) (time.Time, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	resp, err := r.client.GetContainerLastLogAt(ctx, &pb.GetContainerLastLogAtRequest{ContainerId: containerID})
+	if err != nil || resp == nil || resp.LastLogAt == "" {
+		return time.Time{}, err
+	}
+	t, err := time.Parse(time.RFC3339Nano, resp.LastLogAt)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return t, nil
+}
+
 // ==================== Converters ====================
 
 func entryToProto(e logger.Entry) *pb.LogEntry {

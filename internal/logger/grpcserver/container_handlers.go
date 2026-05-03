@@ -202,6 +202,26 @@ func (s *Server) GetContainerLogContext(ctx context.Context, req *pb.GetContaine
 	return resp, nil
 }
 
+// GetContainerLastLogAt returns the latest timestamp the SIEM has ingested
+// for the given container. Used by logship to compute `since` on
+// reconnect so a deployer restart does not re-ingest the same lines.
+// Empty `last_log_at` means "no rows yet" — caller should fall back to
+// the tail-based backfill.
+func (s *Server) GetContainerLastLogAt(ctx context.Context, req *pb.GetContainerLastLogAtRequest) (*pb.GetContainerLastLogAtResponse, error) {
+	if req.ContainerId == "" {
+		return nil, status.Error(codes.InvalidArgument, "container_id is required")
+	}
+	t, err := s.database.LastLogTimeForContainer(ctx, req.ContainerId)
+	if err != nil {
+		return nil, fmt.Errorf("last log at: %w", err)
+	}
+	resp := &pb.GetContainerLastLogAtResponse{}
+	if !t.IsZero() {
+		resp.LastLogAt = t.UTC().Format(time.RFC3339Nano)
+	}
+	return resp, nil
+}
+
 // GetIngestStatus reports container-log shipper health. Read by the admin
 // /api/system/health/ingest handler so the UI can show a banner.
 func (s *Server) GetIngestStatus(_ context.Context, _ *pb.IngestStatusRequest) (*pb.IngestStatusResponse, error) {

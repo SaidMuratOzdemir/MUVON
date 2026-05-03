@@ -34,6 +34,7 @@ const (
 	LogService_ListContainers_FullMethodName         = "/logpb.LogService/ListContainers"
 	LogService_GetContainerLogContext_FullMethodName = "/logpb.LogService/GetContainerLogContext"
 	LogService_GetIngestStatus_FullMethodName        = "/logpb.LogService/GetIngestStatus"
+	LogService_GetContainerLastLogAt_FullMethodName  = "/logpb.LogService/GetContainerLastLogAt"
 )
 
 // LogServiceClient is the client API for LogService service.
@@ -89,6 +90,12 @@ type LogServiceClient interface {
 	// last batch received). The admin UI surfaces this as an "ingestion
 	// degraded" banner so operators can act before the spool overflows.
 	GetIngestStatus(ctx context.Context, in *IngestStatusRequest, opts ...grpc.CallOption) (*IngestStatusResponse, error)
+	// GetContainerLastLogAt returns the timestamp of the latest container_log
+	// row for the given container, used by logship to resume tailing with
+	// `since=<last_log_at>` after a deployer restart. Without this, every
+	// restart re-ingests the last `tail=10000` lines and creates duplicate
+	// hypertable rows.
+	GetContainerLastLogAt(ctx context.Context, in *GetContainerLastLogAtRequest, opts ...grpc.CallOption) (*GetContainerLastLogAtResponse, error)
 }
 
 type logServiceClient struct {
@@ -258,6 +265,16 @@ func (c *logServiceClient) GetIngestStatus(ctx context.Context, in *IngestStatus
 	return out, nil
 }
 
+func (c *logServiceClient) GetContainerLastLogAt(ctx context.Context, in *GetContainerLastLogAtRequest, opts ...grpc.CallOption) (*GetContainerLastLogAtResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetContainerLastLogAtResponse)
+	err := c.cc.Invoke(ctx, LogService_GetContainerLastLogAt_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LogServiceServer is the server API for LogService service.
 // All implementations must embed UnimplementedLogServiceServer
 // for forward compatibility.
@@ -311,6 +328,12 @@ type LogServiceServer interface {
 	// last batch received). The admin UI surfaces this as an "ingestion
 	// degraded" banner so operators can act before the spool overflows.
 	GetIngestStatus(context.Context, *IngestStatusRequest) (*IngestStatusResponse, error)
+	// GetContainerLastLogAt returns the timestamp of the latest container_log
+	// row for the given container, used by logship to resume tailing with
+	// `since=<last_log_at>` after a deployer restart. Without this, every
+	// restart re-ingests the last `tail=10000` lines and creates duplicate
+	// hypertable rows.
+	GetContainerLastLogAt(context.Context, *GetContainerLastLogAtRequest) (*GetContainerLastLogAtResponse, error)
 	mustEmbedUnimplementedLogServiceServer()
 }
 
@@ -365,6 +388,9 @@ func (UnimplementedLogServiceServer) GetContainerLogContext(context.Context, *Ge
 }
 func (UnimplementedLogServiceServer) GetIngestStatus(context.Context, *IngestStatusRequest) (*IngestStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetIngestStatus not implemented")
+}
+func (UnimplementedLogServiceServer) GetContainerLastLogAt(context.Context, *GetContainerLastLogAtRequest) (*GetContainerLastLogAtResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetContainerLastLogAt not implemented")
 }
 func (UnimplementedLogServiceServer) mustEmbedUnimplementedLogServiceServer() {}
 func (UnimplementedLogServiceServer) testEmbeddedByValue()                    {}
@@ -650,6 +676,24 @@ func _LogService_GetIngestStatus_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LogService_GetContainerLastLogAt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetContainerLastLogAtRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).GetContainerLastLogAt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_GetContainerLastLogAt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).GetContainerLastLogAt(ctx, req.(*GetContainerLastLogAtRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LogService_ServiceDesc is the grpc.ServiceDesc for LogService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -712,6 +756,10 @@ var LogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetIngestStatus",
 			Handler:    _LogService_GetIngestStatus_Handler,
+		},
+		{
+			MethodName: "GetContainerLastLogAt",
+			Handler:    _LogService_GetContainerLastLogAt_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

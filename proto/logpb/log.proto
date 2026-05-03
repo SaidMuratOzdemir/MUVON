@@ -64,6 +64,13 @@ service LogService {
   // last batch received). The admin UI surfaces this as an "ingestion
   // degraded" banner so operators can act before the spool overflows.
   rpc GetIngestStatus(IngestStatusRequest) returns (IngestStatusResponse);
+
+  // GetContainerLastLogAt returns the timestamp of the latest container_log
+  // row for the given container, used by logship to resume tailing with
+  // `since=<last_log_at>` after a deployer restart. Without this, every
+  // restart re-ingests the last `tail=10000` lines and creates duplicate
+  // hypertable rows.
+  rpc GetContainerLastLogAt(GetContainerLastLogAtRequest) returns (GetContainerLastLogAtResponse);
 }
 
 // ===== Log Ingest =====
@@ -388,6 +395,16 @@ message GetContainerLogContextRequest {
 }
 
 // ===== Container Logs: Ingest health =====
+
+message GetContainerLastLogAtRequest {
+  string container_id = 1;
+}
+
+message GetContainerLastLogAtResponse {
+  // RFC3339Nano. Empty when no rows exist for this container yet (i.e.
+  // shipper is hitting it for the first time).
+  string last_log_at = 1;
+}
 
 message IngestStatusRequest {}
 

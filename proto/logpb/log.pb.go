@@ -2469,6 +2469,96 @@ func (x *GetContainerLogContextRequest) GetN() int32 {
 	return 0
 }
 
+type GetContainerLastLogAtRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ContainerId   string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetContainerLastLogAtRequest) Reset() {
+	*x = GetContainerLastLogAtRequest{}
+	mi := &file_proto_logpb_log_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetContainerLastLogAtRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetContainerLastLogAtRequest) ProtoMessage() {}
+
+func (x *GetContainerLastLogAtRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetContainerLastLogAtRequest.ProtoReflect.Descriptor instead.
+func (*GetContainerLastLogAtRequest) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *GetContainerLastLogAtRequest) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+type GetContainerLastLogAtResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// RFC3339Nano. Empty when no rows exist for this container yet (i.e.
+	// shipper is hitting it for the first time).
+	LastLogAt     string `protobuf:"bytes,1,opt,name=last_log_at,json=lastLogAt,proto3" json:"last_log_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetContainerLastLogAtResponse) Reset() {
+	*x = GetContainerLastLogAtResponse{}
+	mi := &file_proto_logpb_log_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetContainerLastLogAtResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetContainerLastLogAtResponse) ProtoMessage() {}
+
+func (x *GetContainerLastLogAtResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetContainerLastLogAtResponse.ProtoReflect.Descriptor instead.
+func (*GetContainerLastLogAtResponse) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *GetContainerLastLogAtResponse) GetLastLogAt() string {
+	if x != nil {
+		return x.LastLogAt
+	}
+	return ""
+}
+
 type IngestStatusRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -2477,7 +2567,7 @@ type IngestStatusRequest struct {
 
 func (x *IngestStatusRequest) Reset() {
 	*x = IngestStatusRequest{}
-	mi := &file_proto_logpb_log_proto_msgTypes[28]
+	mi := &file_proto_logpb_log_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2489,7 +2579,7 @@ func (x *IngestStatusRequest) String() string {
 func (*IngestStatusRequest) ProtoMessage() {}
 
 func (x *IngestStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[28]
+	mi := &file_proto_logpb_log_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2502,7 +2592,7 @@ func (x *IngestStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngestStatusRequest.ProtoReflect.Descriptor instead.
 func (*IngestStatusRequest) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{28}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{30}
 }
 
 type IngestStatusResponse struct {
@@ -2525,7 +2615,7 @@ type IngestStatusResponse struct {
 
 func (x *IngestStatusResponse) Reset() {
 	*x = IngestStatusResponse{}
-	mi := &file_proto_logpb_log_proto_msgTypes[29]
+	mi := &file_proto_logpb_log_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2537,7 +2627,7 @@ func (x *IngestStatusResponse) String() string {
 func (*IngestStatusResponse) ProtoMessage() {}
 
 func (x *IngestStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[29]
+	mi := &file_proto_logpb_log_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2550,7 +2640,7 @@ func (x *IngestStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngestStatusResponse.ProtoReflect.Descriptor instead.
 func (*IngestStatusResponse) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{29}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *IngestStatusResponse) GetEnqueuedTotal() int64 {
@@ -2879,7 +2969,11 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\vlast_log_at\x18\x0f \x01(\tR\tlastLogAt\"=\n" +
 	"\x1dGetContainerLogContextRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\f\n" +
-	"\x01n\x18\x02 \x01(\x05R\x01n\"\x15\n" +
+	"\x01n\x18\x02 \x01(\x05R\x01n\"A\n" +
+	"\x1cGetContainerLastLogAtRequest\x12!\n" +
+	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\"?\n" +
+	"\x1dGetContainerLastLogAtResponse\x12\x1e\n" +
+	"\vlast_log_at\x18\x01 \x01(\tR\tlastLogAt\"\x15\n" +
 	"\x13IngestStatusRequest\"\xbf\x02\n" +
 	"\x14IngestStatusResponse\x12%\n" +
 	"\x0eenqueued_total\x18\x01 \x01(\x03R\renqueuedTotal\x12#\n" +
@@ -2890,7 +2984,7 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x14spool_oldest_seconds\x18\x05 \x01(\x03R\x12spoolOldestSeconds\x12\x1a\n" +
 	"\bdegraded\x18\x06 \x01(\bR\bdegraded\x12\"\n" +
 	"\rlast_batch_at\x18\a \x01(\tR\vlastBatchAt\x12+\n" +
-	"\x11containers_active\x18\b \x01(\x03R\x10containersActive2\xf8\a\n" +
+	"\x11containers_active\x18\b \x01(\x03R\x10containersActive2\xdc\b\n" +
 	"\n" +
 	"LogService\x12(\n" +
 	"\tSendEntry\x12\x0f.logpb.LogEntry\x1a\n" +
@@ -2916,7 +3010,8 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x13SearchContainerLogs\x12!.logpb.SearchContainerLogsRequest\x1a\".logpb.SearchContainerLogsResponse\x12M\n" +
 	"\x0eListContainers\x12\x1c.logpb.ListContainersRequest\x1a\x1d.logpb.ListContainersResponse\x12b\n" +
 	"\x16GetContainerLogContext\x12$.logpb.GetContainerLogContextRequest\x1a\".logpb.SearchContainerLogsResponse\x12J\n" +
-	"\x0fGetIngestStatus\x12\x1a.logpb.IngestStatusRequest\x1a\x1b.logpb.IngestStatusResponseB\x14Z\x12dialog/proto/logpbb\x06proto3"
+	"\x0fGetIngestStatus\x12\x1a.logpb.IngestStatusRequest\x1a\x1b.logpb.IngestStatusResponse\x12b\n" +
+	"\x15GetContainerLastLogAt\x12#.logpb.GetContainerLastLogAtRequest\x1a$.logpb.GetContainerLastLogAtResponseB\x14Z\x12dialog/proto/logpbb\x06proto3"
 
 var (
 	file_proto_logpb_log_proto_rawDescOnce sync.Once
@@ -2930,7 +3025,7 @@ func file_proto_logpb_log_proto_rawDescGZIP() []byte {
 	return file_proto_logpb_log_proto_rawDescData
 }
 
-var file_proto_logpb_log_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_proto_logpb_log_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_proto_logpb_log_proto_goTypes = []any{
 	(*LogEntry)(nil),                      // 0: logpb.LogEntry
 	(*UserIdentity)(nil),                  // 1: logpb.UserIdentity
@@ -2960,30 +3055,32 @@ var file_proto_logpb_log_proto_goTypes = []any{
 	(*ListContainersResponse)(nil),        // 25: logpb.ListContainersResponse
 	(*Container)(nil),                     // 26: logpb.Container
 	(*GetContainerLogContextRequest)(nil), // 27: logpb.GetContainerLogContextRequest
-	(*IngestStatusRequest)(nil),           // 28: logpb.IngestStatusRequest
-	(*IngestStatusResponse)(nil),          // 29: logpb.IngestStatusResponse
-	nil,                                   // 30: logpb.LogEntry.RequestHeadersEntry
-	nil,                                   // 31: logpb.LogEntry.ResponseHeadersEntry
-	nil,                                   // 32: logpb.UserIdentity.ClaimsEntry
-	nil,                                   // 33: logpb.LogStatsResponse.StatusDistributionEntry
-	nil,                                   // 34: logpb.ContainerLogEntry.AttrsEntry
-	nil,                                   // 35: logpb.ContainerMeta.LabelsEntry
-	nil,                                   // 36: logpb.SearchContainerLogsRequest.AttrsEntry
+	(*GetContainerLastLogAtRequest)(nil),  // 28: logpb.GetContainerLastLogAtRequest
+	(*GetContainerLastLogAtResponse)(nil), // 29: logpb.GetContainerLastLogAtResponse
+	(*IngestStatusRequest)(nil),           // 30: logpb.IngestStatusRequest
+	(*IngestStatusResponse)(nil),          // 31: logpb.IngestStatusResponse
+	nil,                                   // 32: logpb.LogEntry.RequestHeadersEntry
+	nil,                                   // 33: logpb.LogEntry.ResponseHeadersEntry
+	nil,                                   // 34: logpb.UserIdentity.ClaimsEntry
+	nil,                                   // 35: logpb.LogStatsResponse.StatusDistributionEntry
+	nil,                                   // 36: logpb.ContainerLogEntry.AttrsEntry
+	nil,                                   // 37: logpb.ContainerMeta.LabelsEntry
+	nil,                                   // 38: logpb.SearchContainerLogsRequest.AttrsEntry
 }
 var file_proto_logpb_log_proto_depIdxs = []int32{
-	30, // 0: logpb.LogEntry.request_headers:type_name -> logpb.LogEntry.RequestHeadersEntry
-	31, // 1: logpb.LogEntry.response_headers:type_name -> logpb.LogEntry.ResponseHeadersEntry
+	32, // 0: logpb.LogEntry.request_headers:type_name -> logpb.LogEntry.RequestHeadersEntry
+	33, // 1: logpb.LogEntry.response_headers:type_name -> logpb.LogEntry.ResponseHeadersEntry
 	1,  // 2: logpb.LogEntry.user_identity:type_name -> logpb.UserIdentity
-	32, // 3: logpb.UserIdentity.claims:type_name -> logpb.UserIdentity.ClaimsEntry
+	34, // 3: logpb.UserIdentity.claims:type_name -> logpb.UserIdentity.ClaimsEntry
 	0,  // 4: logpb.LogBatch.entries:type_name -> logpb.LogEntry
 	6,  // 5: logpb.SearchLogsResponse.logs:type_name -> logpb.LogSummary
 	0,  // 6: logpb.LogDetail.entry:type_name -> logpb.LogEntry
-	33, // 7: logpb.LogStatsResponse.status_distribution:type_name -> logpb.LogStatsResponse.StatusDistributionEntry
-	34, // 8: logpb.ContainerLogEntry.attrs:type_name -> logpb.ContainerLogEntry.AttrsEntry
-	35, // 9: logpb.ContainerMeta.labels:type_name -> logpb.ContainerMeta.LabelsEntry
+	35, // 7: logpb.LogStatsResponse.status_distribution:type_name -> logpb.LogStatsResponse.StatusDistributionEntry
+	36, // 8: logpb.ContainerLogEntry.attrs:type_name -> logpb.ContainerLogEntry.AttrsEntry
+	37, // 9: logpb.ContainerMeta.labels:type_name -> logpb.ContainerMeta.LabelsEntry
 	19, // 10: logpb.ContainerLogBatch.meta:type_name -> logpb.ContainerMeta
 	18, // 11: logpb.ContainerLogBatch.entries:type_name -> logpb.ContainerLogEntry
-	36, // 12: logpb.SearchContainerLogsRequest.attrs:type_name -> logpb.SearchContainerLogsRequest.AttrsEntry
+	38, // 12: logpb.SearchContainerLogsRequest.attrs:type_name -> logpb.SearchContainerLogsRequest.AttrsEntry
 	23, // 13: logpb.SearchContainerLogsResponse.rows:type_name -> logpb.ContainerLogRow
 	26, // 14: logpb.ListContainersResponse.containers:type_name -> logpb.Container
 	0,  // 15: logpb.LogService.SendEntry:input_type -> logpb.LogEntry
@@ -3000,24 +3097,26 @@ var file_proto_logpb_log_proto_depIdxs = []int32{
 	21, // 26: logpb.LogService.SearchContainerLogs:input_type -> logpb.SearchContainerLogsRequest
 	24, // 27: logpb.LogService.ListContainers:input_type -> logpb.ListContainersRequest
 	27, // 28: logpb.LogService.GetContainerLogContext:input_type -> logpb.GetContainerLogContextRequest
-	28, // 29: logpb.LogService.GetIngestStatus:input_type -> logpb.IngestStatusRequest
-	3,  // 30: logpb.LogService.SendEntry:output_type -> logpb.Ack
-	3,  // 31: logpb.LogService.SendBatch:output_type -> logpb.Ack
-	5,  // 32: logpb.LogService.SearchLogs:output_type -> logpb.SearchLogsResponse
-	8,  // 33: logpb.LogService.GetLog:output_type -> logpb.LogDetail
-	10, // 34: logpb.LogService.GetLogStats:output_type -> logpb.LogStatsResponse
-	0,  // 35: logpb.LogService.StreamLogs:output_type -> logpb.LogEntry
-	3,  // 36: logpb.LogService.UpsertNote:output_type -> logpb.Ack
-	3,  // 37: logpb.LogService.ToggleStar:output_type -> logpb.Ack
-	17, // 38: logpb.LogService.GetEnrichmentStatus:output_type -> logpb.EnrichmentStatusResponse
-	16, // 39: logpb.LogService.GetLogRawJWT:output_type -> logpb.GetLogRawJWTResponse
-	3,  // 40: logpb.LogService.SendContainerLogBatch:output_type -> logpb.Ack
-	22, // 41: logpb.LogService.SearchContainerLogs:output_type -> logpb.SearchContainerLogsResponse
-	25, // 42: logpb.LogService.ListContainers:output_type -> logpb.ListContainersResponse
-	22, // 43: logpb.LogService.GetContainerLogContext:output_type -> logpb.SearchContainerLogsResponse
-	29, // 44: logpb.LogService.GetIngestStatus:output_type -> logpb.IngestStatusResponse
-	30, // [30:45] is the sub-list for method output_type
-	15, // [15:30] is the sub-list for method input_type
+	30, // 29: logpb.LogService.GetIngestStatus:input_type -> logpb.IngestStatusRequest
+	28, // 30: logpb.LogService.GetContainerLastLogAt:input_type -> logpb.GetContainerLastLogAtRequest
+	3,  // 31: logpb.LogService.SendEntry:output_type -> logpb.Ack
+	3,  // 32: logpb.LogService.SendBatch:output_type -> logpb.Ack
+	5,  // 33: logpb.LogService.SearchLogs:output_type -> logpb.SearchLogsResponse
+	8,  // 34: logpb.LogService.GetLog:output_type -> logpb.LogDetail
+	10, // 35: logpb.LogService.GetLogStats:output_type -> logpb.LogStatsResponse
+	0,  // 36: logpb.LogService.StreamLogs:output_type -> logpb.LogEntry
+	3,  // 37: logpb.LogService.UpsertNote:output_type -> logpb.Ack
+	3,  // 38: logpb.LogService.ToggleStar:output_type -> logpb.Ack
+	17, // 39: logpb.LogService.GetEnrichmentStatus:output_type -> logpb.EnrichmentStatusResponse
+	16, // 40: logpb.LogService.GetLogRawJWT:output_type -> logpb.GetLogRawJWTResponse
+	3,  // 41: logpb.LogService.SendContainerLogBatch:output_type -> logpb.Ack
+	22, // 42: logpb.LogService.SearchContainerLogs:output_type -> logpb.SearchContainerLogsResponse
+	25, // 43: logpb.LogService.ListContainers:output_type -> logpb.ListContainersResponse
+	22, // 44: logpb.LogService.GetContainerLogContext:output_type -> logpb.SearchContainerLogsResponse
+	31, // 45: logpb.LogService.GetIngestStatus:output_type -> logpb.IngestStatusResponse
+	29, // 46: logpb.LogService.GetContainerLastLogAt:output_type -> logpb.GetContainerLastLogAtResponse
+	31, // [31:47] is the sub-list for method output_type
+	15, // [15:31] is the sub-list for method input_type
 	15, // [15:15] is the sub-list for extension type_name
 	15, // [15:15] is the sub-list for extension extendee
 	0,  // [0:15] is the sub-list for field type_name
@@ -3034,7 +3133,7 @@ func file_proto_logpb_log_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_logpb_log_proto_rawDesc), len(file_proto_logpb_log_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   37,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

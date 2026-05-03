@@ -52,6 +52,15 @@ type Manager struct {
 	tails  map[string]*tailState
 	active atomic.Int32
 
+	// lastTS tracks the most recent line timestamp seen per container.
+	// Updated on every chunk processed. tailLoop uses it to compute
+	// `since` when the upstream Docker logs stream needs to be
+	// (re)opened — without this, a deployer restart would re-ingest
+	// the last 10k lines from Docker's json-file driver and create
+	// duplicate hypertable rows.
+	lastTSMu sync.RWMutex
+	lastTS   map[string]time.Time
+
 	// Reporting helpers.
 	pipelineLagFn func(spoolBytes, oldestUnix int64) // optional dialog-siem health update
 }
@@ -115,6 +124,7 @@ func New(docker *deployer.DockerClient, sink *logclient.RemoteLogSink, spool *Sp
 		flushEvery:    opts.Flush,
 		managedOnly:   opts.ManagedOnly,
 		tails:         make(map[string]*tailState),
+		lastTS:        make(map[string]time.Time),
 		pipelineLagFn: opts.OnLagUpdate,
 	}
 }
@@ -292,16 +302,35 @@ func (m *Manager) stopTail(containerID string, finishedAt time.Time) {
 // tailLoop opens the multiplexed log stream and pumps batches.
 // Terminates on container exit (EOF), context cancel, or repeated send
 // failure (spool kicks in).
+//
+// Resume strategy:
+//   - In-memory lastTS[containerID] is checked first. Populated when an
+//     earlier tail saw lines for this container in the same process.
+//   - On cold start (empty memory), we ask dialog-siem for the latest
+//     ingested timestamp via GetContainerLastLogAt.
+//   - If neither has a value, the container is brand new to us and we
+//     fall back to a tail-based backfill (10k lines) so we get whatever
+//     Docker's json-file driver still has buffered.
+//
+// Without this, every deployer restart re-ingests the last 10k lines of
+// every running container.
 func (m *Manager) tailLoop(ctx context.Context, containerID string, meta ContainerMeta) {
-	// Backfill: on first attach use Tail="all" so we capture whatever
-	// Docker's json-file driver still has. Subsequent reconnects pass
-	// `since=lastLogAt` so we don't re-import old lines.
+	since := m.resumePoint(ctx, containerID)
 	opts := deployer.ContainerLogsOptions{
 		Stdout:     true,
 		Stderr:     true,
 		Follow:     true,
 		Timestamps: true,
-		Tail:       "10000",
+	}
+	if !since.IsZero() {
+		// Docker's `since` is inclusive; bump by 1ns so the boundary
+		// line (already ingested) is not re-shipped.
+		opts.Since = since.Add(time.Nanosecond)
+	} else {
+		// First time we see this container. Pull whatever Docker still
+		// has buffered — caps at 10k lines so a chatty container does
+		// not flood us at attach time.
+		opts.Tail = "10000"
 	}
 	body, err := m.docker.ContainerLogs(ctx, containerID, opts)
 	if err != nil {
@@ -355,6 +384,7 @@ func (m *Manager) tailLoop(ctx context.Context, containerID string, meta Contain
 				flush(true)
 				return
 			}
+			ts := chunkTimestamp(chunk)
 			batch = append(batch, SpooledEntry{
 				HostID:        meta.HostID,
 				ContainerID:   meta.ContainerID,
@@ -366,12 +396,18 @@ func (m *Manager) tailLoop(ctx context.Context, containerID string, meta Contain
 				ReleaseID:     meta.ReleaseID,
 				Labels:        meta.Labels,
 				StartedAt:     meta.StartedAt,
-				Timestamp:     chunkTimestamp(chunk),
+				Timestamp:     ts,
 				Stream:        chunk.Stream,
 				Line:          chunk.Line,
 				Truncated:     chunk.Truncated,
 				Seq:           chunk.Seq,
 			})
+			// Track the latest timestamp we've enqueued so a future
+			// reconnect knows where to resume. Updated even before the
+			// batch ships — duplicate suppression via `since` is
+			// best-effort; the worst case after a hard crash mid-batch
+			// is a few seconds of overlap, not 10k lines.
+			m.markSeen(containerID, ts)
 			if len(batch) >= m.batchSize {
 				flush(false)
 			}
@@ -441,6 +477,48 @@ func (m *Manager) replaySpool(ctx context.Context) {
 		}
 	}
 	m.notifyLag()
+}
+
+// resumePoint determines where the next ContainerLogs stream should
+// resume from. Memory wins (cheaper than an RPC); on cold-start we ask
+// dialog-siem; if both are empty, return zero (caller falls back to
+// tail-based backfill).
+func (m *Manager) resumePoint(ctx context.Context, containerID string) time.Time {
+	m.lastTSMu.RLock()
+	if t, ok := m.lastTS[containerID]; ok && !t.IsZero() {
+		m.lastTSMu.RUnlock()
+		return t
+	}
+	m.lastTSMu.RUnlock()
+
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	t, err := m.sink.GetContainerLastLogAt(probeCtx, containerID)
+	if err != nil {
+		// dialog-siem unreachable / first-time install / RPC missing:
+		// fall through to tail-based backfill.
+		return time.Time{}
+	}
+	if !t.IsZero() {
+		m.lastTSMu.Lock()
+		m.lastTS[containerID] = t
+		m.lastTSMu.Unlock()
+	}
+	return t
+}
+
+// markSeen records that we've enqueued a line for this container at ts.
+// Only advances the stored value (older timestamps are ignored, which
+// matters when an out-of-order Docker frame slips through).
+func (m *Manager) markSeen(containerID string, ts time.Time) {
+	if ts.IsZero() {
+		return
+	}
+	m.lastTSMu.Lock()
+	defer m.lastTSMu.Unlock()
+	if cur, ok := m.lastTS[containerID]; !ok || ts.After(cur) {
+		m.lastTS[containerID] = ts
+	}
 }
 
 func (m *Manager) notifyLag() {
