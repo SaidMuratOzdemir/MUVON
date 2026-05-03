@@ -16,6 +16,7 @@ import Agents from './pages/Agents'
 import RoutesPage from './pages/Routes'
 import Apps from './pages/Apps'
 import Alerts from './pages/Alerts'
+import ContainerLogs from './pages/ContainerLogs'
 import { AuthProvider } from './context/AuthContext'
 import { useAuth } from './context/useAuth'
 
@@ -69,6 +70,7 @@ export default function App() {
             <Route path="alerts" element={<Alerts />} />
             <Route path="agents" element={<Agents />} />
             <Route path="apps" element={<Apps />} />
+            <Route path="container-logs" element={<ContainerLogs />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

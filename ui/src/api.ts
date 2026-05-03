@@ -21,6 +21,12 @@ import type {
   DeployProjectSummary,
   Deployment,
   DeploymentEvent,
+  ContainerSummary,
+  ContainerLogChunk,
+  ContainerLogRow,
+  ContainerLogSearchParams,
+  ContainerLogSearchResponse,
+  IngestStatus,
 } from "./types";
 
 const API_BASE = "";
@@ -733,4 +739,97 @@ export async function createAgent(name: string): Promise<Agent> {
 
 export async function deleteAgent(id: string): Promise<void> {
   return request<void>("DELETE", `/api/agents/${id}`);
+}
+
+// ---------------------------------------------------------------------------
+// Container Logs
+// ---------------------------------------------------------------------------
+
+export interface ListContainersParams {
+  state?: 'running' | 'exited' | '';
+  project?: string;
+  component?: string;
+  host_id?: string;
+  limit?: number;
+}
+
+export async function listContainers(
+  params: ListContainersParams = {},
+): Promise<{ data: ContainerSummary[]; count: number }> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      qs.set(key, String(value));
+    }
+  }
+  const query = qs.toString();
+  return request<{ data: ContainerSummary[]; count: number }>(
+    "GET",
+    `/api/containers${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function getContainer(id: string): Promise<{ live: boolean; container: unknown }> {
+  return request<{ live: boolean; container: unknown }>("GET", `/api/containers/${encodeURIComponent(id)}`);
+}
+
+export async function searchContainerLogs(
+  params: ContainerLogSearchParams = {},
+): Promise<ContainerLogSearchResponse> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (key === "attrs" && value && typeof value === "object") {
+      for (const [k, v] of Object.entries(value as Record<string, string>)) {
+        qs.append("attr", `${k}=${v}`);
+      }
+      continue;
+    }
+    if (value !== undefined && value !== "" && value !== false) {
+      qs.set(key, String(value));
+    }
+  }
+  const query = qs.toString();
+  return request<ContainerLogSearchResponse>(
+    "GET",
+    `/api/container-logs${query ? `?${query}` : ""}`,
+  );
+}
+
+export async function getContainerLogContext(id: string, n = 50): Promise<{ data: ContainerLogRow[] }> {
+  return request<{ data: ContainerLogRow[] }>("GET", `/api/container-logs/${encodeURIComponent(id)}/context?n=${n}`);
+}
+
+export async function getIngestStatus(): Promise<IngestStatus> {
+  return request<IngestStatus>("GET", "/api/system/health/ingest");
+}
+
+// createContainerLogStream opens an EventSource against the live tail
+// SSE bridge. onChunk is invoked for every server message; onError fires
+// on stream error (browser-side). Returns a close function.
+export function createContainerLogStream(
+  containerId: string,
+  opts: { tail?: number; follow?: boolean; streams?: ('stdout' | 'stderr')[]; since?: string },
+  onChunk: (chunk: ContainerLogChunk) => void,
+  onError?: () => void,
+): () => void {
+  const qs = new URLSearchParams();
+  if (opts.tail !== undefined) qs.set("tail", String(opts.tail));
+  if (opts.follow !== undefined) qs.set("follow", String(opts.follow));
+  if (opts.streams && opts.streams.length > 0) {
+    qs.set("streams", opts.streams.join(","));
+    for (const s of opts.streams) qs.set(s, "true");
+  }
+  if (opts.since) qs.set("since", opts.since);
+  const url = `/api/containers/${encodeURIComponent(containerId)}/logs/stream${qs.toString() ? `?${qs.toString()}` : ""}`;
+  const es = new EventSource(url, { withCredentials: true });
+  es.onmessage = (e) => {
+    try {
+      const chunk = JSON.parse(e.data) as ContainerLogChunk;
+      onChunk(chunk);
+    } catch {
+      // ignore malformed events
+    }
+  };
+  if (onError) es.onerror = onError;
+  return () => es.close();
 }

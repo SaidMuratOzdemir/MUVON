@@ -406,3 +406,106 @@ export interface DeploymentEvent {
   detail: Record<string, unknown>;
   created_at: string;
 }
+
+// ── Container Logs ──────────────────────────────────────────────────────
+
+// A single container known to the platform — merged from live deployer
+// state and the dialog dimension table. Containers stay in this list
+// even after Docker has destroyed them, so a search for a long-gone
+// release still works (the user's incident scenario).
+export interface ContainerSummary {
+  container_id: string;
+  container_name: string;
+  image?: string;
+  image_digest?: string;
+  project?: string;
+  component?: string;
+  release_id?: string;
+  deployment_id?: string;
+  host_id: string;
+  state: string;          // running | exited | unknown | dead
+  status?: string;        // human-readable docker status when live
+  live: boolean;          // visible in deployer's docker daemon view
+  started_at?: string;
+  finished_at?: string;
+  exit_code?: number;
+  last_log_at?: string;
+  labels?: Record<string, string>;
+}
+
+// Live tail chunk emitted over SSE from /api/containers/{id}/logs/stream.
+export interface ContainerLogChunk {
+  timestamp?: string;
+  stream: string;        // "stdout" | "stderr"
+  line: string;
+  truncated?: boolean;
+  seq?: number;
+  synthetic?: boolean;   // muvon-injected marker (drops, EOF)
+}
+
+// One historical row from /api/container-logs.
+export interface ContainerLogRow {
+  id: string;
+  timestamp: string;
+  received_at?: string;
+  host_id: string;
+  container_id: string;
+  container_name: string;
+  image?: string;
+  project?: string;
+  component?: string;
+  release_id?: string;
+  deployment_id?: string;
+  stream: string;
+  line: string;
+  truncated?: boolean;
+  seq?: number;
+  attrs_json?: string;
+}
+
+export interface ContainerLogSearchParams {
+  container_id?: string;
+  container_name?: string;
+  project?: string;
+  component?: string;
+  release_id?: string;
+  deployment_id?: string;
+  host_id?: string;
+  stream?: 'stdout' | 'stderr' | '';
+  from?: string;
+  to?: string;
+  q?: string;
+  regex?: boolean;
+  limit?: number;
+  before?: string;
+  after?: string;
+  // attrs filters as repeated `attr=key=value` query string entries.
+  attrs?: Record<string, string>;
+}
+
+export interface ContainerLogSearchResponse {
+  data: ContainerLogRow[];
+  next_before_cursor?: string;
+  next_after_cursor?: string;
+}
+
+export interface IngestStatus {
+  dialog_available: boolean;
+  deployer_available: boolean;
+  dialog?: {
+    enqueued_total?: number;
+    dropped_total?: number;
+    queue_len?: number;
+    spool_bytes?: number;
+    spool_oldest_seconds?: number;
+    degraded?: boolean;
+    last_batch_at?: string;
+    containers_active?: number;
+  };
+  deployer?: {
+    ok?: boolean;
+    last_tick_age_seconds?: number;
+    active_tail_streams?: number;
+    shipper_active_containers?: number;
+  };
+}

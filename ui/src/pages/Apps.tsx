@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Rocket, RefreshCw, GitBranch, Clock, RotateCcw,
   GitCommit, Tag, Eye, EyeOff, Copy, Settings, Server, Play, HardDrive,
+  Terminal,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import * as api from '@/api'
@@ -600,6 +602,18 @@ export default function Apps() {
                   {selected.error && (
                     <p className="text-xs text-red-300 break-words">{selected.error}</p>
                   )}
+                  {/* Pivot to container logs filtered by this release.
+                      A failed-but-promoted deploy with no apparent error
+                      in events is exactly the case where stdout from the
+                      container is the only place to look — one click. */}
+                  <div className="pt-1">
+                    <Link
+                      to={`/container-logs?tab=history&release_id=${encodeURIComponent(selected.release_id)}`}
+                      className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                    >
+                      <Terminal className="h-3 w-3" /> Container logs
+                    </Link>
+                  </div>
                 </div>
 
                 <div className="space-y-0">
