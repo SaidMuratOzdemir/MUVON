@@ -148,9 +148,25 @@ services:
       MUVON_DOCKER_HOST: "unix:///var/run/docker.sock"
       MUVON_DEPLOYER_POLL_INTERVAL: ${MUVON_DEPLOYER_POLL_INTERVAL:-5s}
       MUVON_LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Container introspection / live tail gRPC surface — admin
+      # gateway dials this Unix socket on the shared sockets volume.
+      MUVON_DEPLOYER_SOCKET: /run/muvon/deployer.sock
+      # Container log shipping (logship) — persists managed container
+      # stdout/stderr to dialog-siem with on-disk spool fallback.
+      MUVON_DEPLOYER_LOGSHIP_ENABLED: "${MUVON_DEPLOYER_LOGSHIP_ENABLED:-true}"
+      MUVON_DEPLOYER_LOGSHIP_DIALOG_SOCKET: /run/muvon/dialog.sock
+      MUVON_DEPLOYER_LOGSHIP_SPOOL_DIR: /var/lib/muvon/logship
+      MUVON_DEPLOYER_LOGSHIP_SPOOL_MAX_BYTES: "${MUVON_DEPLOYER_LOGSHIP_SPOOL_MAX_BYTES:-268435456}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/envfiles:/opt/envfiles:ro
+      # Shared tmpfs sockets — same volume muwaf and dialog-siem use.
+      # Carries deployer.sock (out) and dialog.sock (in for log ship).
+      - sockets:/run/muvon
+      # Persistent disk spool — survives container replacement so a
+      # dialog-siem outage spanning a deployer restart does not lose
+      # the queued lines.
+      - logship_spool:/var/lib/muvon/logship
     networks:
       - default
       - muvon-edge
@@ -164,6 +180,7 @@ volumes:
   pgdata:       # PostgreSQL data — never deleted by compose down (use down -v explicitly)
   tls_cache:    # ACME TLS certificates
   geoip:        # GeoLite2-City.mmdb — seeded by install.sh if MaxMind key is provided
+  logship_spool: # On-disk fallback for container log batches when dialog-siem is down
   sockets:      # Unix sockets shared between services (tmpfs — ephemeral, world-writable)
     driver: local
     driver_opts:
