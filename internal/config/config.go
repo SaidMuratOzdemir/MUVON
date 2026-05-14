@@ -1,0 +1,392 @@
+package config
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"muvon/internal/db"
+	"muvon/internal/secret"
+)
+
+type Config struct {
+	Hosts  map[string]*HostConfig // domain -> config
+	Global GlobalConfig
+}
+
+type HostConfig struct {
+	Host   db.Host
+	Routes []RouteRule
+
+	// Decrypted per-host JWT identity config. When JWTIdentityEnabled is
+	// false the pipeline must fall back to the GlobalConfig equivalents —
+	// this struct always reflects ONLY this host's declared overrides.
+	// Secret is the plaintext; callers must not serialise it.
+	JWTIdentityEnabled bool
+	JWTIdentityMode    string
+	JWTClaims          []string
+	JWTSecret          string
+	// IdentityHeaderName is the request header the SIEM identity enricher
+	// inspects for a bearer-style token. Defaults to "Authorization" when
+	// empty. Per-host so tenants that authenticate via X-Auth-Token aren't
+	// silently skipped.
+	IdentityHeaderName string
+	// StoreRawJWT opts the pipeline into stamping the raw bearer token
+	// onto the log row. The token only flows from the pipeline to the
+	// http_logs.raw_jwt column when this is true; otherwise it is read,
+	// used for enrichment, and dropped.
+	StoreRawJWT bool
+}
+
+type RouteRule struct {
+	Route           db.Route
+	PathPrefix      string
+	ManagedBackends []db.ManagedBackend
+}
+
+type GlobalConfig struct {
+	RetentionDays      int
+	MaxBodyCaptureSize int
+	LogPipelineBuffer  int
+	LogBatchSize       int
+	LogFlushIntervalMs int
+	LogWorkerCount     int
+	EnableBodyCapture  bool
+	LetsEncryptStaging bool
+	LetsEncryptEmail   string
+
+	// JWT Identity settings
+	JWTIdentityEnabled bool
+	JWTIdentityMode    string   // "verify" or "decode"
+	JWTClaims          []string // claim keys to extract
+	JWTSecret          string   // HS256 secret (write-only in UI)
+
+	// GeoIP settings
+	GeoIPEnabled bool
+	GeoIPDBPath  string
+
+	// Alerting settings
+	AlertingEnabled         bool
+	AlertingSlackWebhook    string
+	AlertingSMTPHost        string
+	AlertingSMTPPort        int
+	AlertingSMTPUsername    string
+	AlertingSMTPPassword    string
+	AlertingSMTPFrom        string
+	AlertingSMTPTo          string
+	AlertingCooldownSeconds int
+
+	// Correlation engine — every threshold and path list is editable live
+	// so ops can tune detection to the protected app's traffic shape.
+	Correlation CorrelationConfig
+}
+
+// CorrelationConfig parametrizes every rule in the correlation engine.
+// Regexes and duration-typed windows are pre-computed once per config reload
+// so the hot path never pays their parse cost.
+type CorrelationConfig struct {
+	// Path scan: N distinct 404 paths from the same IP in a window.
+	PathScanDistinct int
+	PathScanWindow   time.Duration
+
+	// Auth brute force: N auth failures from the same IP in a window.
+	// Django / simplejwt apps return 400 on bad credentials rather than 401,
+	// so the rule also treats 400 as a failure when the request path matches
+	// one of the configured login paths.
+	AuthBruteCount  int
+	AuthBruteWindow time.Duration
+	AuthPaths       []string // exact or prefix-match login endpoints
+
+	// Error spike: N 5xx responses for the same host in a window.
+	// Previously fired on every single 5xx with no cooldown, which could
+	// flood Slack during an outage — now rate-limited via normal cooldown.
+	ErrorSpikeCount  int
+	ErrorSpikeWindow time.Duration
+
+	// Host-wide traffic anomaly: compares current RPS to a baseline and
+	// alerts when the ratio exceeds the threshold. MinBaseline filters out
+	// low-traffic hosts where 1 → 10 requests would look like a 10× spike.
+	AnomalyEnabled     bool
+	AnomalyRatio       float64
+	AnomalyBaseline    time.Duration
+	AnomalyCurrent     time.Duration
+	AnomalyMinBaseline int
+
+	// Sensitive access: app-specific high-value paths. When requests to any
+	// of the glob-matched paths exceed Threshold inside Window, alert.
+	// Empty SensitivePaths disables the rule.
+	SensitivePaths     []string // globs, matched with path.Match
+	SensitiveThreshold int
+	SensitiveWindow    time.Duration
+
+	// Data export burst: per-user export/download volume. ExportPattern is
+	// compiled once; if nil the rule is disabled.
+	ExportPattern   *regexp.Regexp
+	ExportThreshold int
+	ExportWindow    time.Duration
+}
+
+func LoadFromDB(ctx context.Context, database *db.DB, box *secret.Box) (*Config, error) {
+	hosts, routeMap, err := database.LoadActiveRoutes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("config: load routes: %w", err)
+	}
+
+	cfg := &Config{
+		Hosts: make(map[string]*HostConfig, len(hosts)),
+	}
+
+	managedBackends, err := database.ListActiveManagedBackends(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("config: load managed backends: %w", err)
+	}
+
+	for _, h := range hosts {
+		hc := &HostConfig{Host: h}
+		for _, r := range routeMap[h.ID] {
+			rule := RouteRule{
+				Route:      r,
+				PathPrefix: r.PathPrefix,
+			}
+			if r.ManagedComponentID != nil {
+				rule.ManagedBackends = managedBackends[*r.ManagedComponentID]
+			}
+			hc.Routes = append(hc.Routes, rule)
+		}
+		// Resolve per-host JWT config: decrypt the stored ciphertext once
+		// per reload so the hot path never pays AES cost. A failed decrypt
+		// disables the override rather than killing the whole reload.
+		hc.JWTIdentityEnabled = h.JWTIdentityEnabled
+		hc.JWTIdentityMode = h.JWTIdentityMode
+		if h.JWTClaims != "" {
+			hc.JWTClaims = splitClaims(h.JWTClaims)
+		}
+		if h.JWTSecret != "" {
+			hc.JWTSecret = decryptSetting(box, h.JWTSecret, "host:"+h.Domain+":jwt_secret")
+		}
+		hc.IdentityHeaderName = h.IdentityHeaderName
+		hc.StoreRawJWT = h.StoreRawJWT
+		cfg.Hosts[h.Domain] = hc
+	}
+
+	cfg.Global, err = loadGlobalConfig(ctx, database, box)
+	if err != nil {
+		return nil, err
+	}
+
+	slog.Info("config loaded", "hosts", len(cfg.Hosts))
+	return cfg, nil
+}
+
+func loadGlobalConfig(ctx context.Context, database *db.DB, box *secret.Box) (GlobalConfig, error) {
+	settings, err := database.GetAllSettings(ctx)
+	if err != nil {
+		return GlobalConfig{}, fmt.Errorf("config: load settings: %w", err)
+	}
+
+	g := GlobalConfig{
+		RetentionDays:      30,
+		MaxBodyCaptureSize: 65536,
+		LogPipelineBuffer:  10000,
+		LogBatchSize:       1000,
+		LogFlushIntervalMs: 2000,
+		LogWorkerCount:     4,
+		EnableBodyCapture:  true,
+		LetsEncryptStaging: false,
+	}
+
+	g.RetentionDays = getIntSetting(settings, "retention_days", g.RetentionDays)
+	g.MaxBodyCaptureSize = getIntSetting(settings, "max_body_capture_size", g.MaxBodyCaptureSize)
+	g.LogPipelineBuffer = getIntSetting(settings, "log_pipeline_buffer", g.LogPipelineBuffer)
+	g.LogBatchSize = getIntSetting(settings, "log_batch_size", g.LogBatchSize)
+	g.LogFlushIntervalMs = getIntSetting(settings, "log_flush_interval_ms", g.LogFlushIntervalMs)
+	g.LogWorkerCount = getIntSetting(settings, "log_worker_count", g.LogWorkerCount)
+	g.EnableBodyCapture = getBoolSetting(settings, "enable_body_capture", g.EnableBodyCapture)
+	g.LetsEncryptStaging = getBoolSetting(settings, "letsencrypt_staging", g.LetsEncryptStaging)
+	g.LetsEncryptEmail = getStrSetting(settings, "letsencrypt_email", g.LetsEncryptEmail)
+
+	// JWT Identity
+	g.JWTIdentityEnabled = getBoolSetting(settings, "jwt_identity_enabled", false)
+	g.JWTIdentityMode = getStrSetting(settings, "jwt_identity_mode", "verify")
+	claimsStr := getStrSetting(settings, "jwt_claims", "sub,email,name,role")
+	if claimsStr != "" {
+		g.JWTClaims = splitClaims(claimsStr)
+	}
+	g.JWTSecret = decryptSetting(box, getStrSetting(settings, "jwt_secret", ""), "jwt_secret")
+
+	// GeoIP
+	g.GeoIPEnabled = getBoolSetting(settings, "geoip_enabled", false)
+	g.GeoIPDBPath = getStrSetting(settings, "geoip_db_path", "")
+
+	// Alerting
+	g.AlertingEnabled = getBoolSetting(settings, "alerting_enabled", false)
+	g.AlertingSlackWebhook = getStrSetting(settings, "alerting_slack_webhook", "")
+	g.AlertingSMTPHost = getStrSetting(settings, "alerting_smtp_host", "")
+	g.AlertingSMTPPort = getIntSetting(settings, "alerting_smtp_port", 587)
+	g.AlertingSMTPUsername = getStrSetting(settings, "alerting_smtp_username", "")
+	g.AlertingSMTPPassword = decryptSetting(box, getStrSetting(settings, "alerting_smtp_password", ""), "alerting_smtp_password")
+	g.AlertingSMTPFrom = getStrSetting(settings, "alerting_smtp_from", "")
+	g.AlertingSMTPTo = getStrSetting(settings, "alerting_smtp_to", "")
+	g.AlertingCooldownSeconds = getIntSetting(settings, "alerting_cooldown_seconds", 300)
+
+	g.Correlation = loadCorrelationConfig(settings)
+
+	return g, nil
+}
+
+func loadCorrelationConfig(settings map[string]json.RawMessage) CorrelationConfig {
+	secs := func(key string, def int) time.Duration {
+		return time.Duration(getIntSetting(settings, key, def)) * time.Second
+	}
+
+	c := CorrelationConfig{
+		PathScanDistinct: getIntSetting(settings, "correlation_path_scan_distinct", 10),
+		PathScanWindow:   secs("correlation_path_scan_window_seconds", 120),
+
+		AuthBruteCount:  getIntSetting(settings, "correlation_auth_brute_count", 5),
+		AuthBruteWindow: secs("correlation_auth_brute_window_seconds", 120),
+		AuthPaths: splitCSV(getStrSetting(settings, "correlation_auth_paths",
+			"/login,/api/auth/login,/api/auth/login/,/api/authentication/login,/api/authentication/login/")),
+
+		ErrorSpikeCount:  getIntSetting(settings, "correlation_error_spike_count", 10),
+		ErrorSpikeWindow: secs("correlation_error_spike_window_seconds", 60),
+
+		AnomalyEnabled:     getBoolSetting(settings, "correlation_anomaly_enabled", true),
+		AnomalyRatio:       getFloatSetting(settings, "correlation_anomaly_ratio", 3.0),
+		AnomalyBaseline:    secs("correlation_anomaly_baseline_seconds", 600),
+		AnomalyCurrent:     secs("correlation_anomaly_current_seconds", 60),
+		AnomalyMinBaseline: getIntSetting(settings, "correlation_anomaly_min_baseline", 20),
+
+		SensitivePaths:     splitCSV(getStrSetting(settings, "correlation_sensitive_paths", "")),
+		SensitiveThreshold: getIntSetting(settings, "correlation_sensitive_threshold", 10),
+		SensitiveWindow:    secs("correlation_sensitive_window_seconds", 300),
+
+		ExportThreshold: getIntSetting(settings, "correlation_export_threshold", 5),
+		ExportWindow:    secs("correlation_export_window_seconds", 300),
+	}
+
+	// Compile export pattern once per reload. Invalid regex disables the rule
+	// rather than crashing the pipeline — the warning shows up in logs and
+	// ops can fix it in the admin panel without a restart.
+	if pat := getStrSetting(settings, "correlation_export_pattern",
+		`(?i)(download|export|report|\.pdf|\.xlsx|\.csv)`); pat != "" {
+		if re, err := regexp.Compile(pat); err != nil {
+			slog.Warn("correlation: invalid export pattern, rule disabled", "pattern", pat, "error", err)
+		} else {
+			c.ExportPattern = re
+		}
+	}
+
+	return c
+}
+
+// splitCSV trims whitespace and drops empty entries; empty strings → nil so
+// callers can treat "no paths configured" as "rule disabled" by simple len().
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func splitClaims(s string) []string {
+	var claims []string
+	for _, part := range strings.Split(s, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			claims = append(claims, trimmed)
+		}
+	}
+	return claims
+}
+
+func (g GlobalConfig) FlushInterval() time.Duration {
+	return time.Duration(g.LogFlushIntervalMs) * time.Millisecond
+}
+
+func getIntSetting(m map[string]json.RawMessage, key string, def int) int {
+	raw, ok := m[key]
+	if !ok {
+		return def
+	}
+	s := unquoteJSON(raw)
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func getBoolSetting(m map[string]json.RawMessage, key string, def bool) bool {
+	raw, ok := m[key]
+	if !ok {
+		return def
+	}
+	s := unquoteJSON(raw)
+	v, err := strconv.ParseBool(s)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func getFloatSetting(m map[string]json.RawMessage, key string, def float64) float64 {
+	raw, ok := m[key]
+	if !ok {
+		return def
+	}
+	s := unquoteJSON(raw)
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func getStrSetting(m map[string]json.RawMessage, key string, def string) string {
+	raw, ok := m[key]
+	if !ok {
+		return def
+	}
+	return unquoteJSON(raw)
+}
+
+// unquoteJSON pulls a string out of a JSONB settings cell and trims surrounding
+// whitespace. Trim happens here on purpose: the admin panel forgives a trailing
+// space in a path or hostname, but downstream consumers (geoip.Open, ACME host
+// policy, regex compilers) treat the literal value and a leaked space silently
+// disables the feature. Numeric/bool getters layered on top inherit the same
+// trim, which is also safe — strconv parsers reject whitespace anyway.
+func unquoteJSON(raw json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return strings.TrimSpace(s)
+}
+
+// decryptSetting decrypts a secret value using the provided Box.
+// If decryption fails (wrong key, corrupted data), logs a warning and returns
+// empty string so the feature is disabled rather than crashing or leaking ciphertext.
+func decryptSetting(box *secret.Box, value, key string) string {
+	if value == "" {
+		return ""
+	}
+	plain, err := box.Decrypt(value)
+	if err != nil {
+		slog.Warn("failed to decrypt setting, feature will be disabled", "key", key, "error", err)
+		return ""
+	}
+	return plain
+}

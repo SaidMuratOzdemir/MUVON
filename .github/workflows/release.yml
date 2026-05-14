@@ -1,0 +1,87 @@
+name: Build & Publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/muvon
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service: [muvon, dialog-siem, agent, muvon-deployer]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          # Üçlü-tier SemVer + commit-sha + branch tag matrisi:
+          # - v1.2.3 tag push'unda image'lar :1.2.3, :1.2, :1, :latest
+          #   olarak yayınlanır. Kullanıcı .env'de VERSION=v1.2.3
+          #   (patch-pin), VERSION=v1.2 (minor-pin) veya VERSION=latest
+          #   ile seçtiği konservatiflikte takipte kalabilir.
+          # - main push'unda yalnızca sha-XXXXXXX ve branch adı.
+          # - latest yalnızca main push'unda yenilenir (tag push'unda
+          #   semver pattern'i zaten latest'i kapsar).
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Read VERSION
+        id: version
+        run: echo "value=$(cat VERSION 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: |
+            SERVICE=${{ matrix.service }}
+            VERSION=${{ steps.version.outputs.value }}
+            COMMIT=${{ github.sha }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  # Tag push'ta GitHub Release otomatik oluştur
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

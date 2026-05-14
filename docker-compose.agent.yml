@@ -1,0 +1,65 @@
+# Agent makine: agent binary
+# Güncelleme:
+#   docker compose -f docker-compose.agent.yml pull && \
+#   docker compose -f docker-compose.agent.yml up -d
+#
+# Veya: install-agent.sh tekrar koştur (idempotent).
+
+services:
+  agent:
+    image: ghcr.io/saidmuratozdemir/muvon/agent:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      AGENT_CENTRAL_URL: ${AGENT_CENTRAL_URL:?required}
+      AGENT_API_KEY: ${AGENT_API_KEY:?required}
+      AGENT_LOG_ADDR: ${AGENT_LOG_ADDR:-}
+      AGENT_LOG_LEVEL: ${LOG_LEVEL:-info}
+
+      # ── Fail-soft startup config cache ─────────────────────────────
+      # Central kesintisinde stale-but-working config ile başlar, arka
+      # planda yeniden bağlanır. Volume aşağıda mount edilmiş.
+      AGENT_CONFIG_CACHE: /var/lib/agent/config.json
+
+      # ── Container log shipping (dockerwatch) ─────────────────────────
+      # When the docker socket is mounted below, the agent ships every
+      # container's stdout/stderr to central dialog-siem over the same
+      # AGENT_LOG_ADDR connection. host_id defaults to "agent:<hostname>"
+      # — set AGENT_HOST_ID to override (e.g. a friendly customer name).
+      AGENT_DOCKERWATCH_ENABLED: ${AGENT_DOCKERWATCH_ENABLED:-true}
+      AGENT_HOST_ID: ${AGENT_HOST_ID:-}
+      AGENT_DOCKERWATCH_MANAGED_ONLY: ${AGENT_DOCKERWATCH_MANAGED_ONLY:-false}
+
+      # ── Embedded edge deployer (opt-in) ─────────────────────────────
+      # true yaparsan agent kendi `agent_id`'sine atanmış component'leri
+      # lokal Docker socket'i üstünden ayağa kaldırır (central deployer
+      # aynı kodu paylaşır — fark, state'in HTTP üzerinden tutulması).
+      # Aktif olması için:
+      #   1. /var/run/docker.sock RW olarak mount edilmeli (aşağıda)
+      #   2. AGENT_ENCRYPTION_KEY central'ın MUVON_ENCRYPTION_KEY'i ile
+      #      AYNI olmalı — yoksa secret env'ler decrypt edilemez.
+      AGENT_DEPLOYER_ENABLED: ${AGENT_DEPLOYER_ENABLED:-false}
+      AGENT_DEPLOYER_POLL_MS: ${AGENT_DEPLOYER_POLL_MS:-5000}
+      AGENT_ENCRYPTION_KEY: ${AGENT_ENCRYPTION_KEY:-}
+
+    volumes:
+      - tls_cache:/var/lib/app/tls
+      - logship:/var/lib/agent/logship           # spool when central is unreachable
+      - config_cache:/var/lib/agent              # fail-soft startup cache
+
+      # ── Docker socket mount ──────────────────────────────────────────
+      # Mod seçimi:
+      #   :ro — yalnız dockerwatch (container log shipping). Agent
+      #          container start/stop yapamaz, sadece tail eder.
+      #   ""   — dockerwatch + embedded deployer (AGENT_DEPLOYER_ENABLED=true
+      #          için RW gerek; agent ImagePull/ContainerCreate/Start çağırır).
+      # install-agent.sh seçilen moda göre bu satırı doğru ekler.
+      #
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  tls_cache:
+  logship:
+  config_cache:

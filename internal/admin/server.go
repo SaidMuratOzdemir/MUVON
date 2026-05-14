@@ -1,0 +1,482 @@
+package admin
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"net/http"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+
+	"muvon/internal/agentsvc"
+	"muvon/internal/config"
+	"muvon/internal/db"
+	deployerclient "muvon/internal/deployer/grpcclient"
+	"muvon/internal/health"
+	logclient "muvon/internal/logger/grpcclient"
+	"muvon/internal/middleware"
+	"muvon/internal/secret"
+	tlspkg "muvon/internal/tls"
+)
+
+type Server struct {
+	db             *db.DB
+	auth           *Auth
+	configHolder   *config.Holder
+	secretBox      *secret.Box
+	logClient      *logclient.RemoteLogSink       // nil = diaLOG unavailable
+	deployerClient *deployerclient.RemoteDeployer // nil = deployer unavailable (no live tail / live container list)
+	tlsManager     *tlspkg.Manager
+	healthMgr      *health.Manager
+	agentSvc       *agentsvc.Service // nil = agent API disabled
+	frontendFS     fs.FS
+	startTime      time.Time
+	// upgradeBroker fans the deployer's SystemUpgrade gRPC stream out to
+	// SSE listeners (one process-wide broker — only one upgrade can run
+	// at a time).
+	upgradeBroker *upgradeBroker
+}
+
+func NewServer(
+	database *db.DB,
+	jwtSecret string,
+	ch *config.Holder,
+	lc *logclient.RemoteLogSink,
+	dc *deployerclient.RemoteDeployer,
+	tlsMgr *tlspkg.Manager,
+	hm *health.Manager,
+	agentSvc *agentsvc.Service,
+	frontendFS fs.FS,
+) *Server {
+	return &Server{
+		db:             database,
+		auth:           NewAuth(jwtSecret),
+		configHolder:   ch,
+		secretBox:      ch.Box(),
+		logClient:      lc,
+		deployerClient: dc,
+		upgradeBroker:  newUpgradeBroker(),
+		tlsManager:     tlsMgr,
+		healthMgr:      hm,
+		agentSvc:       agentSvc,
+		frontendFS:     frontendFS,
+		startTime:      time.Now(),
+	}
+}
+
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+	rl := middleware.NewRateLimiter(100, time.Minute)
+
+	// Auth endpoints (rate limited, no JWT).
+	// CSRF is enforced by a single middleware instance shared with the
+	// protected api mux; login/setup/refresh are in the bypass list because
+	// they establish or renew the cookie (and therefore cannot have a valid
+	// CSRF pair yet). Logout is not bypassed — it is state-changing and
+	// callable while a session is active.
+	csrfMW := csrfMiddleware(map[string]bool{
+		"/api/auth/login":   true,
+		"/api/auth/setup":   true,
+		"/api/auth/refresh": true,
+	})
+
+	authMux := http.NewServeMux()
+	authMux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	authMux.HandleFunc("POST /api/auth/setup", s.handleSetup)
+	authMux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
+	authMux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	// GET /api/auth/me lives here because the /api/auth/ prefix match takes
+	// precedence over /api/ in Go 1.22 mux — registering `me` on the `api`
+	// sub-mux would make it unreachable (shadowed by authMux, 404). Wrap it
+	// in the auth middleware so the access cookie is validated.
+	authMux.Handle("GET /api/auth/me", s.authMiddleware(http.HandlerFunc(s.handleMe)))
+	mux.Handle("/api/auth/", rl.Middleware(csrfMW(authMux)))
+
+	// Deploy webhook — HMAC-authenticated by project secret, no admin JWT.
+	mux.HandleFunc("POST /api/deploy/webhook", s.handleDeployWebhook)
+
+	// Protected API endpoints
+	api := http.NewServeMux()
+	// NOTE: GET /api/auth/me is registered on authMux above — Go's mux picks
+	// the more specific /api/auth/ prefix, so registering it here would be
+	// unreachable.
+
+	// Hosts
+	api.HandleFunc("GET /api/hosts", s.handleListHosts)
+	api.HandleFunc("POST /api/hosts", s.handleCreateHost)
+	api.HandleFunc("GET /api/hosts/{id}", s.handleGetHost)
+	api.HandleFunc("PUT /api/hosts/{id}", s.handleUpdateHost)
+	api.HandleFunc("DELETE /api/hosts/{id}", s.handleDeleteHost)
+	api.HandleFunc("GET /api/hosts/{id}/dns-status", s.handleHostDNSStatus)
+	api.HandleFunc("GET /api/hosts/{id}/tls-status", s.handleHostTLSStatus)
+
+	// Routes
+	api.HandleFunc("GET /api/hosts/{id}/routes", s.handleListRoutes)
+	api.HandleFunc("POST /api/hosts/{id}/routes", s.handleCreateRoute)
+	api.HandleFunc("GET /api/routes/{id}", s.handleGetRoute)
+	api.HandleFunc("PUT /api/routes/{id}", s.handleUpdateRoute)
+	api.HandleFunc("DELETE /api/routes/{id}", s.handleDeleteRoute)
+
+	// Logs — proxied to diaLOG via gRPC
+	api.HandleFunc("GET /api/logs", s.handleSearchLogs)
+	api.HandleFunc("GET /api/logs/stats", s.handleLogStats)
+	api.HandleFunc("GET /api/logs/stream", s.handleStreamLogs)
+	api.HandleFunc("GET /api/logs/{id}", s.handleGetLog)
+	api.HandleFunc("PUT /api/logs/{id}/note", s.handleUpsertLogNote)
+	api.HandleFunc("POST /api/logs/{id}/star", s.handleToggleLogStar)
+	api.HandleFunc("GET /api/logs/{id}/jwt", s.handleRevealLogJWT)
+
+	// Settings
+	api.HandleFunc("GET /api/settings", s.handleGetSettings)
+	api.HandleFunc("PUT /api/settings/{key}", s.handleUpdateSetting)
+
+	// TLS
+	api.HandleFunc("GET /api/tls/certificates", s.handleListCerts)
+	api.HandleFunc("POST /api/tls/certificates", s.handleUploadCert)
+	api.HandleFunc("DELETE /api/tls/certificates/{id}", s.handleDeleteCert)
+
+	// System
+	api.HandleFunc("GET /api/system/health", s.handleHealth)
+	api.HandleFunc("GET /api/system/stats", s.handleSystemStats)
+	api.HandleFunc("POST /api/system/reload", s.handleReload)
+	api.HandleFunc("GET /api/system/health/backends", s.handleBackendHealth)
+	api.HandleFunc("GET /api/system/version", s.handleSystemVersion)
+	api.HandleFunc("GET /api/system/version/latest", s.handleSystemVersionLatest)
+	api.HandleFunc("POST /api/system/upgrade", s.handleSystemUpgrade)
+	api.HandleFunc("GET /api/system/upgrade/stream", s.handleSystemUpgradeStream)
+
+	// Audit log
+	api.HandleFunc("GET /api/audit", s.handleListAudit)
+
+	// Agent management (admin JWT auth)
+	api.HandleFunc("GET /api/agents", s.handleListAgents)
+	api.HandleFunc("POST /api/agents", s.handleCreateAgent)
+	api.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
+	api.HandleFunc("POST /api/agents/{id}/commands", s.handleEnqueueAgentCommand)
+	api.HandleFunc("GET /api/agents/{id}/commands", s.handleListAgentCommands)
+
+	// Alerts (correlation engine output)
+	api.HandleFunc("GET /api/alerts", s.handleListAlerts)
+	api.HandleFunc("GET /api/alerts/stats", s.handleAlertStats)
+	api.HandleFunc("GET /api/alerts/{id}", s.handleGetAlert)
+	api.HandleFunc("POST /api/alerts/{id}/acknowledge", s.handleAckAlert)
+
+	// Alerting channel tests (sends a synthetic alert via the real notifier)
+	api.HandleFunc("POST /api/alerting/test/slack", s.handleTestSlackAlert)
+	api.HandleFunc("POST /api/alerting/test/smtp", s.handleTestSMTPAlert)
+
+	// Container Logs — proxied to muvon-deployer (live) and diaLOG (history)
+	api.HandleFunc("GET /api/containers", s.handleListContainers)
+	api.HandleFunc("GET /api/containers/{id}", s.handleGetContainer)
+	api.HandleFunc("GET /api/containers/{id}/logs/stream", s.handleStreamContainerLogs)
+	api.HandleFunc("GET /api/container-logs", s.handleSearchContainerLogs)
+	api.HandleFunc("GET /api/container-logs/{id}/context", s.handleContainerLogContext)
+	api.HandleFunc("GET /api/system/health/ingest", s.handleIngestHealth)
+
+	// Managed application deploys
+	api.HandleFunc("GET /api/deploy/projects", s.handleListDeployProjects)
+	api.HandleFunc("POST /api/deploy/projects", s.handleCreateDeployProject)
+	api.HandleFunc("GET /api/deploy/projects/{slug}/secret", s.handleGetDeployProjectSecret)
+	api.HandleFunc("PUT /api/deploy/projects/{slug}", s.handleUpdateDeployProject)
+	api.HandleFunc("DELETE /api/deploy/projects/{slug}", s.handleDeleteDeployProject)
+	api.HandleFunc("POST /api/deploy/projects/{slug}/components", s.handleCreateDeployComponent)
+	api.HandleFunc("GET /api/deploy/projects/{slug}/components/{component}", s.handleGetDeployComponent)
+	api.HandleFunc("PUT /api/deploy/projects/{slug}/components/{component}", s.handleUpdateDeployComponent)
+	api.HandleFunc("DELETE /api/deploy/projects/{slug}/components/{component}", s.handleDeleteDeployComponent)
+	api.HandleFunc("GET /api/deploy/deployments", s.handleListDeployments)
+	api.HandleFunc("GET /api/deploy/deployments/{id}/events", s.handleListDeploymentEvents)
+	api.HandleFunc("POST /api/deploy/deployments/{id}/rerun", s.handleRerunDeployment)
+	api.HandleFunc("POST /api/deploy/projects/{slug}/deploy", s.handleManualDeploy)
+	api.HandleFunc("POST /api/deploy/projects/{slug}/rollback", s.handleRollbackProject)
+
+	mux.Handle("/api/", s.authMiddleware(csrfMW(api)))
+
+	// Agent API (X-Api-Key auth, no JWT)
+	if s.agentSvc != nil {
+		agentMux := http.NewServeMux()
+		agentMux.HandleFunc("GET /api/v1/agent/config", s.agentSvc.HandleConfig)
+		agentMux.HandleFunc("GET /api/v1/agent/watch", s.agentSvc.HandleWatch)
+		// Cert sync — agent-issued ACME certs flow up so central has a
+		// backup + audit trail; manual certs flow down so an admin-uploaded
+		// cert wins over whatever the agent autocert has cached.
+		agentMux.HandleFunc("POST /api/v1/agent/cert/{domain}", s.agentSvc.HandleUploadCert)
+		agentMux.HandleFunc("GET /api/v1/agent/cert/{domain}", s.agentSvc.HandleGetCert)
+		// Command channel — central → agent control plane.
+		agentMux.HandleFunc("GET /api/v1/agent/commands", s.agentSvc.HandlePollCommand)
+		agentMux.HandleFunc("POST /api/v1/agent/commands/{id}/result", s.agentSvc.HandleCommandResult)
+		// Edge deployer surface — every State method on the deployer has
+		// a matching HTTP endpoint here so cmd/agent can run the same
+		// lifecycle code via an HTTP-backed adapter.
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/claim", s.agentSvc.HandleClaim)
+		agentMux.HandleFunc("GET /api/v1/agent/deployer/plan/{id}", s.agentSvc.HandleLoadPlan)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/event", s.agentSvc.HandleAddEvent)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/fail", s.agentSvc.HandleFail)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/instance", s.agentSvc.HandleCreateInstance)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/instance/unhealthy", s.agentSvc.HandleInstanceUnhealthy)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/instance/stopped", s.agentSvc.HandleInstanceStopped)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/promote", s.agentSvc.HandlePromote)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/reset-stale", s.agentSvc.HandleResetStaleRunning)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/cleanup-warming", s.agentSvc.HandleCleanupStaleWarming)
+		agentMux.HandleFunc("GET /api/v1/agent/deployer/drainable", s.agentSvc.HandleListDrainable)
+		agentMux.HandleFunc("GET /api/v1/agent/deployer/live-containers", s.agentSvc.HandleListLiveContainers)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/prunable-images", s.agentSvc.HandleListPrunableImages)
+		mux.Handle("/api/v1/agent/", s.agentSvc.AuthMiddleware(agentMux))
+	}
+
+	// Health endpoint — JWT gerektirmez
+	mux.HandleFunc("GET /health", s.handleHealth)
+
+	// Frontend (embed.FS) — SPA fallback: dosya yoksa index.html dön
+	if s.frontendFS != nil {
+		fsHandler := http.FileServerFS(s.frontendFS)
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if _, err := fs.Stat(s.frontendFS, strings.TrimPrefix(r.URL.Path, "/")); err != nil {
+				r2 := r.Clone(r.Context())
+				r2.URL.Path = "/"
+				fsHandler.ServeHTTP(w, r2)
+				return
+			}
+			fsHandler.ServeHTTP(w, r)
+		})
+	}
+
+	// Middleware zinciri
+	var handler http.Handler = mux
+	handler = corsMiddleware(handler)
+	handler = middleware.SecurityHeaders(handler)
+	handler = middleware.Recovery(handler)
+
+	return handler
+}
+
+// --- System handlers ---
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	status := "ok"
+	if err := s.db.Health(r.Context()); err != nil {
+		status = "degraded"
+	}
+
+	services := map[string]string{
+		"database": status,
+		"logging":  "unavailable",
+	}
+	if s.logClient != nil {
+		services["logging"] = "ok"
+	}
+
+	resp := map[string]any{
+		"status":   status,
+		"services": services,
+	}
+
+	// Enrichment health is reported separately from "logging" because diaLOG
+	// can be reachable while a sub-feature (GeoIP file mistyped, JWT off) is
+	// silently broken. Surfacing the sub-state lets the admin UI show an
+	// actionable banner pointing at the feature, not just "logging: ok".
+	if s.logClient != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if es, err := s.logClient.EnrichmentStatus(ctx); err == nil && es != nil {
+			enrich := map[string]any{
+				"geoip_state":               es.GeoipState,
+				"geoip_path":                es.GeoipPath,
+				"geoip_error":               es.GeoipError,
+				"geoip_loaded_at":           es.GeoipLoadedAt,
+				"jwt_identity_state":        es.JwtIdentityState,
+				"jwt_identity_host_count":   es.JwtIdentityHostOverrides,
+			}
+			resp["enrichment"] = enrich
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleSystemStats(w http.ResponseWriter, r *http.Request) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	stats := map[string]any{
+		"uptime_seconds": int(time.Since(s.startTime).Seconds()),
+		"goroutines":     runtime.NumGoroutine(),
+		"memory": map[string]any{
+			"alloc_mb":       m.Alloc / 1024 / 1024,
+			"total_alloc_mb": m.TotalAlloc / 1024 / 1024,
+			"sys_mb":         m.Sys / 1024 / 1024,
+			"gc_cycles":      m.NumGC,
+		},
+		"go_version": runtime.Version(),
+	}
+
+	cfg := s.configHolder.Get()
+	stats["config"] = map[string]any{
+		"active_hosts": len(cfg.Hosts),
+	}
+
+	stats["services"] = map[string]any{
+		"log_connected": s.logClient != nil,
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
+	if err := s.configHolder.Reload(r.Context()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reloaded"})
+}
+
+func (s *Server) triggerReload() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.configHolder.Reload(ctx); err != nil {
+		slog.Error("auto-reload failed", "error", err)
+		return err
+	}
+	return nil
+}
+
+// --- Helpers ---
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+func parseInt(s string) (int, error) {
+	return strconv.Atoi(s)
+}
+
+func tlsX509KeyPair(certPEM, keyPEM []byte) (tls.Certificate, error) {
+	return tls.X509KeyPair(certPEM, keyPEM)
+}
+
+func extractCertExpiry(certPEM []byte) time.Time {
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return time.Now().Add(365 * 24 * time.Hour)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Now().Add(365 * 24 * time.Hour)
+	}
+	return cert.NotAfter
+}
+
+func (s *Server) EnsureDefaultAdmin(ctx context.Context) error {
+	exists, err := s.db.AdminExists(ctx)
+	if err != nil {
+		return fmt.Errorf("check admin: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	slog.Info("no admin user found — create one via POST /api/auth/setup")
+	return nil
+}
+
+func (s *Server) auditLog(r *http.Request, action, targetType, targetID string, detail any) {
+	user, _ := r.Context().Value(usernameKey).(string)
+	if user == "" {
+		user = "unknown"
+	}
+	ip := extractClientIP(r)
+	s.db.WriteAuditLog(r.Context(), user, action, targetType, targetID, ip, detail)
+}
+
+func extractClientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.Index(xff, ","); i != -1 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+	ip := r.RemoteAddr
+	if i := strings.LastIndex(ip, ":"); i != -1 {
+		return ip[:i]
+	}
+	return ip
+}
+
+func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	params := db.AuditSearchParams{
+		Action: q.Get("action"),
+	}
+	if v := q.Get("from"); v != "" {
+		params.From, _ = time.Parse(time.RFC3339, v)
+	}
+	if v := q.Get("to"); v != "" {
+		params.To, _ = time.Parse(time.RFC3339, v)
+	}
+	if v := q.Get("limit"); v != "" {
+		params.Limit, _ = strconv.Atoi(v)
+	}
+	if v := q.Get("offset"); v != "" {
+		params.Offset, _ = strconv.Atoi(v)
+	}
+
+	entries, total, err := s.db.ListAuditLog(r.Context(), params)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if entries == nil {
+		entries = []db.AuditEntry{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":   entries,
+		"total":  total,
+		"limit":  params.Limit,
+		"offset": params.Offset,
+	})
+}
+
+func (s *Server) handleBackendHealth(w http.ResponseWriter, r *http.Request) {
+	if s.healthMgr != nil {
+		writeJSON(w, http.StatusOK, s.healthMgr.GetAll())
+		return
+	}
+	cfg := s.configHolder.Get()
+	backends := make(map[string]string)
+	for _, hc := range cfg.Hosts {
+		for _, route := range hc.Routes {
+			if route.Route.RouteType != "proxy" {
+				continue
+			}
+			if route.Route.BackendURL != nil && *route.Route.BackendURL != "" {
+				backends[*route.Route.BackendURL] = "unknown"
+			}
+			for _, u := range route.Route.BackendURLs {
+				if u != "" {
+					backends[u] = "unknown"
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, backends)
+}
+
+// requireLog is a helper that returns true if the log client is available.
+// If not, it writes a 503 response and returns false.
+func (s *Server) requireLog(w http.ResponseWriter) bool {
+	if s.logClient == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "diaLOG service unavailable"})
+		return false
+	}
+	return true
+}

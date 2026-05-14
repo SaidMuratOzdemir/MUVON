@@ -1,0 +1,624 @@
+package deployer
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"muvon/internal/db"
+	"muvon/internal/secret"
+)
+
+type Service struct {
+	state        State
+	docker       *DockerClient
+	pollInterval time.Duration
+	healthClient *http.Client
+	// secretBox decrypts the "enc:"-prefixed values in component env maps
+	// before they reach the container. Operates as passthrough when no
+	// MUVON_ENCRYPTION_KEY was configured (HasKey() == false).
+	secretBox *secret.Box
+	// onTick is called once per loop iteration. Optional — the binary
+	// uses this to keep the gRPC Health response fresh ("deployer is up
+	// but stuck" is otherwise invisible).
+	onTick func()
+}
+
+// SetOnTick registers a callback fired once per tick. Safe to call once
+// at startup; the callback fires inline so it should be cheap.
+func (s *Service) SetOnTick(fn func()) { s.onTick = fn }
+
+// NewService wires the deployer lifecycle to a State backend. The central
+// deployer passes NewDBState(*db.DB, "") — direct PostgreSQL access. The
+// embedded edge deployer in cmd/agent passes an HTTP-backed state that
+// talks to the central admin server.
+func NewService(state State, docker *DockerClient, secretBox *secret.Box, pollInterval time.Duration) *Service {
+	if pollInterval <= 0 {
+		pollInterval = 5 * time.Second
+	}
+	if secretBox == nil {
+		secretBox = secret.NewBox("")
+	}
+	return &Service{
+		state:        state,
+		docker:       docker,
+		pollInterval: pollInterval,
+		healthClient: defaultHTTPClient(),
+		secretBox:    secretBox,
+	}
+}
+
+func (s *Service) Run(ctx context.Context) error {
+	// On startup, reset any deployments stuck in "running" state from a
+	// previous crash so they are retried on the next tick.
+	if n, err := s.state.ResetStaleRunning(ctx, 10*time.Minute); err != nil {
+		slog.Warn("failed to reset stale running deployments", "error", err)
+	} else if n > 0 {
+		slog.Info("reset stale running deployments to pending", "count", n)
+	}
+
+	ticker := time.NewTicker(s.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		if err := s.tick(ctx); err != nil {
+			slog.Error("deployer tick failed", "error", err)
+		}
+		if s.onTick != nil {
+			s.onTick()
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Service) tick(ctx context.Context) error {
+	if err := s.cleanupDraining(ctx); err != nil {
+		slog.Warn("drain cleanup failed", "error", err)
+	}
+	if err := s.reconcileOrphanContainers(ctx); err != nil {
+		slog.Warn("orphan container reconcile failed", "error", err)
+	}
+	if n, err := s.state.CleanupStaleWarming(ctx); err != nil {
+		slog.Warn("stale warming instance cleanup failed", "error", err)
+	} else if n > 0 {
+		slog.Info("cleaned up stale warming instances", "count", n)
+	}
+
+	// State filters by owner: central deployer picks NULL agent_id rows;
+	// the embedded edge deployer in cmd/agent picks only its own.
+	deployment, ok, err := s.state.Claim(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	if err := s.processDeployment(ctx, deployment.ID); err != nil {
+		slog.Error("deployment failed", "deployment_id", deployment.ID, "error", err)
+		_ = s.state.Fail(context.Background(), deployment.ID, err.Error())
+		return err
+	}
+	return nil
+}
+
+func (s *Service) processDeployment(ctx context.Context, deploymentID string) error {
+	plan, err := s.state.LoadPlan(ctx, deploymentID)
+	if err != nil {
+		return err
+	}
+	_ = s.state.AddEvent(ctx, deploymentID, "started", "Deployment started", nil)
+
+	candidates := make([]string, 0, len(plan.Components))
+	createdContainers := make([]string, 0, len(plan.Components))
+	for _, item := range plan.Components {
+		component := item.Component
+		imageRef := item.Release.ImageRef
+		if imageRef == "" {
+			return fmt.Errorf("component %s has no image_ref", component.Slug)
+		}
+		if err := s.state.AddEvent(ctx, deploymentID, "pull", "Pulling image", map[string]string{"component": component.Slug, "image": imageRef}); err != nil {
+			return err
+		}
+		if err := s.docker.ImagePull(ctx, imageRef); err != nil {
+			return fmt.Errorf("pull %s: %w", imageRef, err)
+		}
+
+		env, err := s.loadComponentEnv(component)
+		if err != nil {
+			return fmt.Errorf("load env for %s: %w", component.Slug, err)
+		}
+		if err := s.ensureNetworks(ctx, component.Networks); err != nil {
+			return fmt.Errorf("ensure networks for %s: %w", component.Slug, err)
+		}
+		if len(component.MigrationCommand) > 0 {
+			if err := s.runMigration(ctx, deploymentID, plan, component, imageRef, env); err != nil {
+				return err
+			}
+		}
+
+		mounts, err := buildDockerMounts(component.Mounts)
+		if err != nil {
+			return fmt.Errorf("invalid mounts for %s: %w", component.Slug, err)
+		}
+		containerName := containerName(plan.Project.Slug, component.Slug, plan.Release.ReleaseID)
+		createReq := containerCreateRequest{
+			Image: imageRef,
+			Env:   envList(env),
+			Labels: map[string]string{
+				"muvon.project":    plan.Project.Slug,
+				"muvon.component":  component.Slug,
+				"muvon.release_id": plan.Release.ReleaseID,
+				"muvon.managed":    "true",
+			},
+			HostConfig: hostConfig{
+				NetworkMode: firstNetwork(component.Networks),
+				RestartPolicy: restartPolicy{
+					Name: "unless-stopped",
+				},
+				Mounts: mounts,
+			},
+			NetworkingConfig: networkConfig(component.Networks, component.Slug),
+		}
+		containerID, err := s.docker.ContainerCreate(ctx, containerName, createReq)
+		if err != nil {
+			return fmt.Errorf("create candidate %s: %w", component.Slug, err)
+		}
+		createdContainers = append(createdContainers, containerID)
+		if err := s.connectExtraNetworks(ctx, component.Networks, containerID, component.Slug); err != nil {
+			return fmt.Errorf("connect networks for %s: %w", component.Slug, err)
+		}
+		if err := s.docker.ContainerStart(ctx, containerID); err != nil {
+			return fmt.Errorf("start candidate %s: %w", component.Slug, err)
+		}
+
+		backendURL := fmt.Sprintf("http://%s:%d", containerName, component.InternalPort)
+		instance, err := s.state.CreateInstance(ctx, component.ID, plan.Release.ID, containerID, containerName, backendURL)
+		if err != nil {
+			return err
+		}
+		if err := s.waitHealthyWithRestart(ctx, deploymentID, component, containerID, backendURL); err != nil {
+			_ = s.state.MarkInstanceUnhealthy(context.Background(), instance.ID, err.Error())
+			_ = s.docker.ContainerRemove(context.Background(), containerID, true)
+			return err
+		}
+		candidates = append(candidates, instance.ID)
+		_ = s.state.AddEvent(ctx, deploymentID, "candidate_healthy", "Candidate is healthy", map[string]string{"component": component.Slug, "url": backendURL})
+	}
+
+	if err := s.state.Promote(ctx, deploymentID, candidates); err != nil {
+		for _, containerID := range createdContainers {
+			_ = s.docker.ContainerRemove(context.Background(), containerID, true)
+		}
+		return err
+	}
+	slog.Info("deployment promoted", "deployment_id", deploymentID)
+
+	// Best-effort image pruning. Failure here MUST NOT fail the deployment
+	// — the candidates are already promoted and serving traffic. Images
+	// left behind are caught on the next successful promote.
+	s.pruneImagesAfterPromote(context.Background(), plan)
+	return nil
+}
+
+// pruneImagesAfterPromote drops image refs from the local Docker daemon
+// that fall outside each component's keep_releases window and aren't
+// still bound to a live instance. The query side handles the in-use
+// exclusion; here we just iterate and call Docker. Docker's own refcount
+// catches anything the SQL missed (returns 409 → ImageRemove swallows).
+func (s *Service) pruneImagesAfterPromote(ctx context.Context, plan db.DeploymentPlan) {
+	for _, item := range plan.Components {
+		component := item.Component
+		keep := component.KeepReleases
+		if keep < 1 {
+			keep = 3
+		}
+		refs, err := s.state.ListPrunableImageRefs(ctx, component.ID, keep)
+		if err != nil {
+			slog.Warn("image prune query failed", "component", component.Slug, "error", err)
+			continue
+		}
+		for _, ref := range refs {
+			if err := s.docker.ImageRemove(ctx, ref, false); err != nil {
+				slog.Warn("image prune remove failed", "component", component.Slug, "image", ref, "error", err)
+				continue
+			}
+			slog.Info("pruned image", "component", component.Slug, "image", ref)
+		}
+	}
+}
+
+func (s *Service) runMigration(ctx context.Context, deploymentID string, plan db.DeploymentPlan, component db.DeployComponent, imageRef string, env map[string]string) error {
+	_ = s.state.AddEvent(ctx, deploymentID, "migration", "Running migration", map[string]any{"component": component.Slug, "command": component.MigrationCommand})
+	mounts, err := buildDockerMounts(component.Mounts)
+	if err != nil {
+		return fmt.Errorf("invalid mounts for %s migration: %w", component.Slug, err)
+	}
+	name := containerName(plan.Project.Slug, component.Slug+"-migration", plan.Release.ReleaseID)
+	req := containerCreateRequest{
+		Image: imageRef,
+		Cmd:   component.MigrationCommand,
+		Env:   envList(env),
+		Labels: map[string]string{
+			"muvon.project":    plan.Project.Slug,
+			"muvon.component":  component.Slug,
+			"muvon.release_id": plan.Release.ReleaseID,
+			"muvon.managed":    "true",
+			"muvon.job":        "migration",
+		},
+		HostConfig:       hostConfig{NetworkMode: firstNetwork(component.Networks), Mounts: mounts},
+		NetworkingConfig: networkConfig(component.Networks, component.Slug+"-migration"),
+	}
+	containerID, err := s.docker.ContainerCreate(ctx, name, req)
+	if err != nil {
+		return fmt.Errorf("create migration container: %w", err)
+	}
+	defer s.docker.ContainerRemove(context.Background(), containerID, true)
+	if err := s.connectExtraNetworks(ctx, component.Networks, containerID, component.Slug+"-migration"); err != nil {
+		return fmt.Errorf("connect migration networks: %w", err)
+	}
+	if err := s.docker.ContainerStart(ctx, containerID); err != nil {
+		return fmt.Errorf("start migration container: %w", err)
+	}
+	status, err := s.docker.ContainerWait(ctx, containerID)
+	if err != nil {
+		return fmt.Errorf("wait migration container: %w", err)
+	}
+	if status != 0 {
+		return fmt.Errorf("migration failed for %s with exit code %d", component.Slug, status)
+	}
+	_ = s.state.AddEvent(ctx, deploymentID, "migration_succeeded", "Migration succeeded", map[string]string{"component": component.Slug})
+	return nil
+}
+
+func (s *Service) waitHealthyWithRestart(ctx context.Context, deploymentID string, component db.DeployComponent, containerID, backendURL string) error {
+	attempts := component.RestartRetries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if attempt > 1 {
+			_ = s.state.AddEvent(ctx, deploymentID, "restart", "Restarting unhealthy candidate", map[string]any{"component": component.Slug, "attempt": attempt - 1})
+			if err := s.docker.ContainerRestart(ctx, containerID, 10); err != nil {
+				return fmt.Errorf("restart candidate %s: %w", component.Slug, err)
+			}
+		}
+		if err := s.waitHealthy(ctx, component, backendURL); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("candidate %s failed health after %d attempt(s): %w", component.Slug, attempts, lastErr)
+}
+
+func (s *Service) waitHealthy(ctx context.Context, component db.DeployComponent, backendURL string) error {
+	healthURL := strings.TrimRight(backendURL, "/") + normalizePath(component.HealthPath)
+	timeout := time.Duration(component.DrainTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	// Give the process a moment to bind its port before probing.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(3 * time.Second):
+	}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := s.healthClient.Do(req)
+		if err == nil {
+			ioErr := resp.Body.Close()
+			if resp.StatusCode == component.HealthExpectedStatus {
+				return nil
+			}
+			lastErr = fmt.Errorf("health returned HTTP %d", resp.StatusCode)
+			if ioErr != nil {
+				lastErr = ioErr
+			}
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("health timed out")
+	}
+	return lastErr
+}
+
+func (s *Service) cleanupDraining(ctx context.Context) error {
+	instances, err := s.state.ListDrainable(ctx)
+	if err != nil {
+		return err
+	}
+	for _, inst := range instances {
+		if inst.ContainerID == "" {
+			// No container to remove (instance never came up cleanly).
+			// Mark stopped so it leaves the drainable view.
+			if err := s.state.MarkInstanceStopped(ctx, inst.ID); err != nil {
+				return err
+			}
+			continue
+		}
+		// Stop is best-effort: if the daemon refuses or times out we
+		// still try a forced remove. Logging — not error returns — is
+		// what we want so the loop keeps making progress for the rest
+		// of the queue.
+		if err := s.docker.ContainerStop(ctx, inst.ContainerID, 10); err != nil {
+			slog.Warn("drain stop failed; will force remove", "instance", inst.ID, "container", short(inst.ContainerID), "error", err)
+		}
+		// force=true: without force a stuck process leaves the container
+		// behind permanently — the next tick would see state='stopped'
+		// in DB (set by the optimistic flow below) and never retry.
+		if err := s.docker.ContainerRemove(ctx, inst.ContainerID, true); err != nil {
+			slog.Warn("drain remove failed; instance stays draining for retry", "instance", inst.ID, "container", short(inst.ContainerID), "error", err)
+			// Skip MarkInstanceStopped so this row stays drainable and
+			// we try again next tick.
+			continue
+		}
+		if err := s.state.MarkInstanceStopped(ctx, inst.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func short(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+// reconcileOrphanContainers removes Docker containers that carry the
+// muvon.managed=true label but are no longer tracked as live (warming /
+// active / draining) in the database.  This happens when the deployer
+// crashes mid-deployment and leaves containers behind that were never
+// properly registered or whose cleanup code never ran.
+func (s *Service) reconcileOrphanContainers(ctx context.Context) error {
+	liveIDs, err := s.state.ListLiveManagedContainerIDs(ctx)
+	if err != nil {
+		return err
+	}
+	// all=true so exited containers (failed candidates, migration leftovers)
+	// are visible too. The running-only list misses every container whose
+	// process died between Promote and our cleanup pass.
+	containers, err := s.docker.ContainerListAll(ctx, true)
+	if err != nil {
+		return err
+	}
+	for _, c := range containers {
+		if _, alive := liveIDs[c.ID]; alive {
+			continue
+		}
+		project := c.Labels["muvon.project"]
+		component := c.Labels["muvon.component"]
+		release := c.Labels["muvon.release_id"]
+		slog.Info("removing orphan container", "id", short(c.ID), "state", c.State, "project", project, "component", component, "release", release)
+		_ = s.docker.ContainerStop(ctx, c.ID, 10)
+		// force=true catches stuck-running orphans the same way cleanupDraining does.
+		if err := s.docker.ContainerRemove(ctx, c.ID, true); err != nil {
+			slog.Warn("failed to remove orphan container", "id", short(c.ID), "error", err)
+		}
+	}
+	return nil
+}
+
+func (s *Service) ensureNetworks(ctx context.Context, networks []string) error {
+	for _, network := range networks {
+		if err := s.docker.EnsureNetwork(ctx, network); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) connectExtraNetworks(ctx context.Context, networks []string, containerID, alias string) error {
+	if len(networks) <= 1 {
+		return nil
+	}
+	for _, network := range networks[1:] {
+		if err := s.docker.NetworkConnect(ctx, network, containerID, alias); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) loadComponentEnv(component db.DeployComponent) (map[string]string, error) {
+	env := map[string]string{}
+	if component.EnvFilePath != "" {
+		fileEnv, err := parseEnvFile(component.EnvFilePath)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		for k, v := range fileEnv {
+			env[k] = v
+		}
+	}
+	for k, v := range component.Env {
+		// Secret-marked values land here as "enc:"-prefixed ciphertext.
+		// Decrypt before handing the env list to Docker; if the key was
+		// never marked secret, the value passes through unchanged.
+		if secret.IsEncrypted(v) {
+			plain, err := s.secretBox.Decrypt(v)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt env %s for component %s: %w", k, component.Slug, err)
+			}
+			env[k] = plain
+		} else {
+			env[k] = v
+		}
+	}
+	return env, nil
+}
+
+func parseEnvFile(path string) (map[string]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	out := map[string]string{}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"'`)
+	}
+	return out, scanner.Err()
+}
+
+func envList(env map[string]string) []string {
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+env[key])
+	}
+	return out
+}
+
+func firstNetwork(networks []string) string {
+	for _, network := range networks {
+		if network != "" {
+			return network
+		}
+	}
+	return "muvon-edge"
+}
+
+func networkConfig(networks []string, alias string) networkingConfig {
+	first := firstNetwork(networks)
+	ep := endpointSettings{}
+	if alias != "" {
+		ep.Aliases = []string{alias}
+	}
+	return networkingConfig{EndpointsConfig: map[string]endpointSettings{first: ep}}
+}
+
+func containerName(project, component, releaseID string) string {
+	shortRelease := sanitizeName(releaseID)
+	if len(shortRelease) > 12 {
+		shortRelease = shortRelease[:12]
+	}
+	return sanitizeName("muvon-" + project + "-" + component + "-" + shortRelease + "-" + time.Now().Format("20060102150405"))
+}
+
+func sanitizeName(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func normalizePath(path string) string {
+	if path == "" || path == "/" {
+		return "/"
+	}
+	if strings.HasPrefix(path, "/") {
+		return path
+	}
+	return "/" + path
+}
+
+// buildDockerMounts converts the persisted db.Mount specs into the
+// Docker Engine API representation used in HostConfig.Mounts. It
+// validates each entry up front so a bad mount fails the deployment
+// before any container is created. Returns an empty (nil) slice when
+// the component has no mounts so we don't ship an empty Mounts array
+// to Docker.
+func buildDockerMounts(mounts []db.Mount) ([]dockerMount, error) {
+	if len(mounts) == 0 {
+		return nil, nil
+	}
+	out := make([]dockerMount, 0, len(mounts))
+	for i, m := range mounts {
+		mountType := strings.ToLower(strings.TrimSpace(m.Type))
+		target := strings.TrimSpace(m.Target)
+		source := strings.TrimSpace(m.Source)
+		if target == "" {
+			return nil, fmt.Errorf("mount[%d]: target is required", i)
+		}
+		if !strings.HasPrefix(target, "/") {
+			return nil, fmt.Errorf("mount[%d]: target %q must be absolute", i, target)
+		}
+		dm := dockerMount{Type: mountType, Source: source, Target: target, ReadOnly: m.ReadOnly}
+		switch mountType {
+		case "bind":
+			if source == "" {
+				return nil, fmt.Errorf("mount[%d]: bind source is required", i)
+			}
+			if !strings.HasPrefix(source, "/") {
+				return nil, fmt.Errorf("mount[%d]: bind source %q must be absolute", i, source)
+			}
+			// Default CreateMountpoint=true so a fresh host doesn't
+			// fail the first deploy when the host directory has
+			// not been pre-created.
+			bopts := dockerMountBindOptions{CreateMountpoint: true}
+			if m.BindOptions != nil {
+				bopts.Propagation = m.BindOptions.Propagation
+				bopts.CreateMountpoint = m.BindOptions.CreateMountpoint
+			}
+			dm.BindOptions = &bopts
+		case "volume":
+			// source may be empty -> Docker creates an anonymous volume.
+			if m.VolumeOptions != nil {
+				dm.VolumeOptions = &dockerMountVolumeOptions{
+					NoCopy: m.VolumeOptions.NoCopy,
+					Labels: m.VolumeOptions.Labels,
+				}
+			}
+		case "tmpfs":
+			if source != "" {
+				return nil, fmt.Errorf("mount[%d]: tmpfs must not have a source", i)
+			}
+		default:
+			return nil, fmt.Errorf("mount[%d]: unknown type %q (want bind|volume|tmpfs)", i, m.Type)
+		}
+		out = append(out, dm)
+	}
+	return out, nil
+}

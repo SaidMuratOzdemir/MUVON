@@ -1,0 +1,54 @@
+# ── Go ──────────────────────────────────────────────────────
+/build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+
+# ── Frontend ────────────────────────────────────────────────
+/frontend/dist/
+/ui/node_modules/
+/ui/dist/
+
+# ── Dependencies ────────────────────────────────────────────
+/vendor/
+
+# ── Environment & Secrets ──────────────────────────────────
+.env
+.env.agent
+*.local
+*.key
+*.crt
+*.pem
+
+# ── IDE & Editors ──────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Claude Code ────────────────────────────────────────────
+# Skill set (.claude/skills/) ve paylaşılan ayarlar commit edilir.
+# Sadece kişisel izin/local ayarları ignore et.
+.claude/settings.local.json
+
+# ── Compiled Binaries ──────────────────────────────────────
+/dialog-siem
+/muvon
+
+# ── GeoIP Data ─────────────────────────────────────────────
+geo.tar.gz
+*.mmdb
+GeoLite2-City_*/
+
+# ── VPS Backup ─────────────────────────────────────────────
+/vps-backup/
+
+# ── OS ─────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

@@ -1,0 +1,181 @@
+# MUVON Ana Makine Stack
+# Kurulum: ./install.sh  veya  cp .env.example .env && docker compose up -d
+# Güncelleme: docker compose pull && docker compose up -d
+
+services:
+  # ── PostgreSQL (ParadeDB + TimescaleDB + pg_uuidv7) ─────────────────────
+  postgres:
+    build:
+      context: ./postgres
+    image: muvon-postgres:latest
+    container_name: muvon-postgres
+    restart: unless-stopped
+    command: postgres -c shared_preload_libraries=timescaledb,pg_search,pg_cron,pg_stat_statements
+    environment:
+      POSTGRES_DB: muvon
+      POSTGRES_USER: muvon
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    # PostgreSQL is NOT exposed to the host — internal network only.
+    # Services connect via "postgres:5432" within the Docker network.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U muvon -d muvon"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── diaLOG SIEM ─────────────────────────────────────────────────────────
+  dialog-siem:
+    image: ghcr.io/saidmuratozdemir/muvon/dialog-siem:latest
+    build:
+      context: .
+      args:
+        SERVICE: dialog-siem
+    restart: unless-stopped
+    user: root
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # gRPC log ingestion for remote agents — restrict with firewall:
+      # ufw allow from <agent-ip> to any port 9001
+      - "9001:9001"
+    environment:
+      DIALOG_DSN: "postgres://muvon:${POSTGRES_PASSWORD}@postgres:5432/muvon?sslmode=disable"
+      DIALOG_SOCKET: /run/muvon/dialog.sock
+      DIALOG_TCP_ADDR: ":9001"
+      DIALOG_LOG_LEVEL: ${LOG_LEVEL:-info}
+      MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:-}
+    volumes:
+      - sockets:/run/muvon
+      - geoip:/var/lib/geoip:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── MUVON Edge Gateway ───────────────────────────────────────────────────
+  muvon:
+    image: ghcr.io/saidmuratozdemir/muvon/muvon:latest
+    build:
+      context: .
+      args:
+        SERVICE: muvon
+    restart: unless-stopped
+    user: root
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dialog-siem:
+        condition: service_started
+    ports:
+      - "80:80"
+      - "443:443"
+      # Local-only admin access (initial setup before TLS cert is available)
+      # Usage: curl -X POST http://127.0.0.1:9443/api/auth/setup ...
+      - "127.0.0.1:9443:9443"
+    # Allows proxying to services running on the host machine.
+    # Use http://host.docker.internal:<port> as backend_url in admin panel.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      MUVON_DSN: "postgres://muvon:${POSTGRES_PASSWORD}@postgres:5432/muvon?sslmode=disable"
+      MUVON_JWT_SECRET: ${MUVON_JWT_SECRET:?MUVON_JWT_SECRET is required}
+      MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:-}
+      MUVON_LOG_LEVEL: ${LOG_LEVEL:-info}
+      MUVON_ADMIN_DOMAIN: ${MUVON_ADMIN_DOMAIN:?MUVON_ADMIN_DOMAIN is required}
+      MUVON_LOG_SOCKET: /run/muvon/dialog.sock
+    volumes:
+      - tls_cache:/var/lib/app/tls
+      - sockets:/run/muvon
+    networks:
+      - default
+      - muvon-edge
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── Managed Deploy Worker ───────────────────────────────────────────────
+  muvon-deployer:
+    image: ghcr.io/saidmuratozdemir/muvon/muvon-deployer:latest
+    build:
+      context: .
+      args:
+        SERVICE: muvon-deployer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MUVON_DSN: "postgres://muvon:${POSTGRES_PASSWORD}@postgres:5432/muvon?sslmode=disable"
+      MUVON_DOCKER_HOST: "unix:///var/run/docker.sock"
+      MUVON_DEPLOYER_POLL_INTERVAL: ${MUVON_DEPLOYER_POLL_INTERVAL:-5s}
+      MUVON_LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Container introspection / live tail gRPC surface — admin
+      # gateway dials this Unix socket on the shared sockets volume.
+      MUVON_DEPLOYER_SOCKET: /run/muvon/deployer.sock
+      # Container log shipping (logship) — persists managed container
+      # stdout/stderr to dialog-siem with on-disk spool fallback.
+      MUVON_DEPLOYER_LOGSHIP_ENABLED: "${MUVON_DEPLOYER_LOGSHIP_ENABLED:-true}"
+      MUVON_DEPLOYER_LOGSHIP_DIALOG_SOCKET: /run/muvon/dialog.sock
+      MUVON_DEPLOYER_LOGSHIP_SPOOL_DIR: /var/lib/muvon/logship
+      MUVON_DEPLOYER_LOGSHIP_SPOOL_MAX_BYTES: "${MUVON_DEPLOYER_LOGSHIP_SPOOL_MAX_BYTES:-268435456}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/envfiles:/opt/envfiles:ro
+      # Registry credentials — without this the deployer's loadDocker
+      # ConfigAuths returns nil and ImagePull goes anonymous. Public
+      # images keep working (and locally-cached private layers ride
+      # the daemon's cache) but the first private-image pull on a
+      # fresh tag fails with "registry: unauthorized". Mounting the
+      # host's docker login lets ImagePull send X-Registry-Auth.
+      - /root/.docker/config.json:/root/.docker/config.json:ro
+      # Shared tmpfs sockets — same volume dialog-siem uses.
+      # Carries deployer.sock (out) and dialog.sock (in for log ship).
+      - sockets:/run/muvon
+      # Persistent disk spool — survives container replacement so a
+      # dialog-siem outage spanning a deployer restart does not lose
+      # the queued lines.
+      - logship_spool:/var/lib/muvon/logship
+      # Host MUVON dir (compose + .env) — Settings → Sistem güncelleme
+      # akışı için. SystemUpgrade RPC bu mount üzerinden .env'in
+      # VERSION satırını yazar ve `docker:cli` helper container'ı
+      # compose dosyasını okuyarak pull+recreate eder.
+      - /opt/muvon:/host/muvon:rw
+      # Backup target — pg_dump çıktıları buraya yazılır, /opt/muvon/
+      # üzerinden host'tan da görünür.
+      - backups:/var/lib/muvon/backups
+    networks:
+      - default
+      - muvon-edge
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:       # PostgreSQL data — never deleted by compose down (use down -v explicitly)
+  tls_cache:    # ACME TLS certificates
+  geoip:        # GeoLite2-City.mmdb — seeded by install.sh if MaxMind key is provided
+  logship_spool: # On-disk fallback for container log batches when dialog-siem is down
+  backups:      # pg_dump -Fc snapshots written by SystemUpgrade flow
+  sockets:      # Unix sockets shared between services (tmpfs — ephemeral, world-writable)
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+
+networks:
+  muvon-edge:
+    name: muvon-edge
