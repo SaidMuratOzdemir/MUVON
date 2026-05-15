@@ -27,6 +27,29 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.25] - 2026-05-15
+
+### BUGFIXES
+
+- **`agent.self_upgrade` race condition**: Operatör Agents UI'da
+  "Ek host mount yolları"nı değiştirip "Kaydet ve uygula" tıkladığında
+  iki istek peş peşe gidiyordu: önce `PATCH /api/agents/{id}/mounts`
+  (DB güncelleme + config reload), sonra `POST /api/agents/{id}/commands`
+  (self_upgrade enqueue). Agent config pull'un SSE üzerinden tetiklenip
+  yeni mount listesini state'ine alması ile command'ın long-poll'ünden
+  düşmesi arasında yarış vardı; çoğu zaman command **eski state**'le
+  çalışıyor, helper container önceki mount listesiyle yeniden
+  başlatılıyordu.
+
+  Düzeltme: admin enqueue handler artık `self_upgrade` komutu için
+  payload'a `agents.extra_mounts`'u (dispatch zamanındaki canlı DB
+  değeri) otomatik gömüyor. Agent handler payload'da `extra_mounts`
+  varsa state'i atlayıp doğrudan onu kullanıyor. Operator-supplied
+  payload override'lar korunuyor (UI veya CLI manuel mount listesi
+  geçirebilir).
+
+---
+
 ## [0.1.24] - 2026-05-15
 
 ### BUGFIXES

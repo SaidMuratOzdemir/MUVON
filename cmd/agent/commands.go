@@ -186,6 +186,13 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 	return func(ctx context.Context, cmd agentctrl.Command) (agentctrl.Result, error) {
 		var p struct {
 			Image string `json:"image"` // optional override, e.g. ".../agent:0.1.19"
+			// ExtraMounts, when present in the payload, overrides whatever
+			// the agent has cached from its last config pull. The admin
+			// enqueue path fills this from agents.extra_mounts at command-
+			// dispatch time so a save-then-apply UX never races with the
+			// agent's config pull cadence. Empty / omitted falls back to
+			// deps.extraMounts() (state from the most recent config pull).
+			ExtraMounts []string `json:"extra_mounts"`
 		}
 		_ = json.Unmarshal(cmd.Payload, &p)
 		if deps.dockerCli == nil {
@@ -221,13 +228,15 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 			sedLine = fmt.Sprintf(`sed -i -E "s|(ghcr\\.io/[^:]+/agent):[^[:space:]\"]*|\\1:%s|g" docker-compose.agent.yml`, targetTag)
 		}
 
-		// Operator-managed extra bind mounts come from the agent process
-		// state (populated by every config pull). They get joined into
-		// EXTRA_MOUNTS and shipped to the helper as an env var; the
-		// helper script applies them additively without touching the
-		// default convention mounts.
+		// Operator-managed extra bind mounts. Payload override > state.
+		// The admin enqueue path normally fills payload.ExtraMounts from
+		// agents.extra_mounts at dispatch time, which eliminates the
+		// race where a save+apply burst sends the command before the
+		// agent has fetched the new config.
 		var mounts []string
-		if deps.extraMounts != nil {
+		if len(p.ExtraMounts) > 0 {
+			mounts = p.ExtraMounts
+		} else if deps.extraMounts != nil {
 			mounts = deps.extraMounts()
 		}
 		mountsEnv := strings.Join(mounts, " ")

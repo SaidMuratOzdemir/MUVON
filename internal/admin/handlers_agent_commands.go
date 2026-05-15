@@ -79,6 +79,19 @@ func (s *Server) handleEnqueueAgentCommand(w http.ResponseWriter, r *http.Reques
 	if len(payload) == 0 {
 		payload = json.RawMessage("{}")
 	}
+	// For agent.self_upgrade we splice the current agents.extra_mounts
+	// into the payload so the agent doesn't have to wait for a fresh
+	// config pull to know which mounts to apply. Otherwise the common
+	// "save mounts + click apply" UX races with the agent's poll
+	// cadence and the helper container fires with stale state.
+	if req.Kind == string(agentctrl.KindAgentSelfUpgrade) {
+		var err error
+		payload, err = mergeExtraMountsIntoPayload(payload, agent.ExtraMounts)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "payload merge failed: " + err.Error()})
+			return
+		}
+	}
 	cmd, err := s.db.EnqueueAgentCommand(r.Context(), db.EnqueueAgentCommandInput{
 		AgentID:   agentID,
 		Kind:      req.Kind,
@@ -212,3 +225,28 @@ var errInvalidNumber = stringError("invalid number")
 type stringError string
 
 func (e stringError) Error() string { return string(e) }
+
+// mergeExtraMountsIntoPayload writes agents.extra_mounts into the
+// command payload so handleSelfUpgrade can act on it without a fresh
+// config pull. Preserves any other keys the caller already set
+// (e.g. image override). The payload is always a JSON object — the
+// helper above coerces empty bodies to "{}" before calling us.
+func mergeExtraMountsIntoPayload(payload json.RawMessage, mounts []string) (json.RawMessage, error) {
+	if mounts == nil {
+		mounts = []string{}
+	}
+	var obj map[string]any
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &obj); err != nil {
+			return nil, err
+		}
+	}
+	if obj == nil {
+		obj = map[string]any{}
+	}
+	// Don't clobber a caller-supplied override.
+	if _, exists := obj["extra_mounts"]; !exists {
+		obj["extra_mounts"] = mounts
+	}
+	return json.Marshal(obj)
+}
