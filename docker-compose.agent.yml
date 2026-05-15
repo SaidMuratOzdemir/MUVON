@@ -63,6 +63,16 @@ services:
       #
       # - /var/run/docker.sock:/var/run/docker.sock:ro
 
+      # ── Registry credentials (private GHCR / Docker Hub) ─────────────
+      # Agent embedded-deployer modundayken (AGENT_DEPLOYER_ENABLED=true)
+      # ImagePull /images/create çağrısı yapar; X-Registry-Auth header'ı
+      # ~/.docker/config.json'dan okur. Container içinde bu dosya yoksa
+      # registry'ye anonymous gider, private image'lar 401 döner.
+      # Host'taki root config'i ro mount: install-agent.sh edge deployer
+      # enabled olduğunda bu satırı açar.
+      #
+      # - /root/.docker/config.json:/root/.docker/config.json:ro
+
 volumes:
   tls_cache:
   logship:

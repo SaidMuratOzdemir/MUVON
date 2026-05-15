@@ -27,6 +27,35 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.18] - 2026-05-15
+
+### BUGFIXES
+
+- **Edge agent embedded-deployer modunda private GHCR pull 401 alıyordu**:
+  `docker-compose.agent.yml` host'un `~/.docker/config.json` dosyasını
+  agent container'a mount etmiyordu. Agent ImagePull (HTTP
+  `/images/create`) yaptığında `loadDockerConfigAuths` boş dönüyor,
+  X-Registry-Auth header'ı set edilmiyor, registry anonymous istek olarak
+  görüp 401 dönüyordu.
+
+  Central tarafında (`docker-compose.yml`) muvon-deployer için aynı
+  mount zaten vardı; agent compose'da eksikti.
+
+  Düzeltme: `docker-compose.agent.yml`'a yorumlu satır eklendi.
+  `install-agent.sh` `AGENT_DEPLOYER_ENABLED=true` durumunda satırı
+  açıyor (socket mount mantığıyla aynı). Host'ta `/root/.docker/config.json`
+  yoksa kullanıcıya `docker login ghcr.io` direktifi gösteriliyor.
+
+### Upgrade notları
+
+- Edge agent v0.1.17 veya öncesinde kurulan ve embedded deployer aktif
+  olan kurulumlar bu fix'i almak için **install-agent.sh'i yeniden
+  çalıştırmalı** — yeni compose dosyası indirilir, mount satırı açılır,
+  agent restart olur. `docker login ghcr.io` zaten yapılmışsa hiçbir
+  ek adım gerekmez.
+
+---
+
 ## [0.1.17] - 2026-05-15
 
 ### FEATURES

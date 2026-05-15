@@ -111,6 +111,26 @@ _enable_socket_mount() {
     "$COMPOSE_FILE" && rm -f "${COMPOSE_FILE}.bak"
 }
 
+# Private GHCR / Docker Hub için host root config'ini agent container'a
+# ro mount. Sadece edge deployer enabled olduğunda gerek (anonymous pull
+# yetiyorsa skip). Host'ta /root/.docker/config.json yoksa uyar ama
+# satırı yine de açar — sonradan docker login yapılırsa otomatik etki.
+_enable_docker_config_mount() {
+  if grep -qE '^[[:space:]]+- /root/\.docker/config\.json:/root/\.docker/config\.json' "$COMPOSE_FILE"; then
+    return 0
+  fi
+  sed -i.bak -E \
+    "s|^([[:space:]]+)# - /root/\\.docker/config\\.json:/root/\\.docker/config\\.json:ro|\\1- /root/.docker/config.json:/root/.docker/config.json:ro|" \
+    "$COMPOSE_FILE" && rm -f "${COMPOSE_FILE}.bak"
+  if [ ! -f /root/.docker/config.json ]; then
+    echo ""
+    echo "  ⚠  /root/.docker/config.json yok. Private image pull için login gerek:"
+    echo "       docker login ghcr.io -u <github-user>"
+    echo "     (PAT scope: read:packages)"
+    echo ""
+  fi
+}
+
 # ── Başlık + mod tespiti ─────────────────────────────────────────────────
 echo ""
 echo "── MUVON Agent ──────────────────────────────────────────────────────"
@@ -272,7 +292,8 @@ EOF
   # Docker socket mount'ı doğru moda aç
   if [ "$DEPLOYER_ENABLED" = "true" ]; then
     _enable_socket_mount rw
-    status "ENV" "Docker socket: RW (edge deployer için)"
+    _enable_docker_config_mount
+    status "ENV" "Docker socket: RW (edge deployer için) + registry creds mount"
   else
     _enable_socket_mount ro
     status "ENV" "Docker socket: RO (yalnız dockerwatch için)"
@@ -316,6 +337,7 @@ else
       echo ""
     fi
     _enable_socket_mount rw
+    _enable_docker_config_mount
   else
     _enable_socket_mount ro
   fi
