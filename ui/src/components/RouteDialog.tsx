@@ -604,7 +604,7 @@ export function RouteDialog({
               <div className="flex items-center justify-between rounded-md border border-border px-4 py-3">
                 <div>
                   <p className="text-sm font-medium">SPA Mode</p>
-                  <p className="text-xs text-muted-foreground">Fall back to index.html for unknown paths — required for React/Vue/Angular client-side routing</p>
+                  <p className="text-xs text-muted-foreground">Fall back to index.html for unknown paths. Required for React/Vue/Angular client-side routing</p>
                 </div>
                 <Switch checked={form.static_spa} onCheckedChange={v => set('static_spa', v)} />
               </div>

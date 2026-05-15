@@ -41,7 +41,7 @@ export default function ContainerLogs() {
         <div>
           <h1 className="text-lg font-semibold">Container Logs</h1>
           <p className="text-xs text-muted-foreground">
-            Konteyner stdout/stderr akışı — canlı tail ve geçmiş arama.
+            Konteyner stdout/stderr akışı. Canlı tail ve geçmiş arama.
           </p>
         </div>
         <IngestBadge className="ml-auto" />

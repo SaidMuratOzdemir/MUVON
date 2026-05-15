@@ -269,7 +269,7 @@ const SETTING_GROUPS: SettingGroup[] = [
   {
     title: 'Path Scan Detection',
     icon: Radar,
-    description: 'Alerts when a single IP hits N distinct 404 paths in the window — classic scanner behaviour.',
+    description: 'Alerts when a single IP hits N distinct 404 paths in the window. Classic scanner behaviour.',
     settings: [
       { key: 'correlation_path_scan_distinct', label: 'Distinct Paths', description: 'How many different 404 URLs an IP must touch to trip the rule.', type: 'number', placeholder: '10' },
       { key: 'correlation_path_scan_window_seconds', label: 'Window', description: 'Rolling window size for the counter.', type: 'number', placeholder: '120', unit: 'sec' },

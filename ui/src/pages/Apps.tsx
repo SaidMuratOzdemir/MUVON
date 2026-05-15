@@ -586,7 +586,7 @@ curl -fsS -X POST "${webhookURL}" \\
           )}
         </div>
         <p className="text-[11px] text-muted-foreground">
-          CI ortamında <code className="font-mono">MUVON_WEBHOOK_SECRET</code> olarak sakla — snippet'ler bu isimle bekler.
+          CI ortamında <code className="font-mono">MUVON_WEBHOOK_SECRET</code> olarak sakla. Snippet'ler bu isimle bekler.
         </p>
       </div>
 

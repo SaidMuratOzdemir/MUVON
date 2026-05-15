@@ -89,7 +89,7 @@ export default function ContainerLogPane({ containerId, tail = 200, title, maxLi
           return out
         })
       },
-      () => setError('Live tail bağlantısı koptu — yeniden bağlanmak için tekrar açın.'),
+      () => setError('Live tail bağlantısı koptu. Yeniden bağlanmak için tekrar açın.'),
     )
     closeRef.current = close
     return () => {
@@ -224,10 +224,10 @@ export default function ContainerLogPane({ containerId, tail = 200, title, maxLi
 
       <div className="border-t border-border px-3 py-1 text-[10px] text-muted-foreground">
         {paused
-          ? 'Duraklatıldı — yeni satırlar atlanıyor.'
+          ? 'Duraklatıldı. Yeni satırlar atlanıyor.'
           : autoFollow
             ? 'Auto-follow açık · son satıra bağlı.'
-            : 'Yukarı kaydırdınız — auto-follow kapalı (en alta dönün).'}
+            : 'Yukarı kaydırdınız. Auto-follow kapalı (en alta dönün).'}
       </div>
     </div>
   )

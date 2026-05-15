@@ -500,7 +500,7 @@ function LogDetailSheet({
                   </div>
                   {!entry.user_identity.verified && !entry.user_identity.exp_expired && (
                     <p className="text-[11px] text-muted-foreground italic">
-                      Signature did not verify. Claims shown below for observation only — do not use for authorization.
+                      Signature did not verify. Claims shown below for observation only, do not use for authorization.
                     </p>
                   )}
                   {entry.user_identity.exp_expired && (

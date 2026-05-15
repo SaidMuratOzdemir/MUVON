@@ -181,7 +181,7 @@ export default function Agents() {
           <div className="flex items-center gap-2">
             <Check className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold text-foreground">
-              Agent "{createdAgent.agent.name}" oluşturuldu — API anahtarını şimdi kopyala (bir daha gösterilmeyecek)
+              Agent "{createdAgent.agent.name}" oluşturuldu. API anahtarını şimdi kopyala (bir daha gösterilmeyecek)
             </span>
             <Button
               variant="ghost"

@@ -10,8 +10,6 @@ import {
   Dialog, DialogContent, DialogDescription,
   DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
-import { cn } from '@/lib/utils'
-
 const SEMVER_RE = /^v?\d+\.\d+\.\d+$/
 function isStrictSemver(s: string): boolean { return SEMVER_RE.test(s.trim()) }
 function compareSemver(a: string, b: string): number {
@@ -28,6 +26,7 @@ interface Props {
   onClose: () => void
   onCompleted: () => void
   currentTag: string
+  latestTag?: string
 }
 
 /**
@@ -39,10 +38,10 @@ interface Props {
  * Hata durumlarında modal kapanmaz, kullanıcı state'i görür ve manuel
  * kapatır (re-try için tekrar açar).
  */
-export function UpgradeModal({ open, onClose, onCompleted, currentTag }: Props) {
+export function UpgradeModal({ open, onClose, onCompleted, currentTag, latestTag }: Props) {
   // ── Form state (Aşama 1)
-  const [targetTag, setTargetTag] = useState(currentTag || 'latest')
   const [customTag, setCustomTag] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [takeBackup, setTakeBackup] = useState(true)
   const [changelog, setChangelog] = useState<string | null>(null)
   const [changelogOpen, setChangelogOpen] = useState(false)
@@ -57,8 +56,8 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag }: Props) 
     if (!open) return
     setPhase('config')
     setEvents([])
-    setTargetTag(currentTag || 'latest')
     setCustomTag('')
+    setAdvancedOpen(false)
     setTakeBackup(true)
     setChangelog(null)
     setChangelogOpen(false)
@@ -91,10 +90,10 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag }: Props) 
     return parts.length > 1 ? '## ' + parts[1].trim() : changelog.trim()
   }, [changelog])
 
-  async function handleStart() {
-    const effectiveTag = customTag.trim() || targetTag
+  async function handleStart(presetTag?: string) {
+    const effectiveTag = (presetTag ?? customTag).trim() || latestTag || ''
     if (!effectiveTag) {
-      toast.error('Hedef tag boş olamaz')
+      toast.error('Hedef sürüm bulunamadı')
       return
     }
     // Downgrade engelleme: semver formundaki bir tag çalışan sürümden küçükse uyar.
@@ -155,55 +154,35 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag }: Props) 
             Sistem güncellemesi
           </DialogTitle>
           <DialogDescription>
-            {phase === 'config' && 'Hedef sürümü seç ve güncellemeyi başlat.'}
-            {phase === 'running' && 'Güncelleme devam ediyor — sayfayı kapatma.'}
+            {phase === 'config' && (
+              <>Şu an <span className="font-mono">{currentTag || 'bilinmiyor'}</span> çalışıyor.
+                {latestTag && ` Son release: `}
+                {latestTag && <span className="font-mono">{latestTag}</span>}
+              </>
+            )}
+            {phase === 'running' && 'Güncelleme devam ediyor. Sayfayı kapatma.'}
             {phase === 'done' && 'Güncelleme tamamlandı.'}
-            {phase === 'failed' && 'Güncelleme başarısız oldu. Sunucu durumunu kontrol et.'}
+            {phase === 'failed' && 'Güncelleme başarısız. Sunucu durumunu kontrol et.'}
           </DialogDescription>
         </DialogHeader>
 
         {phase === 'config' && (
           <div className="space-y-4 overflow-y-auto pt-1">
-            <div className="space-y-2">
-              <Label className="text-xs">Hedef sürüm</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['latest', 'v0', 'v0.1'] as const).map(opt => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => { setTargetTag(opt); setCustomTag('') }}
-                    className={cn(
-                      'rounded-md border px-3 py-2 text-sm transition-colors text-left',
-                      targetTag === opt && !customTag
-                        ? 'border-primary bg-primary/5'
-                        : 'border-border hover:bg-muted/20',
-                    )}
-                  >
-                    <div className="font-mono font-medium">{opt}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">
-                      {opt === 'latest'
-                        ? 'her zaman en yeni'
-                        : opt === 'v0'
-                          ? 'major pin'
-                          : 'minor pin'}
-                    </div>
-                  </button>
-                ))}
+            {latestTag && latestTag !== currentTag ? (
+              <Button onClick={() => handleStart(latestTag.replace(/^v/, ''))} size="lg" className="w-full">
+                <Download className="h-4 w-4 mr-2" />
+                {latestTag}'a güncelle
+              </Button>
+            ) : latestTag ? (
+              <div className="rounded-md border border-emerald-400/30 bg-emerald-400/5 p-3 text-sm text-emerald-300 flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4" />
+                Güncel sürümdesin ({currentTag}).
               </div>
-              <input
-                type="text"
-                placeholder="Veya tam sürüm: v0.1.0"
-                value={customTag}
-                onChange={e => setCustomTag(e.target.value)}
-                className={cn(
-                  'w-full rounded-md border px-3 py-2 text-sm font-mono bg-background',
-                  customTag ? 'border-primary' : 'border-border',
-                )}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Patch pin (`v0.1.0`) en güvenli — major bump'lar otomatik gelmez.
-              </p>
-            </div>
+            ) : (
+              <div className="rounded-md border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-amber-300">
+                Son release bilgisi alınamadı. Aşağıdan belirli bir sürüm girip dene.
+              </div>
+            )}
 
             <div className="rounded-md border border-border p-3 flex items-start gap-2">
               <input
@@ -213,38 +192,60 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag }: Props) 
                 onChange={e => setTakeBackup(e.target.checked)}
                 className="mt-0.5 h-4 w-4"
               />
-              <div className="space-y-1 min-w-0">
-                <Label htmlFor="take-backup" className="text-sm cursor-pointer">
-                  PostgreSQL yedeği al (pg_dump -Fc)
-                </Label>
-                <p className="text-[11px] text-muted-foreground">
-                  <code className="font-mono">/var/lib/muvon/backups/</code>{' '}
-                  altına yazılır. Migration başarısız olursa elle restore yapabilirsin.
-                </p>
-              </div>
+              <Label htmlFor="take-backup" className="text-sm cursor-pointer">
+                PostgreSQL yedeği al
+                <span className="block text-[11px] text-muted-foreground font-normal mt-0.5">
+                  Migration başarısız olursa <code className="font-mono">/var/lib/muvon/backups/</code> altından restore.
+                </span>
+              </Label>
             </div>
 
-            <div className="space-y-2">
-              <Button variant="outline" size="sm" onClick={loadChangelog} className="w-full">
-                <FileText className="h-3.5 w-3.5 mr-1.5" />
-                {changelog ? (changelogOpen ? 'CHANGELOG\'u gizle' : 'CHANGELOG\'u göster') : 'CHANGELOG\'u getir'}
-              </Button>
-              {changelogOpen && changelog && (
-                <pre className="text-[11px] font-mono bg-muted/20 border border-border rounded-md p-3 overflow-auto max-h-60 whitespace-pre-wrap">
-                  {changelogPreview}
-                </pre>
-              )}
-            </div>
+            <Button variant="outline" size="sm" onClick={loadChangelog} className="w-full">
+              <FileText className="h-3.5 w-3.5 mr-1.5" />
+              {changelog ? (changelogOpen ? 'CHANGELOG gizle' : 'CHANGELOG göster') : 'CHANGELOG'}
+            </Button>
+            {changelogOpen && changelog && (
+              <pre className="text-[11px] font-mono bg-muted/20 border border-border rounded-md p-3 overflow-auto max-h-60 whitespace-pre-wrap">
+                {changelogPreview}
+              </pre>
+            )}
+
+            <details
+              open={advancedOpen}
+              onToggle={e => setAdvancedOpen((e.target as HTMLDetailsElement).open)}
+              className="rounded-md border border-border"
+            >
+              <summary className="cursor-pointer select-none px-3 py-2 text-sm text-muted-foreground hover:text-foreground">
+                Belirli bir sürüme geç
+              </summary>
+              <div className="space-y-2 px-3 pb-3">
+                <input
+                  type="text"
+                  placeholder="Örnek: 0.1.5"
+                  value={customTag}
+                  onChange={e => setCustomTag(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  GitHub'da tag'lenmiş bir sürüm gir. Downgrade desteklenmez.
+                </p>
+                <Button
+                  onClick={() => handleStart()}
+                  disabled={!customTag.trim()}
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                >
+                  {customTag.trim() || 'sürüm seç'} ile güncelle
+                </Button>
+              </div>
+            </details>
 
             <div className="rounded-md border border-amber-400/30 bg-amber-400/5 p-3 flex items-start gap-2 text-xs text-amber-300">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p><strong>Bilmen gerekenler:</strong></p>
-                <ul className="list-disc list-inside space-y-0.5 opacity-90">
-                  <li>Container'lar ~30-60 saniye için yeniden başlatılır.</li>
-                  <li>Migration başarısız olursa muvon başlatılamaz; yedekten restore lazım.</li>
-                  <li>Downgrade desteklenmiyor — yeni sürümden eskiye geri dönüş zor.</li>
-                </ul>
+              <div>
+                Güncelleme sırasında servisler 30-60 saniye için yeniden başlatılır.
+                Yedek alınması önerilir.
               </div>
             </div>
           </div>
@@ -278,17 +279,11 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag }: Props) 
 
         <DialogFooter className="shrink-0 pt-2 border-t border-border">
           {phase === 'config' && (
-            <>
-              <Button variant="ghost" onClick={onClose}>İptal</Button>
-              <Button onClick={handleStart}>
-                <Download className="h-3.5 w-3.5 mr-1.5" />
-                Başlat
-              </Button>
-            </>
+            <Button variant="ghost" onClick={onClose}>Kapat</Button>
           )}
           {phase === 'running' && (
             <p className="text-xs text-muted-foreground">
-              Bittiğinde otomatik bildirim alacaksın — kapatma.
+              Bittiğinde otomatik bildirim alacaksın. Kapatma.
             </p>
           )}
           {(phase === 'done' || phase === 'failed') && (

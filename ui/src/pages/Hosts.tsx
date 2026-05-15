@@ -658,7 +658,7 @@ export default function Hosts() {
                     <Label className="text-xs">
                       HS256 Secret
                       {hostForm.jwt_secret_set && !hostForm.jwt_secret && (
-                        <span className="ml-2 text-emerald-400 text-[11px]">(already set — type to rotate)</span>
+                        <span className="ml-2 text-emerald-400 text-[11px]">(set, yeniden yaz)</span>
                       )}
                     </Label>
                     <Input
@@ -671,7 +671,7 @@ export default function Hosts() {
                     />
                     <p className="text-[11px] text-muted-foreground">
                       With a secret: signatures are verified. Without: claims are
-                      still decoded but marked "not verified" — useful when you
+                      still decoded but marked "not verified". Useful when you
                       front multiple tenants with different secrets.
                     </p>
                   </div>
@@ -698,7 +698,7 @@ export default function Hosts() {
                       <p className="text-[11px] text-muted-foreground mt-0.5">
                         Persists the original signed JWT in <code className="font-mono">http_logs.raw_jwt</code> so support
                         flows can replay or decode it. Each reveal is audit-logged.
-                        Off by default — only turn on for hosts where this is
+                        Off by default. Only turn on for hosts where this is
                         explicitly accepted, since the column carries valid
                         credentials until they expire.
                       </p>

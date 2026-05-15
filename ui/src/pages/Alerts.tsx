@@ -156,7 +156,7 @@ export default function Alerts() {
             Alerts
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Correlation engine output. Grouped by fingerprint — occurrences show repeats inside the cooldown window.
+            Correlation engine output. Grouped by fingerprint. Occurrences show repeats inside the cooldown window.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={load} disabled={loading}>

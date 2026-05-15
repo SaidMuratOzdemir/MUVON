@@ -119,7 +119,7 @@ export function SystemUpgradePanel() {
           </p>
           <p>
             Hibrit kurulumda: önce central, sonra her edge agent. Agent'lar bu
-            butondan etkilenmez — onları kendi sunucularında{' '}
+            butondan etkilenmez. Onları kendi sunucularında{' '}
             <code className="font-mono text-foreground">install-agent.sh</code>{' '}
             ile güncellersin.
           </p>
@@ -132,7 +132,7 @@ export function SystemUpgradePanel() {
             >
               CHANGELOG <ArrowUpRight className="h-3 w-3" />
             </a>
-            — sürüm notlarını oku.
+            sürüm notlarını oku.
           </p>
         </div>
       </div>
@@ -141,7 +141,8 @@ export function SystemUpgradePanel() {
         open={upgradeOpen}
         onClose={() => setUpgradeOpen(false)}
         onCompleted={() => refresh()}
-        currentTag={running?.tag ?? 'latest'}
+        currentTag={running?.tag ?? ''}
+        latestTag={latest?.tag}
       />
     </div>
   )
