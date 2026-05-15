@@ -36,6 +36,12 @@ type Agent struct {
 	// LastRemoteAddr in private-network topologies is the agent's
 	// private interface and useless for DNS verification.
 	PublicIP         string     `json:"public_ip"`
+	// ExtraMounts are operator-defined host paths the agent should bind
+	// read-only into its container so the embedded deployer can read
+	// env files / managed-component mount sources sitting anywhere on
+	// the host filesystem. UI-managed; agent picks the list up on every
+	// config pull and applies it via agent.self_upgrade.
+	ExtraMounts      []string   `json:"extra_mounts"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
@@ -50,14 +56,22 @@ func hashAPIKey(key string) []byte {
 
 const agentSelectCols = `id, name, api_key, is_active, last_seen_at,
 	last_config_pull_at, config_version, last_remote_addr, last_user_agent,
-	public_ip, created_at, updated_at`
+	public_ip, extra_mounts, created_at, updated_at`
 
 func scanAgent(scan func(...any) error) (Agent, error) {
 	var a Agent
+	var extra []string
 	err := scan(&a.ID, &a.Name, &a.APIKey, &a.IsActive, &a.LastSeenAt,
 		&a.LastConfigPullAt, &a.ConfigVersion, &a.LastRemoteAddr, &a.LastUserAgent,
-		&a.PublicIP, &a.CreatedAt, &a.UpdatedAt)
-	return a, err
+		&a.PublicIP, &extra, &a.CreatedAt, &a.UpdatedAt)
+	if err != nil {
+		return a, err
+	}
+	if extra == nil {
+		extra = []string{}
+	}
+	a.ExtraMounts = extra
+	return a, nil
 }
 
 func (d *DB) ListAgents(ctx context.Context) ([]Agent, error) {
@@ -167,6 +181,26 @@ func (d *DB) GetAgent(ctx context.Context, id string) (Agent, error) {
 		return a, fmt.Errorf("get agent: %w", err)
 	}
 	return a, nil
+}
+
+// UpdateAgentExtraMounts replaces the operator-managed bind-mount list
+// for an agent. The agent picks up the new list on its next config pull;
+// applying the mounts to the live container requires a subsequent
+// agent.self_upgrade (which rewrites compose and recreates).
+func (d *DB) UpdateAgentExtraMounts(ctx context.Context, id string, mounts []string) error {
+	if mounts == nil {
+		mounts = []string{}
+	}
+	tag, err := d.Pool.Exec(ctx,
+		`UPDATE agents SET extra_mounts = $2, updated_at = now() WHERE id = $1`,
+		id, mounts)
+	if err != nil {
+		return fmt.Errorf("update agent extra_mounts: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 func (d *DB) DeleteAgent(ctx context.Context, id string) error {

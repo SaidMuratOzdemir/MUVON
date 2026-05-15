@@ -748,6 +748,14 @@ export async function deleteAgent(id: string): Promise<void> {
   return request<void>("DELETE", `/api/agents/${id}`);
 }
 
+// updateAgentMounts replaces the operator-managed bind-mount list.
+// Empty / whitespace entries are dropped server-side. The agent picks
+// the new list up on its next config pull; applying it to the live
+// container requires firing agent.self_upgrade afterwards.
+export async function updateAgentMounts(id: string, mounts: string[]): Promise<{ extra_mounts: string[] }> {
+  return request<{ extra_mounts: string[] }>("PATCH", `/api/agents/${id}/mounts`, { extra_mounts: mounts });
+}
+
 // ---------------------------------------------------------------------------
 // Agent commands — central → agent control plane
 // ---------------------------------------------------------------------------

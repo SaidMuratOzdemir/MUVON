@@ -115,6 +115,15 @@ func (s *Service) HandleConfig(w http.ResponseWriter, r *http.Request) {
 	agentID, _ := r.Context().Value(agentIDKey).(string)
 	payload := config.AgentPayloadFromConfig(cfg, agentID)
 	payload.Version = s.holder.Version()
+	// Operator-managed extra bind mounts live on the agent row, not in
+	// the global config snapshot. Read the row inline so the payload is
+	// self-contained and the agent never has to make a second request
+	// to learn what to mount.
+	if agentID != "" {
+		if ag, err := s.db.GetAgent(r.Context(), agentID); err == nil {
+			payload.ExtraMounts = ag.ExtraMounts
+		}
+	}
 
 	if agentID != "" {
 		// Stamp the agent row with the version they just pulled, plus the

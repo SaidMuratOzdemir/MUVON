@@ -1035,4 +1035,15 @@ CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_recent
               ADD COLUMN IF NOT EXISTS target_agent_id TEXT
                   REFERENCES agents(id) ON DELETE SET NULL;`,
 	},
+	// Operator-managed extra mount paths the edge agent should expose to
+	// its embedded deployer (host bind, ro). Lets operators point a
+	// managed component's env_file_path or mounts.source at any host
+	// directory without SSH-editing the agent's compose file. Agent
+	// receives this list via /api/v1/agent/config and threads it into
+	// the helper container during agent.self_upgrade so compose is
+	// rewritten + recreated with the new mounts.
+	{
+		name: "add_agents_extra_mounts", product: "muvon",
+		sql: `ALTER TABLE agents ADD COLUMN IF NOT EXISTS extra_mounts TEXT[] NOT NULL DEFAULT '{}';`,
+	},
 }

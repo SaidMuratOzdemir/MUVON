@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   Plus, Trash2, Copy, Check, Server, KeyRound,
   RefreshCw, Terminal, ChevronDown, ChevronRight, Wifi, WifiOff,
+  Save, Loader2, FolderTree,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
@@ -92,6 +94,99 @@ AGENT_LOG_ADDR=<your-central-host>:9001`
             {' '}<span className="opacity-70">(agent: {agent.id.slice(0, 8)})</span>
           </p>
         </div>
+      )}
+    </div>
+  )
+}
+
+// ExtraMountsEditor lets the operator pin host directories to the agent's
+// container at run time. Edits the agents.extra_mounts column through the
+// admin API; the agent picks the new list up on its next config pull and
+// the next agent.self_upgrade fires the helper container that rewrites
+// compose. UI shows a banner reminding the operator that save alone
+// doesn't mount — they still need to fire self_upgrade from the action
+// menu (or it happens implicitly during the next upgrade).
+function ExtraMountsEditor({
+  agentID, initial, onSaved,
+}: {
+  agentID: string
+  initial: string[]
+  onSaved: () => void
+}) {
+  const [text, setText] = useState(initial.join('\n'))
+  const [saved, setSaved] = useState(initial.join('\n'))
+  const [saving, setSaving] = useState(false)
+  const [restarting, setRestarting] = useState(false)
+  const isDirty = text !== saved
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const mounts = text.split('\n').map(s => s.trim()).filter(Boolean)
+      await api.updateAgentMounts(agentID, mounts)
+      setSaved(mounts.join('\n'))
+      setText(mounts.join('\n'))
+      toast.success('Mount yolları kaydedildi')
+      onSaved()
+    } catch (err) {
+      toast.error(err instanceof api.ApiError ? err.message : 'Kayıt başarısız')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleSaveAndApply() {
+    setSaving(true)
+    try {
+      const mounts = text.split('\n').map(s => s.trim()).filter(Boolean)
+      await api.updateAgentMounts(agentID, mounts)
+      setSaved(mounts.join('\n'))
+      setText(mounts.join('\n'))
+      setSaving(false)
+      setRestarting(true)
+      await api.enqueueAgentCommand(agentID, { kind: 'agent.self_upgrade' })
+      toast.success('Mount yolları kaydedildi + agent recreate kuyruğa alındı')
+      onSaved()
+    } catch (err) {
+      toast.error(err instanceof api.ApiError ? err.message : 'İşlem başarısız')
+    } finally {
+      setSaving(false)
+      setRestarting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded border border-border/60 bg-background/40 p-3">
+      <div className="flex items-center gap-2">
+        <FolderTree className="h-3.5 w-3.5 text-muted-foreground" />
+        <Label className="text-xs font-medium">Ek host mount yolları</Label>
+        {isDirty && <Badge variant="outline" className="text-[10px] text-yellow-400 border-yellow-400/40">unsaved</Badge>}
+      </div>
+      <Textarea
+        placeholder={'/opt/tatilji\n/opt/another-app'}
+        value={text}
+        onChange={e => setText(e.target.value)}
+        rows={3}
+        className="font-mono text-xs resize-y bg-background/60"
+      />
+      <p className="text-[11px] text-muted-foreground">
+        Her satır bir host yolu. Agent container'a <code className="font-mono">ro</code> mount edilir.
+        Mevcut <code className="font-mono">/opt/envfiles</code> default mount'unun üstüne eklenir.
+      </p>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" disabled={!isDirty || saving || restarting} onClick={handleSave}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+          Kaydet
+        </Button>
+        <Button size="sm" disabled={(!isDirty && saved === text) || saving || restarting} onClick={handleSaveAndApply}>
+          {(saving || restarting) ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+          Kaydet ve uygula (recreate)
+        </Button>
+      </div>
+      {!isDirty && saved && (
+        <p className="text-[11px] text-muted-foreground">
+          Mount'lar canlıya almak için <code className="font-mono">agent.self_upgrade</code> komutu gerekli — yukarıdaki <strong>"Kaydet ve uygula"</strong> tuşu ikisini birlikte yapar.
+        </p>
       )}
     </div>
   )
@@ -308,6 +403,12 @@ export default function Agents() {
                   ) : null}
                 </div>
               )}
+
+              <ExtraMountsEditor
+                agentID={agent.id}
+                initial={agent.extra_mounts ?? []}
+                onSaved={() => { void load() }}
+              />
 
               <AgentCommandHistory agentID={agent.id} refreshKey={historyRefresh} />
 

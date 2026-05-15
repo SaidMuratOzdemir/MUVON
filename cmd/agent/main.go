@@ -270,9 +270,10 @@ func main() {
 			slog.Warn("agent command channel disabled", "error", err)
 		} else {
 			reg := buildCommandRegistry(agentCommandDeps{
-				dockerCli:  dockerCli,
-				tlsMgr:     tlsMgr,
-				dockerSock: *dockerSocket,
+				dockerCli:   dockerCli,
+				tlsMgr:      tlsMgr,
+				dockerSock:  *dockerSocket,
+				extraMounts: src.LastExtraMounts,
 			})
 			pc := agentctrl.NewPollClient(*centralURL, *apiKey, signingKey, reg)
 			go pc.Run(ctx)

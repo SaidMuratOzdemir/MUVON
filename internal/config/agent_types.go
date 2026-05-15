@@ -19,6 +19,13 @@ type AgentPayload struct {
 	// fails with "no backend configured". Central knows the list
 	// because the deployer reports instance lifecycle to it.
 	ManagedBackends []db.ManagedBackend `json:"managed_backends,omitempty"`
+	// ExtraMounts is the operator-defined list of host bind-mount paths
+	// the agent should expose to its container (read-only). The agent
+	// stores this list in memory and threads it into the helper
+	// container when agent.self_upgrade rewrites compose. UI-managed;
+	// initial install can still pass --mount on install-agent.sh but
+	// the source of truth is the agents.extra_mounts column.
+	ExtraMounts []string `json:"extra_mounts,omitempty"`
 	// Version is an opaque short string identifying this snapshot. Agents
 	// echo it back via X-Config-Version on the next pull / SSE reconnect
 	// so central can distinguish "agent missed the push" from "agent

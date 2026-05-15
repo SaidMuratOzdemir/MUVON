@@ -35,6 +35,13 @@ type AgentSource struct {
 	lastVersionMu sync.RWMutex
 	lastVersion   string
 
+	// extraMounts is the operator-managed bind-mount list from the most
+	// recent config pull. Stored here (not in the Holder/Config) because
+	// it's a deployment-time concern that only the self_upgrade command
+	// reads, never the hot proxy path.
+	extraMountsMu sync.RWMutex
+	extraMounts   []string
+
 	// cachePath is an optional disk path where the most recently
 	// successful AgentPayload is stored. Init reads it when central is
 	// unreachable so the proxy can start serving stale-but-working
@@ -55,6 +62,24 @@ func NewAgentSource(centralURL, apiKey string) *AgentSource {
 // to last_remote_addr, which is fine for non-NAT setups).
 func (s *AgentSource) SetPublicIP(ip string) {
 	s.publicIP = strings.TrimSpace(ip)
+}
+
+// LastExtraMounts returns the operator-managed bind paths from the most
+// recent config pull. Callers (agent.self_upgrade handler) consult this
+// to thread the list into the helper container that rewrites compose.
+// Empty slice = no extra mounts configured.
+func (s *AgentSource) LastExtraMounts() []string {
+	s.extraMountsMu.RLock()
+	defer s.extraMountsMu.RUnlock()
+	out := make([]string, len(s.extraMounts))
+	copy(out, s.extraMounts)
+	return out
+}
+
+func (s *AgentSource) setExtraMounts(m []string) {
+	s.extraMountsMu.Lock()
+	s.extraMounts = m
+	s.extraMountsMu.Unlock()
 }
 
 // EnableLocalCache routes successful Loads through `path` (atomic
@@ -90,6 +115,7 @@ func (s *AgentSource) LoadCached() (*Config, error) {
 	if payload.Version != "" {
 		s.setLastVersion(payload.Version)
 	}
+	s.setExtraMounts(payload.ExtraMounts)
 	cfg := payload.ToConfig()
 	slog.Warn("config loaded from local cache (central unreachable)",
 		"hosts", len(cfg.Hosts), "cached_version", payload.Version, "path", s.cachePath)
@@ -166,6 +192,9 @@ func (s *AgentSource) Load(ctx context.Context) (*Config, error) {
 	if payload.Version != "" {
 		s.setLastVersion(payload.Version)
 	}
+	// Operator-managed bind paths — stash them so the self_upgrade
+	// handler can hand them off to the helper container later.
+	s.setExtraMounts(payload.ExtraMounts)
 	// Persist the verbatim payload (not the lossy *Config view) so a
 	// cold-start can rebuild every field — including ones ToConfig
 	// flattens for runtime use.

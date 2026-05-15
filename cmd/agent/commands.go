@@ -48,6 +48,11 @@ type agentCommandDeps struct {
 	// drainState toggles the proxy's "refuse new connections" mode.
 	// Set by main.go before passing deps in.
 	drainState *atomic.Bool
+	// extraMounts returns the operator-managed bind-mount list from the
+	// most recent config pull. self_upgrade hands the list off to the
+	// helper container that rewrites compose. nil callback = no extra
+	// mounts (legacy behaviour).
+	extraMounts func() []string
 }
 
 func buildCommandRegistry(deps agentCommandDeps) *agentctrl.Registry {
@@ -216,10 +221,35 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 			sedLine = fmt.Sprintf(`sed -i -E "s|(ghcr\\.io/[^:]+/agent):[^[:space:]\"]*|\\1:%s|g" docker-compose.agent.yml`, targetTag)
 		}
 
+		// Operator-managed extra bind mounts. Helper container reads
+		// EXTRA_MOUNTS (space-separated host paths), drops every line
+		// that bind-mounts a "$path:$path:ro" pair, then re-inserts the
+		// current list right after the docker.sock mount. This makes
+		// the helper's behaviour idempotent: removing a path from the
+		// UI on next config pull cleans it out of compose too.
+		var mounts []string
+		if deps.extraMounts != nil {
+			mounts = deps.extraMounts()
+		}
+		mountsEnv := strings.Join(mounts, " ")
+		mountSyncScript := strings.Join([]string{
+			`# Strip any previously-injected operator mount lines (idempotent).`,
+			`sed -i -E "\|^[[:space:]]+- /[^:]+:[^:]+:ro[[:space:]]*$|d" docker-compose.agent.yml || true`,
+			`# Re-insert current AGENT_EXTRA_MOUNTS list after docker.sock anchor.`,
+			`if [ -n "$EXTRA_MOUNTS" ]; then`,
+			`  for path in $EXTRA_MOUNTS; do`,
+			`    [ -z "$path" ] && continue`,
+			`    sed -i -E "/^[[:space:]]+- \/var\/run\/docker\.sock:/a\\`,
+			`      - $path:$path:ro" docker-compose.agent.yml`,
+			`  done`,
+			`fi`,
+		}, "\n")
+
 		script := strings.Join([]string{
 			"set -ex",
 			"cd " + helperHostMnt,
 			sedLine,
+			mountSyncScript,
 			"docker compose -p " + projectName + " -f docker-compose.agent.yml pull agent",
 			"docker compose -p " + projectName + " -f docker-compose.agent.yml up -d --no-deps --wait --wait-timeout 90 agent",
 		}, "\n")
@@ -238,6 +268,9 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 			Image: "docker:27-cli",
 			Name:  name,
 			Cmd:   []string{"sh", "-c", script},
+			Env: map[string]string{
+				"EXTRA_MOUNTS": mountsEnv,
+			},
 			Binds: []string{
 				"/var/run/docker.sock:/var/run/docker.sock",
 				hostDir + ":" + helperHostMnt,
@@ -273,6 +306,9 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 		out := "spawned " + name + " — agent will be recreated"
 		if targetTag != "" && targetTag != "latest" {
 			out += " (target tag: " + targetTag + ")"
+		}
+		if mountsEnv != "" {
+			out += " (extra_mounts: " + mountsEnv + ")"
 		}
 		return agentctrl.Result{Output: out}, nil
 	}

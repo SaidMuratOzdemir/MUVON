@@ -166,6 +166,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/agents", s.handleListAgents)
 	api.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	api.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
+	api.HandleFunc("PATCH /api/agents/{id}/mounts", s.handleUpdateAgentMounts)
 	api.HandleFunc("POST /api/agents/{id}/commands", s.handleEnqueueAgentCommand)
 	api.HandleFunc("GET /api/agents/{id}/commands", s.handleListAgentCommands)
 

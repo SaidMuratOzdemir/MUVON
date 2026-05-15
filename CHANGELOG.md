@@ -27,6 +27,65 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.23] - 2026-05-15
+
+### FEATURES
+
+- **Agent extra bind mounts UI-managed**: Operator artık edge agent'a
+  expose edilecek ek host bind-mount yollarını central admin panelinden
+  yönetir. Agents → bir agent satırı genişlet → "Ek host mount yolları"
+  textarea'ya satır başına bir path. **Kaydet** sadece DB'ye yazar,
+  **Kaydet ve uygula (recreate)** ek olarak `agent.self_upgrade` komutu
+  tetikleyerek agent'ın helper container'ı üzerinden compose'unu
+  yeniden yazıp container'ı recreate etmesini sağlar — operator SSH'a
+  girmek zorunda kalmaz.
+
+  Akış:
+  ```
+  UI edit → PATCH /api/agents/{id}/mounts → agents.extra_mounts DB
+                                                  ↓
+  Agent config pull → AgentPayload.ExtraMounts (memory'de)
+                                                  ↓
+  agent.self_upgrade → helper container EXTRA_MOUNTS env'i ile çalışır
+                       → compose dosyasına ro mount satırlarını idempotent
+                         olarak ekler (eski operatör mount'ları temizler,
+                         yeni listeyi insert eder)
+                       → docker compose up -d --no-deps --wait agent
+                                                  ↓
+  Yeni agent container'da extra mount'lar aktif → embedded deployer
+  o yollardaki env file'lar / managed component mount source'larını
+  açabilir
+  ```
+
+  v0.1.22'nin `install-agent.sh --mount` flag'i initial bootstrap için
+  hâlâ destekleniyor; sonraki yönetim UI'dan. `.env`'deki
+  `AGENT_EXTRA_MOUNTS` artık merkezi otorite değil — central DB
+  state'i source of truth.
+
+- **Yeni admin endpoint**: `PATCH /api/agents/{id}/mounts` — request
+  body `{"extra_mounts": ["/opt/tatilji", ...]}`. Boş/whitespace
+  girdiler düşürülür, audit log entry yazılır, config reload
+  tetiklenir.
+
+### Schema (forward-only)
+
+- `agents` tablosuna `extra_mounts TEXT[] NOT NULL DEFAULT '{}'`
+  eklendi.
+
+### Upgrade notları
+
+- Central + agent ikisini de v0.1.23'e alın (payload yeni field
+  taşıyor). Eski agent yeni field'ı yoksayar, problem değil; eski
+  central yeni agent'a göndermeyi bilmediği için extra mount'lar
+  uygulanmaz, semantik bozulmaz.
+- Mevcut `--mount` CLI flag ile kurulmuş agent'lar: install zamanı
+  set edilen `AGENT_EXTRA_MOUNTS` `.env` değeri **silinmiyor**,
+  ama agent self_upgrade sonrası compose'a artık DB'deki liste
+  uygulanır. Geçiş sırasında çakışma riski yok çünkü her iki kaynak
+  da aynı path'leri içerebilir.
+
+---
+
 ## [0.1.22] - 2026-05-15
 
 ### BUGFIXES

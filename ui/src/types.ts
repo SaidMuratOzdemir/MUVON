@@ -234,6 +234,10 @@ export interface Agent {
   // Agent self-reported public IP — what central considers the correct
   // DNS target for any host that should resolve to this agent.
   public_ip?: string;
+  // Operator-managed extra bind-mount paths the agent should expose to
+  // its embedded deployer. UI edits this; the agent picks the list up
+  // on the next config pull and applies it via agent.self_upgrade.
+  extra_mounts?: string[];
   created_at: string;
   updated_at: string;
 }
