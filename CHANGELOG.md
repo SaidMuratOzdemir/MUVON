@@ -23,14 +23,29 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+— henüz birikme yok.
+
+---
+
+## [0.1.8] - 2026-05-15
+
 ### FEATURES
 
 - **UI: ComponentEditorDialog → Mounts editor**: "Gelişmiş" sekmesinde
   bind/volume/tmpfs satırları. Backend (`deploy_components.mounts`
   JSONB + deployer `HostConfig.Mounts`) zaten vardı, sadece UI eksikti.
-  Host-secret-file pattern'i için kritik: kullanıcı DB credentials'ını
-  `/opt/.../api.env` gibi bir host dosyasına yazar, MUVON'un env_secret_keys'ine koymadan
-  container'a bind eder. MUVON sadece mount path'ini bilir, içeriği değil.
+  Host-secret-file pattern'i için kritik: operatör DB credentials'ını
+  `/opt/<app>/api.env` gibi bir host dosyasına yazar, MUVON'un
+  env_secret_keys'ine koymadan container'a bind eder. MUVON sadece
+  mount path'ini bilir, içeriği değil.
+
+### Upgrade notları
+
+```bash
+ssh <central> 'cd /opt/muvon && bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.1.8 --yes'
+```
+
+Veya admin panel: Settings → Sistem → **"v0.1.8'e güncelle"** butonu.
 
 ---
 
