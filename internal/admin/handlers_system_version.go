@@ -36,18 +36,19 @@ func (s *Server) handleSystemVersion(w http.ResponseWriter, r *http.Request) {
 // the immutable digest — digest is the one the operator pins for
 // audit, tag is the one they pick from the dropdown.
 type latestVersionResponse struct {
-	Tag    string `json:"tag"`
-	Digest string `json:"digest"`
-	// FetchedAt is when this row was last pulled from GHCR — cached for
-	// 5 minutes so opening the Settings page doesn't hammer the registry.
+	// Tag is the highest semver release tag visible on GitHub (e.g. "v0.1.4").
+	Tag string `json:"tag"`
+	// Digest of the GHCR :latest image, kept for audit display only —
+	// NOT used for UpdateAvailable comparison (two CI runs on the same
+	// commit produce different digests, so digest equality is unreliable).
+	Digest    string `json:"digest,omitempty"`
 	FetchedAt string `json:"fetched_at"`
-	// UpdateAvailable is a derived flag: true iff Digest differs from
-	// the running container's image digest. UI uses this for the badge.
+	// UpdateAvailable: semver(latest) > semver(running).
 	UpdateAvailable bool `json:"update_available"`
-	// Error surfaces transient registry failures (rate limit, DNS) so
-	// the UI can show a degraded state instead of a misleading "you're
-	// up to date" badge.
-	Error string `json:"error,omitempty"`
+	// Running is the binary's own ldflags-injected version, echoed back
+	// so the UI can render both sides without a separate /version call.
+	Running string `json:"running,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 // ghcrCache memoises the most recent registry probe. GHCR allows token-
@@ -64,6 +65,80 @@ type ghcrCache struct {
 var registryCache ghcrCache
 
 const registryCacheTTL = 5 * time.Minute
+
+// fetchLatestSemverTag asks GitHub's anonymous repo-tags API for the
+// highest-semver `vX.Y.Z` tag. This is more reliable than reading the
+// :latest manifest digest because two CI runs on the same commit (main
+// push + tag push) produce different digests, so digest equality
+// constantly false-positives "update available".
+func fetchLatestSemverTag(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://api.github.com/repos/SaidMuratOzdemir/MUVON/tags?per_page=50", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return "", fmt.Errorf("github tags: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github tags status %d", resp.StatusCode)
+	}
+	var tags []struct{ Name string }
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return "", fmt.Errorf("github tags decode: %w", err)
+	}
+	var best string
+	for _, t := range tags {
+		if !isStrictSemverTag(t.Name) {
+			continue
+		}
+		if best == "" || compareSemverTags(t.Name, best) > 0 {
+			best = t.Name
+		}
+	}
+	if best == "" {
+		return "", fmt.Errorf("no semver tags found")
+	}
+	return best, nil
+}
+
+func isStrictSemverTag(s string) bool {
+	s = strings.TrimPrefix(s, "v")
+	parts := strings.Split(s, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// compareSemverTags returns negative/zero/positive matching strings.Compare.
+// Assumes both inputs already pass isStrictSemverTag.
+func compareSemverTags(a, b string) int {
+	pa := strings.Split(strings.TrimPrefix(a, "v"), ".")
+	pb := strings.Split(strings.TrimPrefix(b, "v"), ".")
+	for i := 0; i < 3; i++ {
+		ai, bi := 0, 0
+		fmt.Sscanf(pa[i], "%d", &ai)
+		fmt.Sscanf(pb[i], "%d", &bi)
+		if ai != bi {
+			return ai - bi
+		}
+	}
+	return 0
+}
 
 // imageNameFor maps the service slug to its GHCR image. Hard-coded
 // because the operator panel is built into the muvon binary; the agent
@@ -166,30 +241,28 @@ func (s *Server) runningImageDigest(ctx context.Context) string {
 }
 
 func (s *Server) handleSystemVersionLatest(w http.ResponseWriter, r *http.Request) {
+	runningTag := version.Version
+
 	// Cache hit?
 	registryCache.mu.RLock()
-	if time.Since(registryCache.fetchedAt) < registryCacheTTL && registryCache.digest != "" {
+	if time.Since(registryCache.fetchedAt) < registryCacheTTL && registryCache.tag != "" {
 		cached := latestVersionResponse{
 			Tag:       registryCache.tag,
 			Digest:    registryCache.digest,
 			FetchedAt: registryCache.fetchedAt.UTC().Format(time.RFC3339),
+			Running:   runningTag,
 		}
 		registryCache.mu.RUnlock()
-		// Compare against running digest fresh — host swap shouldn't
-		// be hidden behind the cache.
-		running := s.runningImageDigest(r.Context())
-		cached.UpdateAvailable = running != "" && running != cached.Digest
+		cached.UpdateAvailable = semverNewer(cached.Tag, runningTag)
 		writeJSON(w, http.StatusOK, cached)
 		return
 	}
 	registryCache.mu.RUnlock()
 
-	// Cache miss — hit GHCR.
-	// Bound the request so a slow registry doesn't tie up the admin
-	// handler indefinitely.
+	// Cache miss — fetch from GitHub Tags API.
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
-	digest, err := fetchLatestDigest(ctx, "muvon", "latest")
+	tag, err := fetchLatestSemverTag(ctx)
 
 	registryCache.mu.Lock()
 	defer registryCache.mu.Unlock()
@@ -197,21 +270,34 @@ func (s *Server) handleSystemVersionLatest(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		registryCache.lastErr = err.Error()
 		writeJSON(w, http.StatusOK, latestVersionResponse{
-			Tag:       "latest",
 			FetchedAt: registryCache.fetchedAt.UTC().Format(time.RFC3339),
+			Running:   runningTag,
 			Error:     err.Error(),
 		})
 		return
 	}
-	registryCache.tag = "latest"
+	// Best-effort: also fetch the :latest manifest digest for display.
+	// Failure here doesn't surface as an error to the UI.
+	digest, _ := fetchLatestDigest(ctx, "muvon", tag)
+	registryCache.tag = tag
 	registryCache.digest = digest
 	registryCache.lastErr = ""
 
-	running := s.runningImageDigest(r.Context())
 	writeJSON(w, http.StatusOK, latestVersionResponse{
-		Tag:             "latest",
+		Tag:             tag,
 		Digest:          digest,
 		FetchedAt:       registryCache.fetchedAt.UTC().Format(time.RFC3339),
-		UpdateAvailable: running != "" && running != digest,
+		Running:         runningTag,
+		UpdateAvailable: semverNewer(tag, runningTag),
 	})
+}
+
+// semverNewer returns true if `latest` is a strictly higher semver
+// than `running`. Anything non-semver on either side returns false
+// (no false-positive update prompt for `dev`, `latest`, etc.).
+func semverNewer(latest, running string) bool {
+	if !isStrictSemverTag(latest) || !isStrictSemverTag(running) {
+		return false
+	}
+	return compareSemverTags(latest, running) > 0
 }

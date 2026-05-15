@@ -23,7 +23,20 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-— henüz birikme yok.
+### BUGFIXES
+
+- **System upgrade false-positive "yeni sürüm var"**: `/api/system/
+  version/latest` artık GHCR `:latest` digest'i yerine GitHub Tags
+  API'sini sorgulayıp en yüksek semver release tag'ini döndürür;
+  `update_available` semver karşılaştırmasından hesaplanır. Eskiden aynı
+  commit'in main + tag push'larının farklı image digest üretmesi yüzünden
+  UI sürekli "Yeni sürüm mevcut" diyordu.
+- **CI `:latest` semantiği**: `:latest` artık yalnız v tag push'unda
+  atılır (main push'lar sadece `:sha-XXX`, `:main` üretir). GHCR'daki
+  `:latest` her zaman en güncel resmi release'e işaret eder, dev
+  iterasyonlarına değil.
+- **UI: SystemUpgradePanel display**: "GHCR :latest" digest sütunu
+  yerine "Son release" semver tag'i gösterir.
 
 ---
 

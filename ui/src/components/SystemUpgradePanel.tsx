@@ -10,15 +10,10 @@ import { cn } from '@/lib/utils'
 import { UpgradeModal } from '@/components/UpgradeModal'
 
 /**
- * Settings → Sistem'in baş kartı. Çalışan sürümü ve GHCR'daki son
- * sürümü yan yana gösterir. Eşitse "Güncel" badge'i, değilse "Yeni
- * sürüm mevcut" + "Güncelle" butonu.
- *
- * Versiyon karşılaştırması digest düzeyinde yapılır — semver tag yerine
- * Docker'in immutable content addressini (sha256:...) bazını alır.
- * Aynı tag'in farklı build'leri (örn. `:latest`'i CI bir kez daha push
- * ettiğinde) digest değişir, bu da kullanıcıya "patch geldi" sinyalini
- * doğru verir.
+ * Settings → Sistem'in baş kartı. Çalışan sürüm vs GitHub'daki en yüksek
+ * semver release. `update_available` semver karşılaştırmasından gelir
+ * (digest değil — aynı commit'in main+tag push'ları farklı digest
+ * üretir, digest karşılaştırması false-positive verirdi).
  */
 export function SystemUpgradePanel() {
   const [running, setRunning] = useState<api.SystemVersion | null>(null)
@@ -76,10 +71,10 @@ export function SystemUpgradePanel() {
           </div>
           <div className="space-y-1">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
-              GHCR :latest
+              Son release
             </p>
             <p className="text-sm font-mono break-all">
-              {loading ? '...' : (latest?.digest ? latest.digest.slice(7, 19) : (latest?.error ? '—' : 'bilinmiyor'))}
+              {loading ? '...' : (latest?.tag || (latest?.error ? '—' : 'bilinmiyor'))}
             </p>
           </div>
         </div>

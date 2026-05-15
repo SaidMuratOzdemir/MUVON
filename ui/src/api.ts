@@ -861,9 +861,10 @@ export interface SystemVersion {
 
 export interface SystemVersionLatest {
   tag: string
-  digest: string
+  digest?: string
   fetched_at: string
   update_available: boolean
+  running?: string
   error?: string
 }
 

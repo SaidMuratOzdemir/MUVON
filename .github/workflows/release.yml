@@ -45,15 +45,18 @@ jobs:
           #   (patch-pin), VERSION=v1.2 (minor-pin) veya VERSION=latest
           #   ile seçtiği konservatiflikte takipte kalabilir.
           # - main push'unda yalnızca sha-XXXXXXX ve branch adı.
-          # - latest yalnızca main push'unda yenilenir (tag push'unda
-          #   semver pattern'i zaten latest'i kapsar).
+          # :latest yalnızca v tag push'unda yenilenir. Main push'lar
+          # sadece :sha-XXX + :main üretir (dev artifact). Bu sayede
+          # GHCR'da :latest her zaman en son resmi release'e işaret eder
+          # ve aynı commit'in main+tag push'larından farklı digest çıksa
+          # bile UI doğru karşılaştırma yapar.
           tags: |
             type=sha,prefix=sha-,format=short
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Compute VERSION
         id: version
