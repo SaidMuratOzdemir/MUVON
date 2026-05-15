@@ -309,8 +309,8 @@ function ProjectSettingsDialog({
                 </Button>
               </div>
               <div className="space-y-2">
-                {project.components.map((c: DeployComponent) => {
-                  const inst = project.instances.find(i => i.component_id === c.id && i.state === 'active')
+                {(project.components ?? []).map((c: DeployComponent) => {
+                  const inst = (project.instances ?? []).find(i => i.component_id === c.id && i.state === 'active')
                   const secretCount = (c.env_secret_keys ?? []).length
                   const envCount = Object.keys(c.env ?? {}).length
                   return (
@@ -842,8 +842,8 @@ export default function Apps({ hostFilter }: AppsProps = {}) {
                   <span className="text-[10px] font-mono text-muted-foreground">{proj.project.slug}</span>
                 </div>
                 <div className="flex gap-1.5 mt-1.5 flex-wrap">
-                  {proj.components.map(c => {
-                    const inst = proj.instances.find(i => i.component_id === c.id && i.state === 'active')
+                  {(proj.components ?? []).map(c => {
+                    const inst = (proj.instances ?? []).find(i => i.component_id === c.id && i.state === 'active')
                     return (
                       <Badge
                         key={c.id}

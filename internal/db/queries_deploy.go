@@ -312,6 +312,12 @@ func (d *DB) ListDeployProjects(ctx context.Context) ([]DeployProjectSummary, er
 		if err != nil {
 			return nil, err
 		}
+		if components == nil {
+			components = []DeployComponent{}
+		}
+		if instances == nil {
+			instances = []DeployInstance{}
+		}
 		summaries[i].Components = components
 		summaries[i].Instances = instances
 	}

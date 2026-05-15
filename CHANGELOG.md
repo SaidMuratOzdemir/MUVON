@@ -27,6 +27,19 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.9] - 2026-05-15
+
+### BUGFIXES
+
+- **UI: Apps sayfası null instances'ta crash**: Yeni proje oluşturulduktan
+  sonra `instances` boş array yerine `null` dönüyordu (Go nil slice → JSON
+  `null`); `Apps.tsx` iki ayrı yerde `proj.instances.find(...)` çağırdığı
+  için `TypeError: Cannot read properties of null (reading 'find')` ile
+  patlıyordu. Backend `ListDeployProjects` artık nil slice'ları boş array
+  olarak normalize ediyor, frontend de defansif `?? []` ile koruyor.
+
+---
+
 ## [0.1.8] - 2026-05-15
 
 ### FEATURES
