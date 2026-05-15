@@ -27,6 +27,49 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.20] - 2026-05-15
+
+### BUGFIXES
+
+- **`agent.self_upgrade` yeni image'a geçemiyordu**: handler sadece
+  `docker pull` çağırıp `os.Exit(0)` yapıyordu. Docker'ın restart
+  policy'si (`unless-stopped`) container'ı **mevcut image ID'siyle**
+  yeniden başlatır, registry cache'ine yeni inen tag'i kullanmaz.
+  Sonuç: pull başarılı, command "succeeded" döner, ama eski binary
+  çalışmaya devam eder. v0.1.18'den v0.1.19'a geçmek isteyen kullanıcı
+  managed_backends fix'ini alamadığı için "no backend configured" 502
+  hatasıyla kalakaldı.
+
+  Düzeltme: `handleSelfUpgrade` artık sistem-upgrade flow'undaki gibi
+  bir `docker:27-cli` helper container fırlatır. Helper, host'taki
+  `docker-compose.agent.yml`'i bind-mount eder ve `compose pull && up
+  -d --no-deps --wait agent` çalıştırır — daemon container'ı yeni
+  image'la **gerçekten recreate eder**. Helper kendi context'inde
+  (Background) çalıştığı için agent process'i compose tarafından
+  kill edilirken yarıda bırakılmaz. Pinned tag desteği: payload'da
+  `image: ".../agent:0.1.20"` gibi bir override gelirse compose
+  dosyasındaki `:latest` referansı önce sed ile pinned tag'e çevrilir.
+
+### Schema (forward-only)
+
+- `docker-compose.agent.yml`'a `MUVON_HOST_AGENT_DIR` env var eklendi
+  (helper container'ın bind-mount path'ini bilmesi için). install-agent.sh
+  `.env`'e `MUVON_AGENT_DIR=$INSTALL_DIR` yazıyor (default `/opt/muvon-agent`).
+
+### Upgrade notları
+
+- **Tek seferlik manuel adım**: v0.1.19 veya öncesindeki agent'ı yeni
+  self_upgrade handler'a kavuşturmak için install-agent.sh'i bir kez
+  daha çalıştır:
+  ```
+  ssh m1 'curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh | bash'
+  ```
+  Bu compose pull + up yapar (eski self_upgrade'in beceremediği şey),
+  yeni `MUVON_HOST_AGENT_DIR` env var'ı kurar. Sonraki sürümlerde
+  `agent.self_upgrade` UI butonu kendi başına çalışacak.
+
+---
+
 ## [0.1.19] - 2026-05-15
 
 ### BUGFIXES

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -159,32 +160,109 @@ func handleAgentRestart() agentctrl.Handler {
 	}
 }
 
-// handleSelfUpgrade docker-pulls the target image and exits — Docker's
-// restart policy with the new image tag (set in compose via VERSION
-// env) brings us back. Operators trigger this via the central's
-// system-upgrade flow; the agent-side equivalent uses a docker:cli
-// helper container, same as muvon-deployer.
+// handleSelfUpgrade swaps the agent image by spawning a docker:cli helper
+// container that runs `docker compose pull && up -d --no-deps --wait
+// agent` against the host's docker socket — the same pattern central's
+// system-upgrade flow uses to recreate muvon-deployer.
+//
+// The previous implementation just docker-pulled the new image and exited,
+// relying on the daemon's restart policy. That was broken by design:
+// Docker's restart policy reuses the container's existing image ID and
+// ignores newer tags pulled into the cache. The fix has to actually
+// `compose up` to recreate the container with the freshly pulled image.
+//
+// MUVON_HOST_AGENT_DIR is the host path where install-agent.sh keeps
+// docker-compose.agent.yml; the helper container bind-mounts that path
+// so it can run compose against the same project the agent itself was
+// installed from. Default is /opt/muvon-agent (the install-agent.sh
+// default INSTALL_DIR).
 func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 	return func(ctx context.Context, cmd agentctrl.Command) (agentctrl.Result, error) {
 		var p struct {
-			Image string `json:"image"` // optional override
+			Image string `json:"image"` // optional override, e.g. ".../agent:0.1.19"
 		}
 		_ = json.Unmarshal(cmd.Payload, &p)
 		if deps.dockerCli == nil {
 			return agentctrl.Result{}, fmt.Errorf("docker socket unavailable")
 		}
-		if p.Image == "" {
-			p.Image = "ghcr.io/saidmuratozdemir/muvon/agent:latest"
+
+		hostDir := os.Getenv("MUVON_HOST_AGENT_DIR")
+		if hostDir == "" {
+			hostDir = "/opt/muvon-agent"
 		}
-		if err := deps.dockerCli.ImagePull(ctx, p.Image); err != nil {
-			return agentctrl.Result{}, fmt.Errorf("image pull: %w", err)
+
+		// If the operator pinned a specific tag, rewrite the compose file
+		// before pulling so the recreate lands on it. Empty / "latest"
+		// leaves compose untouched.
+		targetTag := ""
+		if i := strings.LastIndex(p.Image, ":"); i > 0 && i < len(p.Image)-1 {
+			targetTag = p.Image[i+1:]
 		}
+		sedLine := ""
+		if targetTag != "" && targetTag != "latest" {
+			sedLine = fmt.Sprintf(`sed -i -E "s|(ghcr\\.io/[^:]+/agent):[^[:space:]\"]*|\\1:%s|g" docker-compose.agent.yml`, targetTag)
+		}
+
+		const helperHostMnt = "/host/agent"
+		script := strings.Join([]string{
+			"set -ex",
+			"cd " + helperHostMnt,
+			sedLine,
+			"docker compose -f docker-compose.agent.yml pull agent",
+			"docker compose -f docker-compose.agent.yml up -d --no-deps --wait --wait-timeout 90 agent",
+		}, "\n")
+
+		// helperCtx is rooted in Background so the helper survives this
+		// agent process exiting — compose-up will kill us partway through.
+		helperCtx, helperCancel := context.WithTimeout(context.Background(), 10*time.Minute)
+
+		if err := deps.dockerCli.ImagePull(helperCtx, "docker:27-cli"); err != nil {
+			helperCancel()
+			return agentctrl.Result{}, fmt.Errorf("pull helper image: %w", err)
+		}
+
+		name := "muvon-agent-upgrader-" + time.Now().UTC().Format("20060102-150405")
+		id, logs, wait, err := deps.dockerCli.RunHelperContainer(helperCtx, deployer.HelperContainerOpts{
+			Image: "docker:27-cli",
+			Name:  name,
+			Cmd:   []string{"sh", "-c", script},
+			Binds: []string{
+				"/var/run/docker.sock:/var/run/docker.sock",
+				hostDir + ":" + helperHostMnt,
+			},
+			Labels:     map[string]string{"muvon.role": "agent-upgrader"},
+			AutoRemove: false,
+			Init:       true,
+		})
+		if err != nil {
+			helperCancel()
+			return agentctrl.Result{}, fmt.Errorf("spawn helper: %w", err)
+		}
+
+		// Drain logs + wait in a detached goroutine. The agent process
+		// itself will be killed as soon as compose recreates the
+		// container; that's fine — the helper finishes the job from
+		// Background context, and the freshly spawned agent picks up
+		// where we left off.
 		go func() {
-			time.Sleep(500 * time.Millisecond)
-			slog.Warn("agent self-upgrade — exiting for image swap", "image", p.Image)
-			os.Exit(0)
+			defer helperCancel()
+			defer logs.Close()
+			dem := deployer.NewLogDemuxer(logs, deployer.DemuxOptions{MaxLine: 32 * 1024})
+			for chunk := range dem.Out() {
+				line := strings.TrimRight(chunk.Line, "\r\n")
+				if line != "" {
+					slog.Info("agent-upgrader", "line", line)
+				}
+			}
+			exit, werr := wait()
+			slog.Info("agent-upgrader done", "name", name, "exit", exit, "error", werr, "container", id)
 		}()
-		return agentctrl.Result{Output: "pulled " + p.Image + " — restarting"}, nil
+
+		out := "spawned " + name + " — agent will be recreated"
+		if targetTag != "" && targetTag != "latest" {
+			out += " (target tag: " + targetTag + ")"
+		}
+		return agentctrl.Result{Output: out}, nil
 	}
 }
 

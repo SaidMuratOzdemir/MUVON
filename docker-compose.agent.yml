@@ -21,6 +21,11 @@ services:
       # Empty disables the X-Agent-Public-IP header (central falls back
       # to last_remote_addr, useful for non-NAT setups).
       AGENT_PUBLIC_IP: ${AGENT_PUBLIC_IP:-}
+      # Host path where install-agent.sh keeps this compose file. The
+      # agent.self_upgrade handler spawns a docker:cli helper container
+      # that bind-mounts this directory and runs `compose up` to
+      # recreate itself with the freshly pulled image.
+      MUVON_HOST_AGENT_DIR: ${MUVON_AGENT_DIR:-/opt/muvon-agent}
 
       # ── Fail-soft startup config cache ─────────────────────────────
       # Central kesintisinde stale-but-working config ile başlar, arka

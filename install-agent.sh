@@ -272,6 +272,7 @@ AGENT_CENTRAL_URL=${CENTRAL_URL}
 AGENT_API_KEY=${API_KEY}
 AGENT_LOG_ADDR=${LOG_ADDR}
 AGENT_PUBLIC_IP=${PUBLIC_IP}
+MUVON_AGENT_DIR=${INSTALL_DIR}
 
 LOG_LEVEL=info
 
@@ -310,6 +311,8 @@ else
   _env_upsert .env AGENT_ENCRYPTION_KEY         ""       ensure
   _env_upsert .env AGENT_DOCKERWATCH_ENABLED    "true"   ensure
   _env_upsert .env AGENT_DOCKERWATCH_MANAGED_ONLY "false" ensure
+  # v0.1.20: self_upgrade helper container needs host path of compose dir
+  _env_upsert .env MUVON_AGENT_DIR              "$INSTALL_DIR" ensure
 
   # v0.1.13: public IP self-report. Boşsa auto-detect dene; başarısızsa boş bırak.
   if ! grep -qE '^AGENT_PUBLIC_IP=' .env; then
