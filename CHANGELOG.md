@@ -27,7 +27,43 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
-## [0.1.29] - 2026-05-16
+## [0.1.30] - 2026-05-16
+
+### FEATURES
+
+- **Canlı container log tail artık agent host'lardaki container'lar için
+  de çalışıyor**: Central admin UI'da Container Logs → Live tab'ında
+  agent makinesindeki bir container'a tıkladığında akış kopmadan
+  başlıyor. Önceki davranışta sadece central host'taki container'lar
+  canlı görülebiliyordu — agent'takiler için "Live tail bağlantısı
+  koptu" düşüyordu çünkü merkezi muvon-deployer agent host'taki
+  Docker socket'ini göremiyor.
+
+  Yeni mimari: agent binary kendi deployer gRPC server'ını private
+  network TCP portunda (default `0.0.0.0:9100`, ports map'lemesi
+  `${AGENT_DEPLOYER_TCP_BIND:-9100}:9100`) yayınlıyor. Central admin
+  container'ın `host_id`'sine bakıp ya local Unix socket deployer'a
+  ya da agent'ın TCP portuna dial ediyor.
+
+  Güvenlik: bearer token HKDF ile `MUVON_ENCRYPTION_KEY`'den türetilir
+  (label `muvon-deployer-rpc-v1`). Token wire'a düz yazılmaz — central
+  ve agent aynı anahtardan aynı token'ı hesaplar. Anahtar yoksa
+  endpoint 503 döner ve listener kalkmaz.
+
+  Operatör adımları:
+  - **Agent**: `install-agent.sh ... --deployer-tcp-bind 10.0.0.3:9100`
+    (kurulum veya update). Update'te `_env_upsert` ile sadece bu satır
+    güncellenir. Çıplak `9100` verirsen 0.0.0.0'a bind eder — public
+    IP'de firewall'la merkeze izin ver.
+  - **Central**: UI → Agents → ilgili agent → "Deployer addr (canlı
+    container log için)" alanına `10.0.0.3:9100` yaz, Kaydet.
+  - **Mapping otomatik**: agent her config pull'da `X-Muvon-Host-Id`
+    header'ı ile self-reports; central `agents.host_id` kolonuna
+    persist eder. Operatör host_id elle eşleme yapmaz.
+
+  Migration `add_agents_host_id_deployer_addr`:
+  iki text kolon (host_id, deployer_addr) + host_id üzerinde partial
+  index. Forward-only; central upgrade edilince otomatik koşar.
 
 ### ENHANCEMENTS
 
