@@ -23,6 +23,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+### ENHANCEMENTS
+
+- **Container Logs listesi artık çalışan'lar üstte sıralanıyor**: live
+  (FinishedAt boş) container'lar üstte, exited olanlar altta. Aynı
+  durum içinde deployer-confirmed (`live=true`) historical-only'nin
+  üstüne çıkıyor; eşitlik halinde en son aktiviteye göre (LastLogAt →
+  StartedAt) azalan, son kırılım container adına göre artan. Eski
+  upgrader/exited container'lar listenin altına iniyor.
+
 ### BUGFIXES
 
 - **Agent SSE config_watch ~60s'de bir kopuyordu**: Merkezi MUVON'un

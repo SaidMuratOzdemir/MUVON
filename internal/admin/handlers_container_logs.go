@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -194,6 +195,34 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, m)
 	}
+
+	// Sort: running first (FinishedAt empty), then exited; within each
+	// bucket newest activity first. "Live" (deployer-confirmed) wins
+	// over historical-only when both look running, so central containers
+	// surface above agent ones at parity.
+	sort.SliceStable(out, func(i, j int) bool {
+		ri := out[i].FinishedAt == ""
+		rj := out[j].FinishedAt == ""
+		if ri != rj {
+			return ri
+		}
+		if out[i].Live != out[j].Live {
+			return out[i].Live
+		}
+		// Newest activity first — LastLogAt (when present) beats StartedAt.
+		ai := out[i].LastLogAt
+		if ai == "" {
+			ai = out[i].StartedAt
+		}
+		aj := out[j].LastLogAt
+		if aj == "" {
+			aj = out[j].StartedAt
+		}
+		if ai != aj {
+			return ai > aj
+		}
+		return out[i].ContainerName < out[j].ContainerName
+	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data":  out,
