@@ -23,6 +23,12 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+— henüz birikme yok.
+
+---
+
+## [0.1.5] - 2026-05-15
+
 ### BUGFIXES
 
 - **System upgrade false-positive "yeni sürüm var"**: `/api/system/
@@ -37,6 +43,18 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   iterasyonlarına değil.
 - **UI: SystemUpgradePanel display**: "GHCR :latest" digest sütunu
   yerine "Son release" semver tag'i gösterir.
+
+### Upgrade notları
+
+```bash
+# Tercih edilen: admin panel → Settings → Sistem → Imajı güncelle →
+# "v0.1" veya custom input "0.1.5" → Başlat. v0.1.4'teki kademeli
+# recreate + post-stream healthcheck sayesinde UI üzerinden upgrade
+# artık güvenilir.
+
+# Fallback (CLI):
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.1.5
+```
 
 ---
 
