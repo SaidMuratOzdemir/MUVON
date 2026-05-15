@@ -27,6 +27,24 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.16] - 2026-05-15
+
+### BUGFIXES
+
+- **Migration komutu UI'ı bash sözdizimini bozuyordu**:
+  ComponentEditorDialog'daki "Migration komutu" alanı tek satır Input'tu
+  ve değeri `split(/\s+/)` ile whitespace üzerinden parçalıyordu. Operatör
+  `bash -c "alembic upgrade head && ..."` yazdığında tırnaklar argümanın
+  parçası olarak kalıyor, `&&` ayrı argüman oluyordu — sonuç: 9 saçma
+  parça, migration container `exec: "bash,": not found` ile fail.
+
+  Düzeltme: alan artık Textarea, **her satır bir argüman**. 3 satır
+  girilirse 3 elemanlık array kaydedilir, bash quoting derdi yok.
+  Mevcut komponentlerin yanlış parse edilmiş migration_command'larını
+  operatör Düzenle ile yeniden kaydetmeli.
+
+---
+
 ## [0.1.15] - 2026-05-15
 
 ### BUGFIXES

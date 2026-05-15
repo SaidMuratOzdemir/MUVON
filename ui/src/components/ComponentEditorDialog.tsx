@@ -134,7 +134,7 @@ export function ComponentEditorDialog({
       setDrainTimeout(String(c.drain_timeout_seconds))
       setLongDrainTimeout(String(c.long_drain_timeout_seconds))
       setKeepReleases(String(c.keep_releases ?? 3))
-      setMigrationCommand((c.migration_command ?? []).join(' '))
+      setMigrationCommand((c.migration_command ?? []).join('\n'))
       setNetworks((c.networks ?? []).join(', '))
       setEnvFilePath(c.env_file_path ?? '')
       setIsRoutable(c.is_routable)
@@ -258,7 +258,7 @@ export function ComponentEditorDialog({
       long_drain_timeout_seconds: Math.max(1, Number(longDrainTimeout) || 300),
       keep_releases: Math.min(50, Math.max(1, Number(keepReleases) || 3)),
       migration_command: migrationCommand.trim()
-        ? migrationCommand.trim().split(/\s+/)
+        ? migrationCommand.split('\n').map(s => s.trim()).filter(Boolean)
         : [],
       networks: networks.trim()
         ? networks.split(',').map(s => s.trim()).filter(Boolean)
@@ -542,14 +542,15 @@ export function ComponentEditorDialog({
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs">Migration komutu</Label>
-                  <Input
-                    placeholder="./migrate.sh"
+                  <Textarea
+                    placeholder={"bash\n-c\nalembic upgrade head && python -m scripts.seed"}
                     value={migrationCommand}
                     onChange={e => setMigrationCommand(e.target.value)}
-                    className="font-mono text-xs"
+                    rows={3}
+                    className="font-mono text-xs resize-y"
                   />
                   <p className="text-[11px] text-muted-foreground">
-                    Her release'de yeni container'lar başlamadan önce bir kez çalışır. Boş bırakırsanız atlanır.
+                    Her release'de yeni container'lar başlamadan önce bir kez çalışır. <strong>Her satır bir argüman</strong> — örn 3 satır: <code>bash</code>, <code>-c</code>, <code>komut zinciri</code>. Boş bırakırsanız atlanır.
                   </p>
                 </div>
                 <div className="space-y-1.5">
