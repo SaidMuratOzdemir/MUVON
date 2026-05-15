@@ -411,6 +411,11 @@ func (s *Service) reconcileOrphanContainers(ctx context.Context) error {
 		if _, alive := liveIDs[c.ID]; alive {
 			continue
 		}
+		// Helper containers (system upgrader, future short-lived jobs) own
+		// their own lifecycle and must never be touched by orphan cleanup.
+		if c.Labels["muvon.helper"] == "true" {
+			continue
+		}
 		project := c.Labels["muvon.project"]
 		component := c.Labels["muvon.component"]
 		release := c.Labels["muvon.release_id"]

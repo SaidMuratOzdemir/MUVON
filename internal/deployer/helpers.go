@@ -54,7 +54,12 @@ func (c *DockerClient) RunHelperContainer(ctx context.Context, opts HelperContai
 	if opts.Labels == nil {
 		opts.Labels = map[string]string{}
 	}
-	opts.Labels["muvon.managed"] = "true"
+	// Helper containers are intentionally NOT labelled muvon.managed=true:
+	// reconcileOrphanContainers iterates that label set and would SIGTERM
+	// any helper that lacks a matching live instance row. Helpers manage
+	// their own lifecycle (success path: explicit remove; failure path:
+	// preserved for `docker logs` inspection).
+	opts.Labels["muvon.helper"] = "true"
 
 	hc := hostConfig{
 		Binds:      opts.Binds,

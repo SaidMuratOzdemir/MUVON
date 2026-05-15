@@ -27,6 +27,43 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.10] - 2026-05-15
+
+### BUGFIXES
+
+- **Sistem güncellemesi: helper container reconciler tarafından SIGTERM
+  ile öldürülüyordu** (exit code 143). `RunHelperContainer` üretilen
+  short-lived container'lara `muvon.managed=true` etiketi koyuyordu;
+  `reconcileOrphanContainers` her tick'te `muvon.managed=true` etiketli
+  ama DB'de live instance kaydı olmayan container'ları "orphan" sayıp
+  `ContainerStop`'luyordu. Helper container DB'de hiçbir zaman olmaz —
+  yarış kazanılırsa upgrader script bitmeden kill ediliyor ve upgrade
+  "container exited 143" ile başarısız oluyordu.
+
+  Düzeltme: helper container'lar artık `muvon.helper=true` etiketleniyor,
+  `muvon.managed=true` koyulmuyor. Reconciler ayrıca belt-and-suspenders
+  olarak `muvon.helper=true` etiketli olanları açıkça atlıyor. Helper'lar
+  kendi yaşam döngülerini yönetir (başarı: explicit remove; başarısızlık:
+  inceleme için karkas korunur).
+
+### Upgrade Notları
+
+- **v0.1.7–v0.1.9'dan UI üzerinden upgrade artık güvenilir değil**: aynı
+  bug bu sürümlerde mevcut. Bu sürüme geçmek için SSH ile central host'a
+  bağlanıp manuel olarak:
+
+  ```bash
+  cd /opt/muvon
+  wget -O docker-compose.yml https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/docker-compose.yml
+  sed -i -E "s|(ghcr\\.io/[^:]+):latest|\\1:0.1.10|g" docker-compose.yml
+  docker compose pull
+  docker compose up -d --no-deps --wait muvon dialog-siem muvon-deployer
+  ```
+
+  v0.1.10 yüklendikten sonra ilerideki upgrade'ler UI'dan güvenli.
+
+---
+
 ## [0.1.9] - 2026-05-15
 
 ### BUGFIXES
