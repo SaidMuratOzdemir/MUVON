@@ -205,14 +205,14 @@ func (s *Server) driveUpgrade(targetTag string, takeBackup bool) {
 	}
 }
 
-// waitLocalHealthy polls /api/health on the local admin port until it
-// returns 200 or the timeout elapses. The check goes through the local
-// loopback bind (:9443) which is always available, even when the public
-// HTTPS listener is restarting alongside the muvon container.
+// waitLocalHealthy polls /health on the local admin port (auth-free,
+// unlike /api/health which requires JWT) until it returns 200 or the
+// timeout elapses. Loopback bind is always available even when the
+// public HTTPS listener is restarting.
 func (s *Server) waitLocalHealthy(timeout time.Duration) bool {
 	client := &http.Client{Timeout: 3 * time.Second}
 	deadline := time.Now().Add(timeout)
-	url := "http://127.0.0.1:9443/api/health"
+	url := "http://127.0.0.1:9443/health"
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
 		if err == nil {
