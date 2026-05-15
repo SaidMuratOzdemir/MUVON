@@ -27,6 +27,45 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.7] - 2026-05-15
+
+### BUGFIXES
+
+- **Helper container artık `AutoRemove: false`**: Sistem upgrade flow
+  helper container'ı (`docker:27-cli`) eskiden exit eder etmez Docker
+  tarafından siliniyordu. Exit 137 gibi durumlarda `docker logs` ile
+  son satır görünemez, root cause analizi imkansızdı. Şimdi carcass
+  kalır; success path'inde kod explicit `ContainerRemove(force=true)`
+  çağırır. Failed event admin UI'ya container adını sızdırır.
+- **Helper container'a `Init: true`**: Docker tini'yi PID 1 olarak
+  inject eder. `sh -c script` PID 1 sinyal/zombie problemleri ortadan
+  kalkar. Yeni `HelperContainerOpts.Init` field'ı + `hostConfig.Init`
+  pointer'ı (`docker.go`).
+- **Helper context gRPC stream'inden ayrıştırıldı**: Eskiden helper'ın
+  Docker API call'ları stream ctx'iyle bağlıydı. Stream koparsa
+  (deployer recreate'i sırasında olur) in-flight Docker call'lar
+  iptal oluyordu. Artık helper kendi 12 dakikalık `context.Background`
+  türevi ctx kullanır.
+
+### ENHANCEMENTS
+
+- Helper script artık `set -ex` ile çalışır; her satır stdout'a echo
+  edilir. Önce `set -e` ile ilk echo akmadan exit olduğunda hangi
+  satırda öldüğü anlaşılamıyordu.
+- Helper compose `up -d --wait` timeout'u 90 → 180 saniye. Slow disk
+  veya çok katmanlı image'larda 90s'lik budget'ı aşma riskini azaltır.
+
+### Upgrade notları
+
+```bash
+ssh <central> 'cd /opt/muvon && bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.1.7 --yes'
+```
+
+Plus admin panel: Settings → Sistem → **"vX.Y.Z'a güncelle"** butonu
+(downgrade için manuel onay sorulur).
+
+---
+
 ## [0.1.6] - 2026-05-15
 
 ### BUGFIXES
