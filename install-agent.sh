@@ -50,11 +50,11 @@ fail() {
 _read() {
   local prompt="$1" varname="$2" default="${3:-}"
   if [ -t 0 ]; then
-    read -r -p "$prompt" "$varname"
-  else
-    read -r -p "$prompt" "$varname" </dev/tty
+    read -r -p "$prompt" "$varname" || true
+  elif [ -r /dev/tty ]; then
+    read -r -p "$prompt" "$varname" </dev/tty || true
   fi
-  if [ -z "${!varname}" ] && [ -n "$default" ]; then
+  if [ -z "${!varname-}" ] && [ -n "$default" ]; then
     printf -v "$varname" '%s' "$default"
   fi
 }
@@ -62,9 +62,11 @@ _read() {
 _read_secret() {
   local prompt="$1" varname="$2"
   if [ -t 0 ]; then
-    read -r -s -p "$prompt" "$varname"; echo
-  else
-    read -r -s -p "$prompt" "$varname" </dev/tty; echo
+    read -r -s -p "$prompt" "$varname" || true
+    echo
+  elif [ -r /dev/tty ]; then
+    read -r -s -p "$prompt" "$varname" </dev/tty || true
+    echo
   fi
 }
 
@@ -319,7 +321,9 @@ else
   fi
 fi
 
-# CHANGELOG göster (update'te)
+# CHANGELOG göster (update'te). Interaktif TTY varsa onay sor; SSH pipe
+# (curl | bash) altında otomatik devam — operatör script'i çalıştırdıysa
+# zaten kabul etmiş demektir.
 if [ "$MODE" = "update" ]; then
   if curl -fsSL "$RAW/CHANGELOG.md" -o /tmp/muvon-changelog.md 2>/dev/null; then
     echo ""
@@ -328,9 +332,11 @@ if [ "$MODE" = "update" ]; then
     echo "─────────────────────────────────────────────────────────────────────"
     rm -f /tmp/muvon-changelog.md
     echo ""
-    if ! _yn "  Devam edeyim mi? [y/N]: "; then
-      status "ABORT" "Kullanıcı iptal etti."
-      exit 0
+    if [ -t 0 ] || [ -r /dev/tty ]; then
+      if ! _yn "  Devam edeyim mi? [y/N]: "; then
+        status "ABORT" "Kullanıcı iptal etti."
+        exit 0
+      fi
     fi
   fi
 fi

@@ -27,6 +27,29 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.14] - 2026-05-15
+
+### BUGFIXES
+
+- **`install-agent.sh` SSH pipe altında CHANGELOG prompt'unda crash**:
+  `curl | bash` veya `ssh host 'curl | bash'` ile çalıştırıldığında
+  stdin pipe oluyor ve `/dev/tty` da yok. `_read` fonksiyonu `read
+  </dev/tty` ile fail ediyor, `set -e` ile script exit ediyordu.
+  Aynı yolda `${!varname}` indirect expansion `set -u` altında
+  unbound olarak ikinci kez patlıyordu. Sonuç: update mode'da
+  CHANGELOG'u gösterdikten sonra `docker compose pull && up`
+  adımına asla gelinmiyordu, operatör manuel olarak çalıştırmak
+  zorunda kalıyordu.
+
+  Düzeltme: `_read` ve `_read_secret` artık `read` fail'larını
+  tolere ediyor (`|| true`), `${!varname-}` ile unbound-safe ve
+  TTY yokluğunda default'a düşüyor. CHANGELOG sonrası "Devam
+  edeyim mi?" prompt'u sadece TTY varken sorulur; SSH pipe altında
+  otomatik geçiş — script'i bu şekilde çalıştıran operatör zaten
+  upgrade'i onaylamış demektir.
+
+---
+
 ## [0.1.13] - 2026-05-15
 
 ### FEATURES
