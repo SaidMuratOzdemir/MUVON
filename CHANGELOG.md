@@ -27,6 +27,42 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.6] - 2026-05-15
+
+### BUGFIXES
+
+- **System upgrade post-check `/health` endpoint**: `waitLocalHealthy`
+  artık auth-free `/health` endpoint'ini poll'lar. Eskiden `/api/health`
+  (JWT korumalı) çağırılıyordu, self-call 401 alıp 60s timeout'a
+  düşüyordu; muvon zaten Healthy olsa bile UI "failed" gösteriyordu.
+- **install.sh non-interactive TTY fallback**: SSH non-interactive
+  shell'inde `/dev/tty` yok hatasıyla patlıyordu. `_ask` fonksiyonu
+  artık `[ -r /dev/tty ]` kontrolüyle default'a düşer. `set -u` uyumlu
+  `${!varname:-}` ifadesi de eklendi.
+- **install.sh `--yes` / `MUVON_YES=1`**: CI/script invocation'larında
+  CHANGELOG onay sorusunu atlamak için. SSH üzerinden non-interactive
+  güncellemeyi mümkün kılar.
+
+### ENHANCEMENTS
+
+- **UI: UpgradeModal yeniden tasarımı**: "vX.Y.Z'a güncelle" primary
+  action; pin tier matrix (`latest`/`v0`/`v0.1`) kaldırıldı (çoğu
+  kullanıcı sadece en yeni semver istiyor); "Belirli bir sürüm"
+  collapsible details içinde manuel input; "Güncel" badge mevcut
+  sürüm == latest durumunda.
+- **UI: em-dash temizliği**: Cümle-içi `—` 11 dosyada normal noktalama
+  ile değiştirildi. Boş değer placeholder'ları (`'—'`) korundu.
+
+### Upgrade notları
+
+```bash
+ssh ana 'cd /opt/muvon && bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.1.6 --yes'
+```
+
+Veya admin panel: Settings → Sistem → **vX.Y.Z'a güncelle** butonu.
+
+---
+
 ## [0.1.5] - 2026-05-15
 
 ### BUGFIXES
