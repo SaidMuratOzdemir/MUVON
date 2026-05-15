@@ -23,6 +23,12 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+— henüz birikme yok.
+
+---
+
+## [0.1.29] - 2026-05-16
+
 ### ENHANCEMENTS
 
 - **Container Logs listesi artık çalışan'lar üstte sıralanıyor**: live
