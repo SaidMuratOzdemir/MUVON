@@ -240,7 +240,9 @@ func main() {
 
 	// Router — main reverse proxy handler
 	// If adminDomain is set, admin panel is served on :443 for that domain; :9443 is not started.
-	rt := router.New(ch, logSink, transport, hm, database, frontendFS, *adminDomain, adminSrv.Handler())
+	// Central terminates only hosts bound with target_kind="central" — the
+	// proxy returns 421 for anything else so misdirected traffic is loud.
+	rt := router.New(ch, logSink, transport, hm, database, frontendFS, *adminDomain, adminSrv.Handler(), "central", "")
 
 	connStateFn := func(_ net.Conn, state http.ConnState) {
 		_ = state

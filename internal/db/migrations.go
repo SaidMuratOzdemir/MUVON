@@ -1015,4 +1015,24 @@ CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_recent
 		name: "add_agents_public_ip", product: "muvon",
 		sql: `ALTER TABLE agents ADD COLUMN IF NOT EXISTS public_ip TEXT NOT NULL DEFAULT '';`,
 	},
+	// Host-level terminator binding. Until now hosts were implicitly
+	// "everywhere": every agent and central pulled the same host set, and
+	// whichever IP DNS pointed at decided where traffic terminated. That
+	// hid two problems: (1) operators had no way to know which IP to put
+	// in their DNS record at create time, and (2) misdirected traffic
+	// (DNS pointed at the wrong machine) was silently accepted, including
+	// ACME issuance attempts for a domain the receiving instance was not
+	// supposed to terminate. target_kind+target_agent_id makes the choice
+	// explicit: 'central' = MUVON itself, 'agent' + a specific agent_id =
+	// that edge node. Config payload, proxy routing, and ACME HostPolicy
+	// all key off this field to enforce ownership.
+	{
+		name: "add_hosts_target_terminator", product: "muvon",
+		sql: `ALTER TABLE hosts
+              ADD COLUMN IF NOT EXISTS target_kind TEXT NOT NULL DEFAULT 'central'
+                  CHECK (target_kind IN ('central','agent'));
+              ALTER TABLE hosts
+              ADD COLUMN IF NOT EXISTS target_agent_id TEXT
+                  REFERENCES agents(id) ON DELETE SET NULL;`,
+	},
 }

@@ -41,14 +41,30 @@ type AgentSettings struct {
 	GeoIPDBPath  string `json:"geoip_db_path"`
 }
 
-// AgentPayloadFromConfig builds an AgentPayload from the current in-memory config.
-func AgentPayloadFromConfig(cfg *Config) AgentPayload {
+// AgentPayloadFromConfig builds an AgentPayload tailored to a specific
+// agent. Only hosts whose target_kind="agent" and target_agent_id matches
+// agentID are emitted, along with the routes that bind to them. Central
+// hosts and hosts bound to a different agent stay out of this payload —
+// that's what stops the wrong instance from silently terminating traffic
+// or trying to issue a certificate for a domain it doesn't own.
+//
+// Passing an empty agentID returns an empty payload (no agent ever runs
+// without an ID).
+func AgentPayloadFromConfig(cfg *Config, agentID string) AgentPayload {
 	var hosts []db.Host
 	var routes []db.Route
-	for _, hc := range cfg.Hosts {
-		hosts = append(hosts, hc.Host)
-		for _, rr := range hc.Routes {
-			routes = append(routes, rr.Route)
+	if agentID != "" {
+		for _, hc := range cfg.Hosts {
+			if hc.Host.TargetKind != "agent" {
+				continue
+			}
+			if hc.Host.TargetAgentID == nil || *hc.Host.TargetAgentID != agentID {
+				continue
+			}
+			hosts = append(hosts, hc.Host)
+			for _, rr := range hc.Routes {
+				routes = append(routes, rr.Route)
+			}
 		}
 	}
 	return AgentPayload{

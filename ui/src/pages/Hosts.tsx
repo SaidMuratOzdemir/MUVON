@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { cn } from '@/lib/utils'
 import * as api from '@/api'
-import type { Host, Route } from '@/types'
+import type { Host, Route, Agent } from '@/types'
 import { RouteDialog, TagInput } from '@/components/RouteDialog'
 
 // ─── Health Dot ─────────────────────────────────────────────────────────────────
@@ -48,6 +48,27 @@ function HealthDot({ state }: { state?: string }) {
 // One-shot badge on the collapsed host row. Shows the current cert
 // state with a colour cue. Loads lazily per row on mount; cheap enough
 // (DB lookup, no network) that fanning out across the list is fine.
+
+// TerminatorBadge tells the operator at a glance which MUVON instance
+// terminates this host. For agent-bound hosts it surfaces the agent's
+// public IP so the DNS A-record target is visible without opening Edit.
+function TerminatorBadge({ host, agents }: { host: Host; agents: Agent[] }) {
+  if (host.target_kind === 'agent' && host.target_agent_id) {
+    const a = agents.find(x => x.id === host.target_agent_id)
+    const label = a?.name ?? host.target_agent_id.slice(0, 8)
+    const ip = a?.public_ip
+    return (
+      <Badge variant="outline" className="text-[10px] text-emerald-300 border-emerald-400/40" title={ip ? `DNS A → ${ip}` : 'Agent public IP henüz raporlanmadı'}>
+        edge: {label}{ip ? ` (${ip})` : ''}
+      </Badge>
+    )
+  }
+  return (
+    <Badge variant="outline" className="text-[10px] text-sky-300 border-sky-400/40" title="Central MUVON terminate ediyor">
+      central
+    </Badge>
+  )
+}
 
 function TLSBadge({ host }: { host: Host }) {
   const [status, setStatus] = useState<api.HostTLSStatus | null>(null)
@@ -147,9 +168,10 @@ function DNSStatusSection({ host }: { host: Host }) {
 // ─── Host Row ───────────────────────────────────────────────────────────────────
 
 function HostRow({
-  host, onEdit, onDelete, onToggle, onViewRoutes,
+  host, agents, onEdit, onDelete, onToggle, onViewRoutes,
 }: {
   host: Host
+  agents: Agent[]
   onEdit: () => void
   onDelete: () => void
   onToggle: () => void
@@ -237,6 +259,7 @@ function HostRow({
                 <Badge variant="outline" className="text-[10px] text-primary border-primary/40">HTTPS</Badge>
               )}
               <TLSBadge host={host} />
+              <TerminatorBadge host={host} agents={agents} />
             </div>
             <p className="text-xs text-muted-foreground">ID: {host.id}</p>
           </div>
@@ -379,6 +402,7 @@ function HostRow({
 export default function Hosts() {
   const navigate = useNavigate()
   const [hosts, setHosts] = useState<Host[]>([])
+  const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
   const [hostDialog, setHostDialog] = useState<{ open: boolean; host: Host | null }>({ open: false, host: null })
   const [deleteTarget, setDeleteTarget] = useState<Host | null>(null)
@@ -399,6 +423,10 @@ export default function Hosts() {
     jwt_secret_set: false,
     identity_header_name: '',
     store_raw_jwt: false,
+    // Terminator binding — chosen on create, editable. "central" = central
+    // MUVON serves this host; "agent" = the named edge agent does.
+    target_kind: 'central' as 'central' | 'agent',
+    target_agent_id: '',
   })
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
@@ -406,7 +434,9 @@ export default function Hosts() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setHosts(await api.listHosts())
+      const [hs, ags] = await Promise.all([api.listHosts(), api.listAgents().catch(() => [])])
+      setHosts(hs)
+      setAgents(ags)
     } catch {
       toast.error('Failed to load hosts')
     } finally {
@@ -422,6 +452,7 @@ export default function Hosts() {
       jwt_identity_enabled: false, jwt_identity_mode: 'verify', jwt_claims: '',
       jwt_secret: '', jwt_secret_set: false, identity_header_name: '',
       store_raw_jwt: false,
+      target_kind: 'central', target_agent_id: '',
     })
     setHostDialog({ open: true, host: null })
   }
@@ -442,6 +473,8 @@ export default function Hosts() {
       jwt_secret_set: typeof h.jwt_secret === 'string' && h.jwt_secret !== '',
       identity_header_name: h.identity_header_name || '',
       store_raw_jwt: h.store_raw_jwt ?? false,
+      target_kind: h.target_kind ?? 'central',
+      target_agent_id: h.target_agent_id ?? '',
     })
     setHostDialog({ open: true, host: h })
   }
@@ -545,6 +578,7 @@ export default function Hosts() {
             <HostRow
               key={h.id}
               host={h}
+              agents={agents}
               onEdit={() => openEditHost(h)}
               onDelete={() => setDeleteTarget(h)}
               onToggle={() => handleToggleHost(h)}
@@ -570,6 +604,68 @@ export default function Hosts() {
                 value={hostForm.domain}
                 onChange={e => setHostForm(f => ({ ...f, domain: e.target.value }))}
               />
+            </div>
+
+            {/* Terminator binding — operatöre DNS A kaydının nereye gitmesi
+                gerektiğini önden söyler, ve hangi MUVON instance'ının bu
+                domain'i terminate ettiğini kalıcı olarak yazar. Proxy ve
+                ACME katmanları bu seçime göre yanlış makineye gelen
+                trafiği 421 ile reddeder. */}
+            <div className="space-y-2 rounded-md border border-border bg-background/40 p-3">
+              <Label className="text-sm font-medium">Bu host nerede terminate edilecek?</Label>
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="target_kind"
+                    value="central"
+                    checked={hostForm.target_kind === 'central'}
+                    onChange={() => setHostForm(f => ({ ...f, target_kind: 'central', target_agent_id: '' }))}
+                  />
+                  <span className="text-sm">Bu MUVON sunucusu (central)</span>
+                </label>
+                {agents.map(a => (
+                  <label key={a.id} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="target_kind"
+                      value={`agent:${a.id}`}
+                      checked={hostForm.target_kind === 'agent' && hostForm.target_agent_id === a.id}
+                      onChange={() => setHostForm(f => ({ ...f, target_kind: 'agent', target_agent_id: a.id }))}
+                    />
+                    <span className="text-sm">Edge agent: <code className="font-mono">{a.name}</code> {a.public_ip && <span className="text-muted-foreground">({a.public_ip})</span>}</span>
+                  </label>
+                ))}
+                {agents.length === 0 && (
+                  <p className="text-[11px] text-muted-foreground">Tanımlı agent yok — Agents sayfasından ekleyebilirsiniz.</p>
+                )}
+              </div>
+              {(() => {
+                let hint = ''
+                if (hostForm.target_kind === 'agent') {
+                  const a = agents.find(x => x.id === hostForm.target_agent_id)
+                  hint = a?.public_ip || ''
+                }
+                if (!hint && hostForm.target_kind === 'agent') {
+                  return (
+                    <p className="text-[11px] text-amber-300">
+                      Seçilen agent public IP bildirmemiş. Agent'ı v0.1.13+ ile yeniden başlatın.
+                    </p>
+                  )
+                }
+                if (hint) {
+                  return (
+                    <p className="text-[11px] text-emerald-300">
+                      DNS A kaydını <code className="font-mono">{hint}</code> adresine yönlendirin.
+                    </p>
+                  )
+                }
+                return (
+                  <p className="text-[11px] text-muted-foreground">
+                    Central'ın public IP'si MUVON binary tarafından otomatik tespit edilir. Hosts listesinde gösterilen "DNS hedef" satırından alın.
+                  </p>
+                )
+              })()}
             </div>
             <div className="flex items-center justify-between rounded-md border border-border px-4 py-3">
               <div>

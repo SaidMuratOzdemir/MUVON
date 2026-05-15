@@ -3,12 +3,14 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"muvon/internal/db"
 )
 
 // DNS verification — answers "does the operator's domain currently
@@ -50,7 +52,7 @@ func (s *Server) handleHostDNSStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "host not found"})
 		return
 	}
-	expected, err := s.expectedHostIPs(r.Context())
+	expected, err := s.expectedHostIPs(r.Context(), host)
 	if err != nil {
 		writeJSON(w, http.StatusOK, dnsStatusResponse{
 			Domain:    host.Domain,
@@ -120,44 +122,44 @@ func (s *Server) handleHostDNSStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// expectedHostIPs collects every IP the system would accept as a valid
-// DNS target for any host:
-//   - central's own auto-detected public IP (s.centralPublicIP, set at
-//     startup; empty when detection failed or was disabled);
-//   - every active agent's self-reported public_ip;
-//   - each agent's last_remote_addr as a fallback when public_ip is empty
-//     (covers legacy agents that haven't been upgraded yet).
+// expectedHostIPs returns the IPs DNS for this specific host should point
+// at. The list is exactly one element for any normal binding: a host
+// bound to central → centralPublicIP, a host bound to an edge agent →
+// that agent's self-reported public_ip (with last_remote_addr as a legacy
+// fallback for pre-v0.1.13 agents).
 //
 // No public/private filtering — internal-only topologies (Hetzner
 // private network as the only path) are legitimate and the operator's
 // choice.
-func (s *Server) expectedHostIPs(ctx context.Context) ([]string, error) {
-	seen := map[string]struct{}{}
-	if ip := strings.TrimSpace(s.centralPublicIP); ip != "" {
-		seen[ip] = struct{}{}
-	}
-	agents, err := s.db.ListAgents(ctx)
-	if err == nil {
-		for _, a := range agents {
-			if ip := strings.TrimSpace(a.PublicIP); ip != "" {
-				seen[ip] = struct{}{}
-				continue
-			}
-			// Legacy fallback: agent hasn't reported public_ip yet.
-			if ip := stripPort(strings.TrimSpace(a.LastRemoteAddr)); ip != "" {
-				seen[ip] = struct{}{}
-			}
+func (s *Server) expectedHostIPs(ctx context.Context, host db.Host) ([]string, error) {
+	switch host.TargetKind {
+	case "central":
+		ip := strings.TrimSpace(s.centralPublicIP)
+		if ip == "" {
+			return nil, errors.New("central public IP henüz tespit edilmedi: MUVON_PUBLIC_IP env var ile elle belirleyin")
 		}
+		return []string{ip}, nil
+	case "agent":
+		if host.TargetAgentID == nil || *host.TargetAgentID == "" {
+			return nil, errors.New("host edge agent'a bağlı ama target_agent_id boş")
+		}
+		ag, err := s.db.GetAgent(ctx, *host.TargetAgentID)
+		if err != nil {
+			return nil, errors.New("hedef agent silinmiş: host'u tekrar düzenleyip yeni bir terminator seçin")
+		}
+		if ip := strings.TrimSpace(ag.PublicIP); ip != "" {
+			return []string{ip}, nil
+		}
+		// Legacy fallback: agent v0.1.13'ten önce kayıt olduysa public_ip
+		// rapor edilmemiş; last_remote_addr private network IP'si olabilir
+		// ama yine de operatöre bir şey göster.
+		if ip := stripPort(strings.TrimSpace(ag.LastRemoteAddr)); ip != "" {
+			return []string{ip}, nil
+		}
+		return nil, errors.New("agent henüz public IP rapor etmedi: v0.1.13+ ile yeniden başlatın")
+	default:
+		return nil, fmt.Errorf("bilinmeyen target_kind %q", host.TargetKind)
 	}
-	if len(seen) == 0 {
-		return nil, errors.New("hiçbir hedef IP yok: agent kaydedin veya central'ı internet üzerinden erişilebilir bir public IP'ye taşıyın")
-	}
-	out := make([]string, 0, len(seen))
-	for ip := range seen {
-		out = append(out, ip)
-	}
-	sort.Strings(out)
-	return out, nil
 }
 
 // stripPort drops an optional ":port" or "[ipv6]:port" suffix from a

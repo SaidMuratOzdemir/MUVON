@@ -252,7 +252,13 @@ func main() {
 
 	// Transport + Router
 	transport := proxy.NewTransport()
-	rt := router.New(ch, logSink, transport, hm, nil, nil, "", nil)
+	// Ownership enforcement is OFF on the agent for now: the agent does
+	// not yet know its own agents.id (no whoami endpoint), and the config
+	// payload central serves is already filtered to "hosts this agent
+	// terminates", so a misdirected request that reaches the agent will
+	// fall through to "unknown host" naturally. Wire selfKind="agent"
+	// once we have an authenticated whoami round-trip on startup.
+	rt := router.New(ch, logSink, transport, hm, nil, nil, "", nil, "", "")
 
 	// Central → agent command channel. Skipped when AGENT_ENCRYPTION_KEY
 	// is empty because every command is HMAC-signed and the agent can't

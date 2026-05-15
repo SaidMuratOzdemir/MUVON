@@ -108,10 +108,15 @@ func (s *Service) AuthMiddleware(next http.Handler) http.Handler {
 // GET /api/v1/agent/config
 func (s *Service) HandleConfig(w http.ResponseWriter, r *http.Request) {
 	cfg := s.holder.Get()
-	payload := config.AgentPayloadFromConfig(cfg)
+	// AgentID lives in request context (the auth middleware put it there).
+	// Filtering the payload by that ID is what makes ownership enforcement
+	// work: an agent only ever learns about the hosts it is supposed to
+	// terminate, so it physically cannot serve traffic for anything else.
+	agentID, _ := r.Context().Value(agentIDKey).(string)
+	payload := config.AgentPayloadFromConfig(cfg, agentID)
 	payload.Version = s.holder.Version()
 
-	if id, ok := r.Context().Value(agentIDKey).(string); ok && id != "" {
+	if agentID != "" {
 		// Stamp the agent row with the version they just pulled, plus the
 		// HTTP context that produced the request. We run it on a fresh
 		// context so the request lifecycle never gates the DB write.
@@ -121,7 +126,7 @@ func (s *Service) HandleConfig(w http.ResponseWriter, r *http.Request) {
 		// verification has the right target even when source IP is the
 		// agent's private interface (Hetzner private network, etc).
 		publicIP := strings.TrimSpace(r.Header.Get("X-Agent-Public-IP"))
-		go s.db.RecordAgentConfigPull(context.Background(), id, payload.Version, remote, ua, publicIP)
+		go s.db.RecordAgentConfigPull(context.Background(), agentID, payload.Version, remote, ua, publicIP)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

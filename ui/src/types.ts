@@ -33,6 +33,12 @@ export interface Host {
   // Opt-in: persist the raw bearer token alongside each log row. UI shows
   // a stern warning when toggling on; the reveal flow audits every read.
   store_raw_jwt?: boolean;
+  // Which MUVON instance terminates this host. "central" = the central
+  // MUVON binary, "agent" = the edge agent identified by target_agent_id.
+  // Operators see the corresponding public IP as their DNS A record
+  // target at create time.
+  target_kind: 'central' | 'agent';
+  target_agent_id?: string | null;
   created_at: string;
   updated_at: string;
 }

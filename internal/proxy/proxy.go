@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"muvon/internal/config"
+	"muvon/internal/db"
 	"muvon/internal/health"
 	"muvon/internal/logger"
 	"muvon/internal/middleware"
@@ -37,9 +38,18 @@ type Handler struct {
 	enableCapture   bool
 	healthMgr       *health.Manager
 	instanceTracker InstanceTracker
+	// selfKind / selfAgentID identify which MUVON instance is running this
+	// handler. ServeHTTP refuses to serve a host whose target binding does
+	// not match — that's how "DNS pointed at the wrong machine" surfaces
+	// as a visible 421 instead of being quietly proxied or 404'd.
+	// "central" + "" = central MUVON.
+	// "agent" + agentID = an edge agent.
+	// "" = enforcement disabled (don't use except in tests).
+	selfKind    string
+	selfAgentID string
 }
 
-func NewHandler(ch *config.Holder, logSink LogSink, transport http.RoundTripper, hm *health.Manager, instanceTracker InstanceTracker) *Handler {
+func NewHandler(ch *config.Holder, logSink LogSink, transport http.RoundTripper, hm *health.Manager, instanceTracker InstanceTracker, selfKind, selfAgentID string) *Handler {
 	cfg := ch.Get()
 	return &Handler{
 		configHolder:    ch,
@@ -49,6 +59,8 @@ func NewHandler(ch *config.Holder, logSink LogSink, transport http.RoundTripper,
 		enableCapture:   cfg.Global.EnableBodyCapture,
 		healthMgr:       hm,
 		instanceTracker: instanceTracker,
+		selfKind:        selfKind,
+		selfAgentID:     selfAgentID,
 	}
 }
 
@@ -60,6 +72,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hc, ok := cfg.Hosts[host]
 	if !ok {
 		http.Error(w, "unknown host", http.StatusBadGateway)
+		return
+	}
+
+	// Ownership enforcement: only the instance bound as terminator may
+	// serve traffic for this host. Misdirected traffic (DNS pointed at
+	// the wrong machine) returns 421 so the operator sees the mistake.
+	if !h.ownsHost(hc.Host) {
+		writeMisdirected(w, r, hc.Host)
 		return
 	}
 
@@ -472,4 +492,55 @@ func ClearRouteLimiters() {
 		routeLimiters.Delete(k)
 		return true
 	})
+}
+
+// ownsHost decides whether this instance is the configured terminator for
+// the given host. Empty selfKind means enforcement is off (legacy callers).
+func (h *Handler) ownsHost(host db.Host) bool {
+	if h.selfKind == "" {
+		return true
+	}
+	switch host.TargetKind {
+	case "central":
+		return h.selfKind == "central"
+	case "agent":
+		if h.selfKind != "agent" || h.selfAgentID == "" {
+			return false
+		}
+		return host.TargetAgentID != nil && *host.TargetAgentID == h.selfAgentID
+	default:
+		// Unknown kind — treat as misdirected so the operator notices.
+		return false
+	}
+}
+
+// writeMisdirected emits a 421 with a human-readable explanation, then
+// logs the event so the admin panel can surface "this host is bleeding
+// requests onto the wrong machine" later. We deliberately don't push a
+// SIEM log entry here (yet) to keep the noise out of customer logs —
+// this is an operator-side configuration issue, not application traffic.
+func writeMisdirected(w http.ResponseWriter, r *http.Request, host db.Host) {
+	owner := "central"
+	if host.TargetKind == "agent" {
+		owner = "edge agent"
+		if host.TargetAgentID != nil {
+			owner = "edge agent " + *host.TargetAgentID
+		}
+	}
+	slog.Warn("misdirected request",
+		"host", host.Domain,
+		"target_kind", host.TargetKind,
+		"target_agent_id", derefOrEmpty(host.TargetAgentID),
+		"remote", r.RemoteAddr,
+	)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusMisdirectedRequest)
+	_, _ = w.Write([]byte("421 Misdirected Request — host " + host.Domain + " is terminated by " + owner + ". Check DNS A record.\n"))
+}
+
+func derefOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

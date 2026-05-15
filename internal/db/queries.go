@@ -44,6 +44,17 @@ type Host struct {
 	// high-value secret leak if the DB is ever exfiltrated. Reveal flows
 	// require an admin auth + audit log entry per access.
 	StoreRawJWT       bool      `json:"store_raw_jwt"`
+	// TargetKind decides which MUVON instance is allowed to terminate
+	// traffic for this host:
+	//   "central" — handled by the central MUVON binary
+	//   "agent"   — handled by the edge agent whose id == TargetAgentID
+	// Config payload filtering, proxy ownership enforcement, and ACME
+	// HostPolicy all key off this pair. A request that lands on the wrong
+	// instance returns 421 Misdirected Request instead of being silently
+	// served — that way an operator who pointed DNS at the wrong machine
+	// sees the mistake immediately.
+	TargetKind     string  `json:"target_kind"`
+	TargetAgentID  *string `json:"target_agent_id,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -51,6 +62,7 @@ type Host struct {
 const hostSelectCols = `id, domain, is_active, force_https, tls_mode, trusted_proxies,
 	jwt_identity_enabled, jwt_identity_mode, jwt_claims, jwt_secret,
 	identity_header_name, store_raw_jwt,
+	target_kind, target_agent_id,
 	created_at, updated_at`
 
 func scanHost(scan func(...any) error) (Host, error) {
@@ -59,6 +71,7 @@ func scanHost(scan func(...any) error) (Host, error) {
 	err := scan(&h.ID, &h.Domain, &h.IsActive, &h.ForceHTTPS, &h.TLSMode, &trusted,
 		&h.JWTIdentityEnabled, &h.JWTIdentityMode, &h.JWTClaims, &h.JWTSecret,
 		&h.IdentityHeaderName, &h.StoreRawJWT,
+		&h.TargetKind, &h.TargetAgentID,
 		&h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return h, err
@@ -115,6 +128,14 @@ type HostJWT struct {
 	StoreRaw bool
 }
 
+// HostTarget bundles the terminator-binding columns. Kind must be one of
+// "central" or "agent"; AgentID is required (non-empty) when Kind=="agent"
+// and ignored (forced to NULL) when Kind=="central".
+type HostTarget struct {
+	Kind    string // "central" | "agent"
+	AgentID string // empty when Kind != "agent"
+}
+
 func (j HostJWT) headerOrDefault() string {
 	if h := strings.TrimSpace(j.HeaderName); h != "" {
 		return h
@@ -133,7 +154,29 @@ func normalizeTLSMode(mode string) string {
 	}
 }
 
-func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS bool, tlsMode string, trustedProxies []string, jwt HostJWT) (Host, error) {
+// normalizeTarget enforces the (kind, agent_id) contract: kind must be
+// "central" or "agent"; agent rows must carry a non-empty agent_id and
+// central rows always store NULL.
+func normalizeTarget(t HostTarget) (string, *string, error) {
+	kind := strings.TrimSpace(t.Kind)
+	if kind == "" {
+		kind = "central"
+	}
+	if kind != "central" && kind != "agent" {
+		return "", nil, fmt.Errorf("invalid target_kind %q (must be central or agent)", kind)
+	}
+	agentID := strings.TrimSpace(t.AgentID)
+	if kind == "agent" {
+		if agentID == "" {
+			return "", nil, errors.New("target_agent_id required when target_kind is agent")
+		}
+		return kind, &agentID, nil
+	}
+	// central — never persist an agent id.
+	return kind, nil, nil
+}
+
+func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS bool, tlsMode string, trustedProxies []string, jwt HostJWT, target HostTarget) (Host, error) {
 	if trustedProxies == nil {
 		trustedProxies = []string{}
 	}
@@ -149,15 +192,21 @@ func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS
 	case "off":
 		forceHTTPS = false
 	}
+	tKind, tAgent, err := normalizeTarget(target)
+	if err != nil {
+		return Host{}, err
+	}
 	h, err := scanHost(d.Pool.QueryRow(ctx,
 		`INSERT INTO hosts (domain, is_active, force_https, tls_mode, trusted_proxies,
 			jwt_identity_enabled, jwt_identity_mode, jwt_claims, jwt_secret,
-			identity_header_name, store_raw_jwt)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			identity_header_name, store_raw_jwt,
+			target_kind, target_agent_id)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		 RETURNING `+hostSelectCols,
 		domain, isActive, forceHTTPS, tlsMode, trustedProxies,
 		jwt.Enabled, jwt.Mode, jwt.Claims, jwt.Secret,
 		jwt.headerOrDefault(), jwt.StoreRaw,
+		tKind, tAgent,
 	).Scan)
 	if err != nil {
 		return h, fmt.Errorf("create host: %w", err)
@@ -165,7 +214,7 @@ func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS
 	return h, nil
 }
 
-func (d *DB) UpdateHost(ctx context.Context, id int, domain string, isActive, forceHTTPS bool, tlsMode string, trustedProxies []string, jwt HostJWT) (Host, error) {
+func (d *DB) UpdateHost(ctx context.Context, id int, domain string, isActive, forceHTTPS bool, tlsMode string, trustedProxies []string, jwt HostJWT, target HostTarget) (Host, error) {
 	if trustedProxies == nil {
 		trustedProxies = []string{}
 	}
@@ -179,15 +228,21 @@ func (d *DB) UpdateHost(ctx context.Context, id int, domain string, isActive, fo
 	case "off":
 		forceHTTPS = false
 	}
+	tKind, tAgent, err := normalizeTarget(target)
+	if err != nil {
+		return Host{}, err
+	}
 	h, err := scanHost(d.Pool.QueryRow(ctx,
 		`UPDATE hosts SET domain=$2, is_active=$3, force_https=$4, tls_mode=$5, trusted_proxies=$6,
 			jwt_identity_enabled=$7, jwt_identity_mode=$8, jwt_claims=$9, jwt_secret=$10,
 			identity_header_name=$11, store_raw_jwt=$12,
+			target_kind=$13, target_agent_id=$14,
 			updated_at=now()
 		 WHERE id=$1 RETURNING `+hostSelectCols,
 		id, domain, isActive, forceHTTPS, tlsMode, trustedProxies,
 		jwt.Enabled, jwt.Mode, jwt.Claims, jwt.Secret,
 		jwt.headerOrDefault(), jwt.StoreRaw,
+		tKind, tAgent,
 	).Scan)
 	if err != nil {
 		return h, fmt.Errorf("update host: %w", err)

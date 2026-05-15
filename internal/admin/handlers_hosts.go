@@ -1,7 +1,10 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -51,6 +54,36 @@ func (s *Server) buildHostJWT(enabled *bool, mode, claims, plaintextSecret, head
 	return jwt, nil
 }
 
+// resolveHostTarget normalizes the kind/agent_id pair and validates that
+// an agent-bound host references a real, active agent. Returning a value
+// (not a pointer) keeps the caller's code linear; db.HostTarget already
+// represents "central with no agent_id" as Kind="central" + AgentID="".
+func (s *Server) resolveHostTarget(ctx context.Context, kind, agentID string) (db.HostTarget, error) {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		kind = "central"
+	}
+	agentID = strings.TrimSpace(agentID)
+	switch kind {
+	case "central":
+		return db.HostTarget{Kind: "central"}, nil
+	case "agent":
+		if agentID == "" {
+			return db.HostTarget{}, errors.New("target_agent_id required when target_kind is agent")
+		}
+		ag, err := s.db.GetAgent(ctx, agentID)
+		if err != nil {
+			return db.HostTarget{}, errors.New("target_agent_id does not match any registered agent")
+		}
+		if !ag.IsActive {
+			return db.HostTarget{}, errors.New("agent is inactive — re-activate or pick a different terminator")
+		}
+		return db.HostTarget{Kind: "agent", AgentID: agentID}, nil
+	default:
+		return db.HostTarget{}, fmt.Errorf("invalid target_kind %q (must be central or agent)", kind)
+	}
+}
+
 // validDomain kabul edilen hostname/domain formatını doğrular (RFC 1123).
 // Wildcard alan adlarına (*.) izin verilir.
 var validDomain = regexp.MustCompile(`^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$|^localhost$`)
@@ -92,6 +125,8 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 		JWTSecret          string    `json:"jwt_secret"` // plaintext in; encrypted at rest
 		IdentityHeaderName string    `json:"identity_header_name"`
 		StoreRawJWT        bool      `json:"store_raw_jwt"`
+		TargetKind         string    `json:"target_kind"`
+		TargetAgentID      string    `json:"target_agent_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -134,7 +169,13 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	host, err := s.db.CreateHost(r.Context(), req.Domain, isActive, forceHTTPS, tlsMode, trustedProxies, jwt)
+	target, err := s.resolveHostTarget(r.Context(), req.TargetKind, req.TargetAgentID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	host, err := s.db.CreateHost(r.Context(), req.Domain, isActive, forceHTTPS, tlsMode, trustedProxies, jwt, target)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": domainError(err)})
 		return
@@ -186,6 +227,8 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		JWTSecret          string    `json:"jwt_secret"`
 		IdentityHeaderName *string   `json:"identity_header_name"`
 		StoreRawJWT        *bool     `json:"store_raw_jwt"`
+		TargetKind         *string   `json:"target_kind"`
+		TargetAgentID      *string   `json:"target_agent_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -265,6 +308,23 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		storeRaw = *req.StoreRawJWT
 	}
 
+	targetKind := existing.TargetKind
+	if req.TargetKind != nil {
+		targetKind = strings.TrimSpace(*req.TargetKind)
+	}
+	targetAgentID := ""
+	if existing.TargetAgentID != nil {
+		targetAgentID = *existing.TargetAgentID
+	}
+	if req.TargetAgentID != nil {
+		targetAgentID = strings.TrimSpace(*req.TargetAgentID)
+	}
+	target, err := s.resolveHostTarget(r.Context(), targetKind, targetAgentID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
 	host, err := s.db.UpdateHost(r.Context(), id, domain, isActive, forceHTTPS, tlsMode, trustedProxies, db.HostJWT{
 		Enabled:    jwtEnabled,
 		Mode:       jwtMode,
@@ -272,7 +332,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		Secret:     jwtSecret,
 		HeaderName: headerName,
 		StoreRaw:   storeRaw,
-	})
+	}, target)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": domainError(err)})
 		return

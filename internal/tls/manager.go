@@ -40,9 +40,14 @@ func NewManager(database *db.DB, configHolder *config.Holder, adminDomain string
 	pgCache := NewPGCache(database)
 
 	am := &autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      pgCache,
-		HostPolicy: hostPolicyFromConfig(configHolder, adminDomain),
+		Prompt: autocert.AcceptTOS,
+		Cache:  pgCache,
+		// Central issues only for hosts bound to itself (target_kind=
+		// "central"). Hosts bound to an agent are filtered out of the
+		// payload an agent receives, so the agent's own autocert handles
+		// them — central never burns a Let's Encrypt slot for an edge
+		// host it doesn't terminate.
+		HostPolicy: hostPolicyFromConfig(configHolder, adminDomain, "central", ""),
 		Email:      cfg.Global.LetsEncryptEmail,
 		Client:     &acme.Client{DirectoryURL: acmeURL},
 	}
@@ -127,9 +132,9 @@ func (m *Manager) InvalidateMissing(cfg *config.Config) {
 	}
 }
 
-func hostPolicyFromConfig(ch *config.Holder, adminDomain string) autocert.HostPolicy {
+func hostPolicyFromConfig(ch *config.Holder, adminDomain, selfKind, selfAgentID string) autocert.HostPolicy {
 	return func(ctx context.Context, host string) error {
-		return hostPolicyCheck(ch, host, adminDomain)
+		return hostPolicyCheck(ch, host, adminDomain, selfKind, selfAgentID)
 	}
 }
 
@@ -162,7 +167,10 @@ func NewManagerNoDB(configHolder *config.Holder, cacheDir string, sync *AgentCer
 	am := &autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
 		Cache:      cache,
-		HostPolicy: hostPolicyFromConfig(configHolder, ""),
+		// Agents are scoped already by config payload filtering — any host
+		// they see is theirs to terminate. Pass selfKind/agentID empty so
+		// the policy only enforces tls_mode rules, not ownership.
+		HostPolicy: hostPolicyFromConfig(configHolder, "", "", ""),
 		Email:      cfg.Global.LetsEncryptEmail,
 		Client:     &acme.Client{DirectoryURL: acmeURL},
 	}
@@ -216,7 +224,7 @@ func (c *memCache) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-func hostPolicyCheck(ch *config.Holder, host, adminDomain string) error {
+func hostPolicyCheck(ch *config.Holder, host, adminDomain, selfKind, selfAgentID string) error {
 	host = strings.ToLower(host)
 	if adminDomain != "" && host == strings.ToLower(adminDomain) {
 		return nil
@@ -226,6 +234,26 @@ func hostPolicyCheck(ch *config.Holder, host, adminDomain string) error {
 	if !ok {
 		slog.Warn("TLS host policy rejected", "host", host)
 		return fmt.Errorf("host %q not configured", host)
+	}
+	// Ownership: if this instance is identified (central or a specific
+	// agent), refuse ACME for hosts bound to a different terminator. The
+	// proxy layer also returns 421 for these, but stopping the policy
+	// here avoids hammering Let's Encrypt's rate limit during a
+	// misconfiguration window.
+	if selfKind != "" {
+		switch hc.Host.TargetKind {
+		case "central":
+			if selfKind != "central" {
+				return fmt.Errorf("host %q is bound to central; ACME skipped on this instance", host)
+			}
+		case "agent":
+			if selfKind != "agent" || selfAgentID == "" {
+				return fmt.Errorf("host %q is bound to an edge agent; central skips ACME", host)
+			}
+			if hc.Host.TargetAgentID == nil || *hc.Host.TargetAgentID != selfAgentID {
+				return fmt.Errorf("host %q is bound to a different agent", host)
+			}
+		}
 	}
 	// tls_mode picks whether autocert may issue for this host:
 	//   "auto"     — ACME issuance (default)

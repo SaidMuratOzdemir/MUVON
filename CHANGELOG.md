@@ -27,6 +27,55 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.17] - 2026-05-15
+
+### FEATURES
+
+- **Host terminator ownership**: her host artık DB'de hangi MUVON
+  instance'ının onu terminate ettiğini explicit taşıyor
+  (`target_kind='central'` veya `target_kind='agent'`+`target_agent_id`).
+  Bu tek değişiklik dört iyileştirme açıyor:
+
+  1. **Add/Edit Host dialog'unda DNS hint**: operatör terminator'ü
+     seçer seçmez "DNS A kaydını şu IP'ye yönlendir" mesajı anlık
+     görünür. Cloudflare'a doğru IP yazmak için Hosts listesini
+     beklemeye gerek yok.
+  2. **Hosts listesinde terminator badge**: `central` veya
+     `edge: tatilji (65.108.157.107)` etiketi her satırda.
+  3. **DNS verification host-bazlı**: artık global IP listesi değil,
+     **bu host'un kendi hedef IP'si**. Yanlış IP = "stale", doğrudur.
+  4. **421 Misdirected Request enforcement**: yanlış makineye gelen
+     trafik proxy katmanında 421 ile reddedilir + audit log. ACME
+     HostPolicy de bu kuralı uygular — yanlış makine Let's Encrypt'i
+     gereksiz yere zorlamaz. Ayrıca agent payload artık sadece
+     **kendisine bind hostları** alır (central başka bir agent'a ait
+     host'u görmez, agent kendine ait olmayanları görmez).
+
+### Schema değişiklikleri (forward-only)
+
+- `hosts` tablosuna iki kolon: `target_kind TEXT NOT NULL DEFAULT 'central'`
+  (CHECK: `central|agent`) ve `target_agent_id TEXT REFERENCES agents(id)
+  ON DELETE SET NULL`. Mevcut tüm host'lar default'ta `central` olarak başlar.
+
+### Upgrade notları
+
+- **Önemli**: v0.1.16'dan önce edge agent'a yönlendirilmiş hostlarınız
+  varsa (DNS A record edge IP'sine bakıyorsa), bu sürüme geçtikten sonra
+  **central proxy o trafiği 421 ile reddedecek** (default kayıt `central`
+  olduğu için). Çözüm tek tıklama: Hosts → her satırı Edit → terminator
+  radio'sundan **Edge agent: <ismi>** seç → Save. Sonra agent bir sonraki
+  config pull'unda host'u alır, trafik düzgün akar.
+- Agent'lar v0.1.13+ olmalı (public_ip self-report için). Daha eski
+  agentlar için `last_remote_addr` fallback'i devrede ama Hetzner-style
+  private network'ler için yanlış IP verir.
+
+### Diğer
+
+- `AgentPayloadFromConfig` imzası değişti (agentID parametresi eklendi).
+  Embed yapan harici tüketici yok; iç değişiklik.
+
+---
+
 ## [0.1.16] - 2026-05-15
 
 ### BUGFIXES
