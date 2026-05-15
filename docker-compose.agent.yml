@@ -17,6 +17,10 @@ services:
       AGENT_API_KEY: ${AGENT_API_KEY:?required}
       AGENT_LOG_ADDR: ${AGENT_LOG_ADDR:-}
       AGENT_LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Self-reported public IP — central uses this as the DNS target.
+      # Empty disables the X-Agent-Public-IP header (central falls back
+      # to last_remote_addr, useful for non-NAT setups).
+      AGENT_PUBLIC_IP: ${AGENT_PUBLIC_IP:-}
 
       # ── Fail-soft startup config cache ─────────────────────────────
       # Central kesintisinde stale-but-working config ile başlar, arka

@@ -27,6 +27,45 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.13] - 2026-05-15
+
+### FEATURES
+
+- **DNS verification artık private-network topolojilerde çalışıyor.**
+  Hetzner gibi sağlayıcılarda agent merkezi sunucuya private interface
+  (örn. `10.0.0.3`) üzerinden bağlanıyordu; central bu IP'yi
+  `last_remote_addr` olarak görüyor ve Hosts ekranında DNS verification
+  için "beklenen IP" diye operatöre dönüyordu — anlamsız bir cevap,
+  çünkü internet DNS bu private IP'ye ulaşamaz.
+
+  Düzeltme: agent kendi externally-reachable public IP'sini self-report
+  ediyor (`AGENT_PUBLIC_IP` env veya `--public-ip` flag, install
+  script'i `ifconfig.me` ile otomatik tespit edip soruyor). Central
+  startup'ta kendi public IP'sini benzer şekilde tespit ediyor
+  (`MUVON_PUBLIC_IP` ile override). Hosts ekranı artık doğru IP'leri
+  gösteriyor.
+
+### Schema değişiklikleri (forward-only)
+
+- `agents` tablosuna `public_ip TEXT NOT NULL DEFAULT ''` eklendi.
+  Mevcut agent satırları boş başlar; bir sonraki config pull'da agent
+  kendi public IP'sini bildirir.
+
+### Upgrade notları
+
+- **Edge agent'lar v0.1.13'e yükseltildiğinde**: install-agent.sh'i
+  yeniden çalıştırın (`bash <(curl -fsSL .../install-agent.sh)`); script
+  `.env` dosyasına `AGENT_PUBLIC_IP=<auto-detected>` satırını ekler.
+  Manuel pin için `--public-ip <ip>` flag'i.
+- **Central tarafı**: muvon binary startup'ta kendi public IP'sini
+  tespit eder; air-gapped kurulumlarda `MUVON_PUBLIC_IP` env var
+  ile manuel set edin.
+- `settings.public_ip` (tekil) key'i bu sürümde okunmuyor; eski
+  manual-set değerler etkisiz. (Pratikte UI'da hiç düzenlenmemişti,
+  geçiş şeffaf.)
+
+---
+
 ## [0.1.12] - 2026-05-15
 
 ### BUGFIXES

@@ -20,6 +20,12 @@ import (
 type AgentSource struct {
 	centralURL string
 	apiKey     string
+	// publicIP is the agent's externally-reachable IP (operator-supplied
+	// or auto-detected at install). Sent on every config pull / SSE
+	// reconnect as X-Agent-Public-IP so central can store the right DNS
+	// target — last_remote_addr alone is unreliable in private-network
+	// topologies.
+	publicIP   string
 	httpClient *http.Client
 
 	// lastVersion tracks the snapshot we last applied, so subsequent
@@ -42,6 +48,13 @@ func NewAgentSource(centralURL, apiKey string) *AgentSource {
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 15 * time.Second},
 	}
+}
+
+// SetPublicIP configures the agent's externally-reachable IP. Empty
+// string is allowed and disables the header (central then falls back
+// to last_remote_addr, which is fine for non-NAT setups).
+func (s *AgentSource) SetPublicIP(ip string) {
+	s.publicIP = strings.TrimSpace(ip)
 }
 
 // EnableLocalCache routes successful Loads through `path` (atomic
@@ -120,6 +133,9 @@ func (s *AgentSource) Load(ctx context.Context) (*Config, error) {
 		return nil, fmt.Errorf("agent source: %w", err)
 	}
 	req.Header.Set("X-Api-Key", s.apiKey)
+	if s.publicIP != "" {
+		req.Header.Set("X-Agent-Public-IP", s.publicIP)
+	}
 	if v := s.LastVersion(); v != "" {
 		// Lets central distinguish "agent missed a push" from "agent is
 		// reapplying the same snapshot" without us having to emit a

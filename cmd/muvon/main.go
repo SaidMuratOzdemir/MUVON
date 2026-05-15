@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -43,6 +45,11 @@ func main() {
 		deployerSocket       = flag.String("deployer-socket", envOr("MUVON_DEPLOYER_SOCKET", "/run/muvon/deployer.sock"), "muvon-deployer Unix socket path (live container introspection + log tail)")
 		logLevel             = flag.String("log-level", envOr("MUVON_LOG_LEVEL", "info"), "Log level")
 		encryptionKey        = flag.String("encryption-key", envOr("MUVON_ENCRYPTION_KEY", ""), "AES-256-GCM encryption key for secrets in DB")
+		// publicIP is what central reports as its own externally-reachable
+		// IP for DNS verification. Auto-detected on startup if empty;
+		// operator can pin via MUVON_PUBLIC_IP when ifconfig.me is unwanted
+		// (air-gapped install, behind GeoDNS, etc).
+		publicIPFlag         = flag.String("public-ip", envOr("MUVON_PUBLIC_IP", ""), "Central's externally-reachable IP (auto-detected via ifconfig.me when empty)")
 		configReloadInterval = flag.Duration("config-reload-interval", envDuration("MUVON_CONFIG_RELOAD_INTERVAL", 5*time.Second), "Background config reload interval")
 		showVersion          = flag.Bool("version", false, "Print version and exit")
 	)
@@ -211,8 +218,18 @@ func main() {
 	// Transport
 	transport := proxy.NewTransport()
 
+	// Detect central's own public IP for DNS-target hints. Best-effort:
+	// failure leaves it empty and the admin UI falls back to agent IPs.
+	centralPublicIP := strings.TrimSpace(*publicIPFlag)
+	if centralPublicIP == "" {
+		centralPublicIP = detectPublicIP(ctx)
+	}
+	if centralPublicIP != "" {
+		slog.Info("central public IP", "ip", centralPublicIP)
+	}
+
 	// Admin server — central admin gateway
-	adminSrv := admin.NewServer(database, *jwtSecret, ch, logClient, deployerClient, tlsMgr, hm, agentSvc, frontendFS)
+	adminSrv := admin.NewServer(database, *jwtSecret, ch, logClient, deployerClient, tlsMgr, hm, agentSvc, frontendFS, centralPublicIP)
 	if err := adminSrv.EnsureDefaultAdmin(ctx); err != nil {
 		slog.Warn("admin check failed", "error", err)
 	}
@@ -368,4 +385,31 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return time.Duration(seconds) * time.Second
 	}
 	return fallback
+}
+
+// detectPublicIP asks ifconfig.me for our IPv4 address. Short timeout so
+// startup isn't blocked when the host is offline or the service is down;
+// empty return signals "skip" to the caller. Tied to MUVON_PUBLIC_IP env
+// — operators in air-gapped environments pin the value explicitly.
+func detectPublicIP(ctx context.Context) string {
+	c := &http.Client{Timeout: 5 * time.Second}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, "https://ifconfig.me", nil)
+	if err != nil {
+		return ""
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(body))
 }

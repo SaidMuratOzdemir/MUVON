@@ -42,6 +42,11 @@ type Server struct {
 	// SSE listeners (one process-wide broker — only one upgrade can run
 	// at a time).
 	upgradeBroker *upgradeBroker
+	// centralPublicIP is what central detected as its own externally-
+	// reachable IP at startup (cmd/muvon/main.go runs the detection and
+	// passes it in). Used by expectedHostIPs so DNS verification works
+	// without operators typing the IP into a Settings field.
+	centralPublicIP string
 }
 
 func NewServer(
@@ -54,20 +59,22 @@ func NewServer(
 	hm *health.Manager,
 	agentSvc *agentsvc.Service,
 	frontendFS fs.FS,
+	centralPublicIP string,
 ) *Server {
 	return &Server{
-		db:             database,
-		auth:           NewAuth(jwtSecret),
-		configHolder:   ch,
-		secretBox:      ch.Box(),
-		logClient:      lc,
-		deployerClient: dc,
-		upgradeBroker:  newUpgradeBroker(),
-		tlsManager:     tlsMgr,
-		healthMgr:      hm,
-		agentSvc:       agentSvc,
-		frontendFS:     frontendFS,
-		startTime:      time.Now(),
+		db:              database,
+		auth:            NewAuth(jwtSecret),
+		configHolder:    ch,
+		secretBox:       ch.Box(),
+		logClient:       lc,
+		deployerClient:  dc,
+		upgradeBroker:   newUpgradeBroker(),
+		tlsManager:      tlsMgr,
+		healthMgr:       hm,
+		agentSvc:        agentSvc,
+		frontendFS:      frontendFS,
+		startTime:       time.Now(),
+		centralPublicIP: centralPublicIP,
 	}
 }
 

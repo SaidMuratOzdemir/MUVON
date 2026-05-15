@@ -225,6 +225,9 @@ export interface Agent {
   config_version?: string;
   last_remote_addr?: string;
   last_user_agent?: string;
+  // Agent self-reported public IP — what central considers the correct
+  // DNS target for any host that should resolve to this agent.
+  public_ip?: string;
   created_at: string;
   updated_at: string;
 }

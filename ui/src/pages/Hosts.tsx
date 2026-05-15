@@ -125,7 +125,13 @@ function DNSStatusSection({ host }: { host: Host }) {
           {detail && <div className="text-xs text-muted-foreground mt-0.5 break-all">{detail}</div>}
           {status && status.expected_ips.length > 0 && (
             <div className="text-[11px] text-muted-foreground mt-1">
-              Hedef IP: <code className="font-mono">{status.expected_ips.join(', ')}</code>
+              DNS A kaydı şu IP'lerden birine yönlenmeli:{' '}
+              {status.expected_ips.map((ip, i) => (
+                <span key={ip}>
+                  <code className="font-mono text-foreground/80">{ip}</code>
+                  {i < status.expected_ips.length - 1 ? ', ' : ''}
+                </span>
+              ))}
             </div>
           )}
         </div>

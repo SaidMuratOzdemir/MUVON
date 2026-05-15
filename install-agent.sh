@@ -21,10 +21,13 @@ STATUS_FILE="${INSTALL_DIR}/.install-status"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.agent.yml"
 
 TARGET_VERSION=""
+PUBLIC_IP_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) TARGET_VERSION="${2:-}"; shift 2 ;;
     --version=*) TARGET_VERSION="${1#*=}"; shift ;;
+    --public-ip) PUBLIC_IP_ARG="${2:-}"; shift 2 ;;
+    --public-ip=*) PUBLIC_IP_ARG="${1#*=}"; shift ;;
     *) shift ;;
   esac
 done
@@ -154,6 +157,15 @@ if [ "$MODE" = "install" ]; then
   DEFAULT_HOST=$(echo "$CENTRAL_URL" | sed -E 's|https?://||' | cut -d: -f1)
   _read "    diaLOG log adresi [${DEFAULT_HOST}:9001] (atlamak için Enter): " LOG_ADDR "${DEFAULT_HOST}:9001"
 
+  # Public IP — DNS verification için central'a bildirilir. Operatör --public-ip
+  # ile override edebilir; yoksa ifconfig.me'den auto-detect, hata olursa boş.
+  if [ -n "$PUBLIC_IP_ARG" ]; then
+    PUBLIC_IP="$PUBLIC_IP_ARG"
+  else
+    PUBLIC_IP="$(curl -fsS --max-time 5 -4 https://ifconfig.me 2>/dev/null | tr -d '[:space:]' || true)"
+  fi
+  _read "    Bu agent'ın public IP'si [${PUBLIC_IP:-auto-detect başarısız}] (Enter ile onayla, değiştirmek için yaz): " PUBLIC_IP "$PUBLIC_IP"
+
   echo ""
   echo "── Embedded edge deployer (opsiyonel) ───────────────────────────────"
   echo ""
@@ -237,6 +249,7 @@ if [ "$MODE" = "install" ]; then
 AGENT_CENTRAL_URL=${CENTRAL_URL}
 AGENT_API_KEY=${API_KEY}
 AGENT_LOG_ADDR=${LOG_ADDR}
+AGENT_PUBLIC_IP=${PUBLIC_IP}
 
 LOG_LEVEL=info
 
@@ -274,6 +287,22 @@ else
   _env_upsert .env AGENT_ENCRYPTION_KEY         ""       ensure
   _env_upsert .env AGENT_DOCKERWATCH_ENABLED    "true"   ensure
   _env_upsert .env AGENT_DOCKERWATCH_MANAGED_ONLY "false" ensure
+
+  # v0.1.13: public IP self-report. Boşsa auto-detect dene; başarısızsa boş bırak.
+  if ! grep -qE '^AGENT_PUBLIC_IP=' .env; then
+    DETECTED_IP=""
+    if [ -n "$PUBLIC_IP_ARG" ]; then
+      DETECTED_IP="$PUBLIC_IP_ARG"
+    else
+      DETECTED_IP="$(curl -fsS --max-time 5 -4 https://ifconfig.me 2>/dev/null | tr -d '[:space:]' || true)"
+    fi
+    _env_upsert .env AGENT_PUBLIC_IP "$DETECTED_IP" ensure
+    [ -n "$DETECTED_IP" ] && status "ENV" "AGENT_PUBLIC_IP otomatik tespit edildi: $DETECTED_IP"
+  elif [ -n "$PUBLIC_IP_ARG" ]; then
+    # Operatör --public-ip ile override istiyorsa mevcut değeri değiştir
+    _env_upsert .env AGENT_PUBLIC_IP "$PUBLIC_IP_ARG" set
+    status "ENV" "AGENT_PUBLIC_IP override: $PUBLIC_IP_ARG"
+  fi
 
   # Eski .env'de deployer aktif mi öğren — socket mount'ı koru
   if grep -qE '^AGENT_DEPLOYER_ENABLED=true' .env; then

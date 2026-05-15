@@ -29,6 +29,13 @@ type Agent struct {
 	ConfigVersion    string     `json:"config_version"`
 	LastRemoteAddr   string     `json:"last_remote_addr"`
 	LastUserAgent    string     `json:"last_user_agent"`
+	// PublicIP is what the agent reports as its externally-reachable IP —
+	// either auto-detected by install-agent.sh (curl ifconfig.me) or set
+	// by the operator with --public-ip. This is the value the admin UI
+	// uses when telling the operator what to point DNS at, because
+	// LastRemoteAddr in private-network topologies is the agent's
+	// private interface and useless for DNS verification.
+	PublicIP         string     `json:"public_ip"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
@@ -43,13 +50,13 @@ func hashAPIKey(key string) []byte {
 
 const agentSelectCols = `id, name, api_key, is_active, last_seen_at,
 	last_config_pull_at, config_version, last_remote_addr, last_user_agent,
-	created_at, updated_at`
+	public_ip, created_at, updated_at`
 
 func scanAgent(scan func(...any) error) (Agent, error) {
 	var a Agent
 	err := scan(&a.ID, &a.Name, &a.APIKey, &a.IsActive, &a.LastSeenAt,
 		&a.LastConfigPullAt, &a.ConfigVersion, &a.LastRemoteAddr, &a.LastUserAgent,
-		&a.CreatedAt, &a.UpdatedAt)
+		&a.PublicIP, &a.CreatedAt, &a.UpdatedAt)
 	return a, err
 }
 
@@ -99,16 +106,20 @@ func (d *DB) TouchAgentLastSeen(ctx context.Context, id string) {
 // RecordAgentConfigPull stamps the agent row with the latest config it pulled.
 // Called whenever the agent hits /api/v1/agent/config so the admin UI can
 // distinguish "alive on the SSE channel" from "actually applied recent config".
-func (d *DB) RecordAgentConfigPull(ctx context.Context, id, version, remoteAddr, userAgent string) {
+// publicIP is the agent's self-reported externally-reachable IP; empty string
+// leaves the existing column value alone (so a transient detection failure
+// doesn't blank a previously-known good value).
+func (d *DB) RecordAgentConfigPull(ctx context.Context, id, version, remoteAddr, userAgent, publicIP string) {
 	d.Pool.Exec(ctx,
 		`UPDATE agents
 		 SET last_seen_at = now(),
 		     last_config_pull_at = now(),
 		     config_version = $2,
 		     last_remote_addr = $3,
-		     last_user_agent = $4
+		     last_user_agent = $4,
+		     public_ip = CASE WHEN $5 <> '' THEN $5 ELSE public_ip END
 		 WHERE id = $1`,
-		id, version, remoteAddr, userAgent)
+		id, version, remoteAddr, userAgent, publicIP)
 }
 
 func (d *DB) GetAgentByKey(ctx context.Context, apiKey string) (Agent, error) {

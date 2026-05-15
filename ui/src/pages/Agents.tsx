@@ -291,10 +291,18 @@ export default function Agents() {
                     </p>
                   </div>
                   {agent.last_remote_addr ? (
-                    <div className="rounded border border-border/60 bg-background/40 px-2.5 py-1.5 col-span-2">
+                    <div className="rounded border border-border/60 bg-background/40 px-2.5 py-1.5">
                       <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Last seen from</p>
                       <p className="font-mono text-foreground/90 truncate" title={agent.last_user_agent ?? ''}>
                         {agent.last_remote_addr}
+                      </p>
+                    </div>
+                  ) : null}
+                  {agent.public_ip ? (
+                    <div className="rounded border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1.5">
+                      <p className="text-[10px] uppercase tracking-wider text-emerald-400/80">Public IP (DNS hedefi)</p>
+                      <p className="font-mono text-foreground/90 truncate" title="Agent kendi public IP'sini bildiriyor — DNS verification bu IP'yi bekler">
+                        {agent.public_ip}
                       </p>
                     </div>
                   ) : null}

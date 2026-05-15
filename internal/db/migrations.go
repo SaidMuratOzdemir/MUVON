@@ -1005,4 +1005,14 @@ CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_recent
               ADD COLUMN IF NOT EXISTS keep_releases INTEGER NOT NULL DEFAULT 3
               CHECK (keep_releases >= 1);`,
 	},
+	// Agent-reported public IP. last_remote_addr alone is unreliable for
+	// DNS verification because in Hetzner-style private-network topologies
+	// the source IP central sees is the agent's private interface, not
+	// its public one. Agents now self-report their public IP at register
+	// or heartbeat time (auto-detected by install-agent.sh or overridden
+	// via --public-ip).
+	{
+		name: "add_agents_public_ip", product: "muvon",
+		sql: `ALTER TABLE agents ADD COLUMN IF NOT EXISTS public_ip TEXT NOT NULL DEFAULT '';`,
+	},
 }

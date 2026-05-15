@@ -63,7 +63,12 @@ func main() {
 		// most recent good config instead of crash-looping. Empty path =
 		// no cache, classic fail-fast behaviour.
 		configCachePath = flag.String("config-cache", envOr("AGENT_CONFIG_CACHE", "/var/lib/agent/config.json"), "Path to cache the last successful config payload (empty disables)")
-		showVersion     = flag.Bool("version", false, "Print version and exit")
+		// Self-reported public IP — what central should treat as the DNS
+		// target for this agent. install-agent.sh auto-detects with
+		// `curl -s -4 ifconfig.me`; operator can override via flag/env.
+		// Empty disables the header; central falls back to last_remote_addr.
+		publicIP    = flag.String("public-ip", envOr("AGENT_PUBLIC_IP", ""), "Externally-reachable public IP of this agent (empty disables self-report)")
+		showVersion = flag.Bool("version", false, "Print version and exit")
 	)
 	flag.Parse()
 	if *showVersion {
@@ -89,6 +94,7 @@ func main() {
 
 	// Config source — pulls from central server, with optional disk cache.
 	src := config.NewAgentSource(*centralURL, *apiKey)
+	src.SetPublicIP(*publicIP)
 	if *configCachePath != "" {
 		if err := src.EnableLocalCache(*configCachePath); err != nil {
 			slog.Warn("config cache disabled", "error", err)

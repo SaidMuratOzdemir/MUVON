@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -122,33 +121,36 @@ func (s *Server) handleHostDNSStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // expectedHostIPs collects every IP the system would accept as a valid
-// DNS target for any host: the configured central public_ip, plus the
-// last-seen remote address of every agent (so an edge-bound host can be
-// verified without the operator typing the agent's IP into settings).
+// DNS target for any host:
+//   - central's own auto-detected public IP (s.centralPublicIP, set at
+//     startup; empty when detection failed or was disabled);
+//   - every active agent's self-reported public_ip;
+//   - each agent's last_remote_addr as a fallback when public_ip is empty
+//     (covers legacy agents that haven't been upgraded yet).
+//
+// No public/private filtering — internal-only topologies (Hetzner
+// private network as the only path) are legitimate and the operator's
+// choice.
 func (s *Server) expectedHostIPs(ctx context.Context) ([]string, error) {
 	seen := map[string]struct{}{}
-	if raw, err := s.db.GetSetting(ctx, "public_ip"); err == nil {
-		var ip string
-		// Settings store JSON; tolerate both raw strings and JSON-encoded
-		// strings (older rows may have been inserted either way).
-		if err := json.Unmarshal([]byte(raw), &ip); err != nil {
-			ip = strings.Trim(strings.TrimSpace(raw), `"`)
-		}
-		if ip != "" {
-			seen[ip] = struct{}{}
-		}
+	if ip := strings.TrimSpace(s.centralPublicIP); ip != "" {
+		seen[ip] = struct{}{}
 	}
 	agents, err := s.db.ListAgents(ctx)
 	if err == nil {
 		for _, a := range agents {
-			ip := stripPort(strings.TrimSpace(a.LastRemoteAddr))
-			if ip != "" {
+			if ip := strings.TrimSpace(a.PublicIP); ip != "" {
+				seen[ip] = struct{}{}
+				continue
+			}
+			// Legacy fallback: agent hasn't reported public_ip yet.
+			if ip := stripPort(strings.TrimSpace(a.LastRemoteAddr)); ip != "" {
 				seen[ip] = struct{}{}
 			}
 		}
 	}
 	if len(seen) == 0 {
-		return nil, errors.New("hiçbir hedef IP yok: Ayarlar > public_ip değerini girin veya bir agent kaydedin")
+		return nil, errors.New("hiçbir hedef IP yok: agent kaydedin veya central'ı internet üzerinden erişilebilir bir public IP'ye taşıyın")
 	}
 	out := make([]string, 0, len(seen))
 	for ip := range seen {

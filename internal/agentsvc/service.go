@@ -117,7 +117,11 @@ func (s *Service) HandleConfig(w http.ResponseWriter, r *http.Request) {
 		// context so the request lifecycle never gates the DB write.
 		remote := remoteAddrOf(r)
 		ua := truncate(r.UserAgent(), 200)
-		go s.db.RecordAgentConfigPull(context.Background(), id, payload.Version, remote, ua)
+		// Agent self-reports its public IP via this header so DNS
+		// verification has the right target even when source IP is the
+		// agent's private interface (Hetzner private network, etc).
+		publicIP := strings.TrimSpace(r.Header.Get("X-Agent-Public-IP"))
+		go s.db.RecordAgentConfigPull(context.Background(), id, payload.Version, remote, ua, publicIP)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
