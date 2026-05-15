@@ -425,7 +425,14 @@ func (m *Manager) shipOrSpool(meta ContainerMeta, batch []SpooledEntry) {
 		m.notifyLag()
 		return
 	} else {
-		slog.Debug("logship: send failed; spooling", "container", shortID(meta.ContainerID), "error", err)
+		// Warn (not Debug) — if the SIEM is rejecting/unreachable for any
+		// reason the operator has no way of finding out otherwise: the
+		// lines just pile up in the local spool and the dialog UI looks
+		// empty. Rate limiting lives in slog/log infra, not here.
+		slog.Warn("logship: send to dialog-siem failed; spooling",
+			"container", shortID(meta.ContainerID),
+			"lines", len(batch),
+			"error", err)
 	}
 	if err := m.spool.Append(meta.ContainerID, batch); err != nil {
 		slog.Warn("logship: spool append failed",
@@ -470,9 +477,13 @@ func (m *Manager) replaySpool(ctx context.Context) {
 			return m.sink.SendContainerLogBatch(sendCtx, pbBatch)
 		})
 		if err != nil {
-			// Stop draining further containers if one fails — likely
-			// the SIEM is still down and we'd just bash our head
-			// against the wall for the rest.
+			// Surface the reason so an operator wading through a
+			// growing spool directory can spot it. We still abort the
+			// loop — the SIEM is presumably uniformly unreachable, no
+			// point hammering it for every other container.
+			slog.Warn("logship: spool replay failed",
+				"container", shortID(id),
+				"error", err)
 			return
 		}
 	}

@@ -27,6 +27,24 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.26] - 2026-05-15
+
+### BUGFIXES
+
+- **logship sessizce başarısız oluyordu**: agent dockerwatch line'ları
+  lokal spool dosyasına yazıyordu (~MB'larca birikim), `shipOrSpool`
+  ise gRPC send fail'ını `slog.Debug` ile loguyordu — agent INFO
+  seviyesinde çalıştığı için hiç görünmüyordu. Replay loop'unda da
+  Drain hatası tamamen sessizdi. Operator dialog UI'da
+  `container_logs` boş görüyor, neden olduğunu bilemiyordu.
+
+  Düzeltme: send fail + replay fail artık `slog.Warn` seviyesinde
+  emit ediliyor. Hata mesajı, container short id, batch line sayısı
+  loga düşüyor — gerçek sebep (auth reject, transport error, TLS
+  mismatch, vs.) artık görünür.
+
+---
+
 ## [0.1.25] - 2026-05-15
 
 ### BUGFIXES
