@@ -237,6 +237,10 @@ func (s *Server) handleSystemUpgradeStream(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Upgrade can run minutes; clear the 60s WriteTimeout for this conn.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
 	w.WriteHeader(http.StatusOK)
 
 	history, ch, active := s.upgradeBroker.subscribe()

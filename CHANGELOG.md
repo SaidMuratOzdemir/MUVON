@@ -23,7 +23,23 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-— henüz birikme yok.
+### BUGFIXES
+
+- **Agent SSE config_watch ~60s'de bir kopuyordu**: Merkezi MUVON'un
+  HTTP server'larında global `WriteTimeout: 60s` ayarı, açık tutulan
+  SSE stream'lerinin yazma tarafını tam 60. saniyede zorla kapatıyordu.
+  Agent log'unda görünen `stream error: stream ID …; INTERNAL_ERROR;
+  received from peer` mesajının kaynağı buydu. Bağlantı her dakika
+  düşüp yeniden kuruluyor, bu süre içinde push edilen `config_updated`
+  event'leri agent'a ulaşmıyordu (sonraki pull cycle'a kadar gecikme).
+
+  Düzeltme: tüm uzun-ömürlü endpoint'lerde
+  `http.NewResponseController(w).SetWriteDeadline(time.Time{})` ile
+  sunucu-tarafı yazma deadline'ı bu bağlantı için sıfırlanıyor.
+  Kapsam: `/api/v1/agent/watch` (SSE), `/api/v1/agent/commands`
+  long-poll (max 50s wait — 60s'lik tampona fazla yakındı),
+  `/api/system/upgrade/stream`, `/api/container-logs/.../stream`,
+  `/api/logs/stream`.
 
 ---
 

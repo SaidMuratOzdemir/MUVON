@@ -273,6 +273,13 @@ func (s *Service) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
+	// SSE streams must outlive the server's global WriteTimeout (60s) —
+	// otherwise net/http kills the write side mid-stream and the agent
+	// sees "stream error: INTERNAL_ERROR; received from peer".
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
+
 	ch := s.broadcaster.Subscribe()
 	defer s.broadcaster.Unsubscribe(ch)
 

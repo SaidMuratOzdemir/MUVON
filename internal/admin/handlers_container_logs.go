@@ -285,6 +285,10 @@ func (s *Server) handleStreamContainerLogs(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Connection", "keep-alive")
+	// Live container tail must outlive the server's 60s WriteTimeout.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
 
 	// Audit so the access trail is in place from day 1 — RBAC may
 	// later restrict the read but the audit log already records who

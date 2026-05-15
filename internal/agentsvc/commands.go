@@ -38,6 +38,13 @@ func (s *Service) HandlePollCommand(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Long-poll holds the connection up to 50s — disable the server's
+	// 60s WriteTimeout so the final 204/200 write doesn't race the
+	// deadline.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
+
 	// Fast path: command already pending? Return immediately.
 	if cmd, ok, err := s.db.ClaimNextAgentCommand(r.Context(), agentID); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
