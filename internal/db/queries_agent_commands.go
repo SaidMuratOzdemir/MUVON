@@ -96,17 +96,15 @@ func (d *DB) EnqueueAgentCommand(ctx context.Context, in EnqueueAgentCommandInpu
 // row.
 func (d *DB) ClaimNextAgentCommand(ctx context.Context, agentID string) (AgentCommand, bool, error) {
 	c, err := scanAgentCommand(d.Pool.QueryRow(ctx,
-		`WITH next AS (
-		    SELECT id FROM agent_commands
-		    WHERE agent_id = $1 AND state = 'pending' AND expires_at > now()
-		    ORDER BY id
-		    LIMIT 1
-		    FOR UPDATE SKIP LOCKED
-		 )
-		 UPDATE agent_commands ac
+		`UPDATE agent_commands
 		 SET state = 'dispatched', dispatched_at = now()
-		 FROM next
-		 WHERE ac.id = next.id
+		 WHERE id = (
+		     SELECT id FROM agent_commands
+		     WHERE agent_id = $1 AND state = 'pending' AND expires_at > now()
+		     ORDER BY id
+		     LIMIT 1
+		     FOR UPDATE SKIP LOCKED
+		 )
 		 RETURNING `+agentCommandSelectCols, agentID).Scan)
 	if err == pgx.ErrNoRows {
 		return c, false, nil

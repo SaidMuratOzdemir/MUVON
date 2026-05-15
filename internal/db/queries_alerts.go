@@ -118,12 +118,12 @@ func (d *DB) SearchAlerts(ctx context.Context, p AlertSearchParams) ([]Alert, in
 
 	// Count first (using the same args set) so we can report total.
 	var total int
-	countSQL := fmt.Sprintf(`SELECT COUNT(*) FROM alerts %s`, whereSQL)
+	countSQL := fmt.Sprintf(`SELECT COUNT(*) FROM dialog.alerts %s`, whereSQL)
 	if err := d.Pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count alerts: %w", err)
 	}
 
-	listSQL := fmt.Sprintf(`SELECT %s FROM alerts %s ORDER BY last_seen_at DESC LIMIT $%d OFFSET $%d`,
+	listSQL := fmt.Sprintf(`SELECT %s FROM dialog.alerts %s ORDER BY last_seen_at DESC LIMIT $%d OFFSET $%d`,
 		alertSelectCols, whereSQL, idx, idx+1)
 	args = append(args, p.Limit, p.Offset)
 
@@ -150,7 +150,7 @@ func (d *DB) SearchAlerts(ctx context.Context, p AlertSearchParams) ([]Alert, in
 // GetAlert returns a single alert by id. Returns an error compatible with
 // pgx.ErrNoRows when the id is unknown so callers can map that to 404.
 func (d *DB) GetAlert(ctx context.Context, id string) (Alert, error) {
-	sql := fmt.Sprintf(`SELECT %s FROM alerts WHERE id = $1::uuid`, alertSelectCols)
+	sql := fmt.Sprintf(`SELECT %s FROM dialog.alerts WHERE id = $1::uuid`, alertSelectCols)
 	a, err := scanAlert(d.Pool.QueryRow(ctx, sql, id).Scan)
 	if err != nil {
 		return a, fmt.Errorf("get alert: %w", err)
@@ -163,7 +163,7 @@ func (d *DB) GetAlert(ctx context.Context, id string) (Alert, error) {
 // Re-acknowledgement is a no-op (existing acknowledged_at is preserved).
 func (d *DB) AcknowledgeAlert(ctx context.Context, id, user string) (Alert, error) {
 	sql := fmt.Sprintf(`
-		UPDATE alerts
+		UPDATE dialog.alerts
 		SET acknowledged = true,
 		    acknowledged_at = COALESCE(acknowledged_at, now()),
 		    acknowledged_by = COALESCE(acknowledged_by, $2)
@@ -201,7 +201,7 @@ func (d *DB) GetAlertStats(ctx context.Context) (AlertStats, error) {
 	}
 
 	rows, err := d.Pool.Query(ctx,
-		`SELECT rule, COUNT(*) FROM alerts WHERE NOT acknowledged GROUP BY rule`)
+		`SELECT rule, COUNT(*) FROM dialog.alerts WHERE NOT acknowledged GROUP BY rule`)
 	if err != nil {
 		return s, fmt.Errorf("alert stats by rule: %w", err)
 	}
@@ -217,7 +217,7 @@ func (d *DB) GetAlertStats(ctx context.Context) (AlertStats, error) {
 	rows.Close()
 
 	rows, err = d.Pool.Query(ctx,
-		`SELECT severity, COUNT(*) FROM alerts WHERE NOT acknowledged GROUP BY severity`)
+		`SELECT severity, COUNT(*) FROM dialog.alerts WHERE NOT acknowledged GROUP BY severity`)
 	if err != nil {
 		return s, fmt.Errorf("alert stats by severity: %w", err)
 	}
