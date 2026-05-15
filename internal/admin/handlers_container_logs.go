@@ -177,14 +177,18 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 	out := make([]*mergedContainer, 0, len(merged))
 	for _, m := range merged {
 		// Final state filter — applied here because dialog/deployer
-		// each apply their own and we want a unified view.
+		// each apply their own and we want a unified view. `m.Live` is
+		// only true when central's deployer saw the container; agent
+		// containers come in only through the historical dialog stream
+		// (Live=false) but are still running, so use FinishedAt (the
+		// canonical "is this process gone" signal) instead.
 		switch state {
 		case "running":
-			if !m.Live {
+			if !m.Live && m.FinishedAt != "" {
 				continue
 			}
 		case "exited":
-			if m.Live {
+			if m.Live && m.FinishedAt == "" {
 				continue
 			}
 		}

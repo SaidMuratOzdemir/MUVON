@@ -27,6 +27,25 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.28] - 2026-05-15
+
+### BUGFIXES
+
+- **Container Logs sayfası agent container'larını göstermiyordu**:
+  `handleListContainers`'ın final state filtresi `state=running`
+  durumunda `m.Live` (yalnız central deployer'dan gelen) container'ları
+  geçiriyor, dialog'un historical dimension'undan gelen agent
+  container'larını eliyordu. dialog'a log shipping çalışsa bile
+  (auth fix v0.1.27), Live tab boş kalıyordu. Operatör m1'deki tatilji
+  servislerinin loguna erişemiyordu.
+
+  Düzeltme: state filtresi artık `FinishedAt` üzerinden çalışıyor —
+  Live olsun olmasın, `FinishedAt` boşsa "running". Live badge bilgisi
+  korunuyor (deployer-confirmed visibility hâlâ ayırt edilebilir) ama
+  filtreleme kararı doğru sinyale göre veriliyor.
+
+---
+
 ## [0.1.27] - 2026-05-15
 
 ### BUGFIXES
