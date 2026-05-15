@@ -26,15 +26,19 @@ function suggestSlug(name: string): string {
 
 interface NewAppDialogProps {
   open: boolean
-  // When set, the host selector is locked to this value — used so the
-  // "Yeni Uygulama" button on the Edge listing pre-selects the agent
-  // category and the central listing pre-selects central.
-  lockedHost?: 'central' | 'edge'
   onClose: () => void
   onCreated: (projectSlug: string) => void
 }
 
-export function NewAppDialog({ open, lockedHost, onClose, onCreated }: NewAppDialogProps) {
+// agentID tri-state:
+//   null  → operator hasn't picked yet (submit blocked)
+//   ''    → central (this MUVON host)
+//   uuid  → edge agent's ID
+// Default null so the wizard never silently defaults to central — that
+// foot-gun caused real components to land on the wrong host.
+type HostChoice = string | null
+
+export function NewAppDialog({ open, onClose, onCreated }: NewAppDialogProps) {
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)
@@ -43,17 +47,13 @@ export function NewAppDialog({ open, lockedHost, onClose, onCreated }: NewAppDia
   const [imageRepo, setImageRepo] = useState('')
   const [internalPort, setInternalPort] = useState('8080')
   const [healthPath, setHealthPath] = useState('/health')
-  // "" = central; non-empty = the chosen agent ID.
-  const [agentID, setAgentID] = useState('')
+  const [agentID, setAgentID] = useState<HostChoice>(null)
   const [agents, setAgents] = useState<Agent[]>([])
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
     if (!open) return
-    // Reset host selection per lockedHost intent. For 'edge' we keep the
-    // empty string until the operator picks a specific agent — explicit
-    // choice avoids silently sending the wrong target.
-    setAgentID('')
+    setAgentID(null)
     api.listAgents()
       .then(setAgents)
       .catch(err => toast.error(err instanceof Error ? err.message : "Agent listesi alınamadı"))
@@ -68,7 +68,7 @@ export function NewAppDialog({ open, lockedHost, onClose, onCreated }: NewAppDia
     setImageRepo('')
     setInternalPort('8080')
     setHealthPath('/health')
-    setAgentID('')
+    setAgentID(null)
     setSubmitting(false)
   }
 
@@ -93,7 +93,7 @@ export function NewAppDialog({ open, lockedHost, onClose, onCreated }: NewAppDia
     if (!imageRepo.trim()) return 'Docker image gerekli'
     const port = Number(internalPort)
     if (!Number.isInteger(port) || port <= 0 || port > 65535) return 'Port 1–65535 arasında olmalı'
-    if (lockedHost === 'edge' && !agentID) return 'Uzak uygulama için bir agent seçilmeli'
+    if (agentID === null) return 'Konum seçilmedi: ya bu MUVON sunucusunu ya da bir agent seç'
     return null
   }
 
@@ -117,7 +117,7 @@ export function NewAppDialog({ open, lockedHost, onClose, onCreated }: NewAppDia
           image_repo: imageRepo.trim(),
           internal_port: Number(internalPort),
           health_path: healthPath.trim() || '/',
-          agent_id: agentID || undefined,
+          agent_id: agentID || undefined,  // null/'' → central (omit); uuid → edge
         })
       } catch (componentErr) {
         // Project created but component failed — surface this clearly so
@@ -164,8 +164,7 @@ export function NewAppDialog({ open, lockedHost, onClose, onCreated }: NewAppDia
               <button
                 type="button"
                 onClick={() => setAgentID('')}
-                disabled={lockedHost === 'edge'}
-                className={`rounded-md border px-3 py-2 text-left text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
                   agentID === '' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/20'
                 }`}
               >
@@ -174,11 +173,11 @@ export function NewAppDialog({ open, lockedHost, onClose, onCreated }: NewAppDia
               </button>
               <div className="space-y-1">
                 <select
-                  value={agentID}
-                  onChange={e => setAgentID(e.target.value)}
-                  disabled={lockedHost === 'central' || agents.length === 0}
+                  value={agentID ?? ''}
+                  onChange={e => setAgentID(e.target.value === '' ? null : e.target.value)}
+                  disabled={agents.length === 0}
                   className={`w-full rounded-md border px-3 py-2 text-sm bg-background disabled:opacity-40 disabled:cursor-not-allowed ${
-                    agentID !== '' ? 'border-primary' : 'border-border'
+                    agentID !== '' && agentID !== null ? 'border-primary bg-primary/5' : 'border-border'
                   }`}
                 >
                   <option value="">— Agent seç —</option>

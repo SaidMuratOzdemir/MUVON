@@ -27,6 +27,26 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.11] - 2026-05-15
+
+### BUGFIXES
+
+- **Wizard sessizce yanlış host seçiyordu**: "Yeni Uygulama" wizard'ı,
+  hangi sayfadan (Uygulamalar / Uzak Uygulamalar) açıldığına göre host
+  seçicisini disable ediyordu (`lockedHost` prop). Memory prensibi
+  "oluşturma akışı birleşik (tek wizard)" diyor — bu prop o prensibi
+  kırıyordu. Daha kötüsü: default `agentID = ''` (central) → "Bu MUVON
+  sunucusu" görsel olarak seçili gibi görünüyordu ama kullanıcı bir
+  seçim yapmamıştı; submit'te sessizce central'a düştü.
+
+  Düzeltme: `lockedHost` prop'u kaldırıldı (her iki seçenek her zaman
+  açık), `agentID` tri-state oldu (`null` → seçim yok, `''` → central,
+  `uuid` → edge). Validation `agentID === null` durumunda submit'i
+  engelliyor: "Konum seçilmedi: ya bu MUVON sunucusunu ya da bir agent
+  seç".
+
+---
+
 ## [0.1.10] - 2026-05-15
 
 ### BUGFIXES

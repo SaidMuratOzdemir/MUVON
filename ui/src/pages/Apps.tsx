@@ -1097,7 +1097,6 @@ export default function Apps({ hostFilter }: AppsProps = {}) {
       {/* ── New app wizard ───────────────────────────────────────────────── */}
       <NewAppDialog
         open={newAppOpen}
-        lockedHost={hostFilter}
         onClose={() => setNewAppOpen(false)}
         onCreated={(slug) => { load(true); /* open new project's settings so the operator can verify */
           setTimeout(() => {
