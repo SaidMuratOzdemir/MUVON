@@ -27,6 +27,34 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.24] - 2026-05-15
+
+### BUGFIXES
+
+- **`agent.self_upgrade` helper'ı convention default mount'larını yok
+  ediyordu**: v0.1.23'ün mount sync script'i compose'daki **tüm**
+  `:ro` mount satırlarını sed `:d` ile silip sonra `EXTRA_MOUNTS`
+  listesinden re-insert ediyordu. `EXTRA_MOUNTS` boş olduğunda
+  `/root/.docker/config.json` ve `/opt/envfiles` defaults'ı da
+  uçtu → GHCR pull 401, env_file_path erişimi yok.
+
+  Düzeltme: helper artık compose'u **GitHub raw'dan taze indiriyor**
+  (`wget -q -O`), convention default mount satırlarını üç targeted
+  `sed s|...|...|` ile uncomment ediyor, sonra `EXTRA_MOUNTS`'taki
+  her path'i duplicate-guard ile docker.sock anchor'ı altına insert
+  ediyor. Tamamen idempotent — peş peşe iki self_upgrade aynı compose
+  dosyasıyla biter, EXTRA_MOUNTS state'i ne olursa olsun default
+  mount'lar her zaman aktif.
+
+### Upgrade notları
+
+- Agent v0.1.23'te kalan kurulumlar bir kez install-agent.sh ile
+  düzeltilmeli (manuel kurtarma) çünkü mevcut bozuk helper kendi
+  kendini yenileyemiyor. v0.1.24'e çıktıktan sonra UI'dan
+  `agent.self_upgrade` güvenle tetiklenebilir.
+
+---
+
 ## [0.1.23] - 2026-05-15
 
 ### FEATURES

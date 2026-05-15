@@ -221,26 +221,38 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 			sedLine = fmt.Sprintf(`sed -i -E "s|(ghcr\\.io/[^:]+/agent):[^[:space:]\"]*|\\1:%s|g" docker-compose.agent.yml`, targetTag)
 		}
 
-		// Operator-managed extra bind mounts. Helper container reads
-		// EXTRA_MOUNTS (space-separated host paths), drops every line
-		// that bind-mounts a "$path:$path:ro" pair, then re-inserts the
-		// current list right after the docker.sock mount. This makes
-		// the helper's behaviour idempotent: removing a path from the
-		// UI on next config pull cleans it out of compose too.
+		// Operator-managed extra bind mounts come from the agent process
+		// state (populated by every config pull). They get joined into
+		// EXTRA_MOUNTS and shipped to the helper as an env var; the
+		// helper script applies them additively without touching the
+		// default convention mounts.
 		var mounts []string
 		if deps.extraMounts != nil {
 			mounts = deps.extraMounts()
 		}
 		mountsEnv := strings.Join(mounts, " ")
+
+		// Mount sync strategy: re-download compose from main (the in-repo
+		// canonical version always carries the commented-out mount lines),
+		// uncomment the convention defaults, then append operator extras.
+		// This is fully idempotent — running it twice converges to the
+		// same compose file regardless of what state was on disk before.
+		// The previous "sed -d every :ro line" approach was the bug that
+		// nuked default mounts when EXTRA_MOUNTS happened to be empty.
 		mountSyncScript := strings.Join([]string{
-			`# Strip any previously-injected operator mount lines (idempotent).`,
-			`sed -i -E "\|^[[:space:]]+- /[^:]+:[^:]+:ro[[:space:]]*$|d" docker-compose.agent.yml || true`,
-			`# Re-insert current AGENT_EXTRA_MOUNTS list after docker.sock anchor.`,
+			`# Pull a fresh compose so we always start from a known-good base.`,
+			`wget -q -O docker-compose.agent.yml https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/docker-compose.agent.yml`,
+			`# Convention defaults — uncomment each line. AGENT_DEPLOYER_ENABLED`,
+			`# is true if we got here, so docker.sock goes RW (no :ro suffix).`,
+			`sed -i -E "s|^([[:space:]]+)# - /var/run/docker\\.sock:/var/run/docker\\.sock:ro|\\1- /var/run/docker.sock:/var/run/docker.sock|" docker-compose.agent.yml`,
+			`sed -i -E "s|^([[:space:]]+)# - /root/\\.docker/config\\.json:/root/\\.docker/config\\.json:ro|\\1- /root/.docker/config.json:/root/.docker/config.json:ro|" docker-compose.agent.yml`,
+			`sed -i -E "s|^([[:space:]]+)# - /opt/envfiles:/opt/envfiles:ro|\\1- /opt/envfiles:/opt/envfiles:ro|" docker-compose.agent.yml`,
+			`# Operator extras — append each, guarded against duplicates.`,
 			`if [ -n "$EXTRA_MOUNTS" ]; then`,
 			`  for path in $EXTRA_MOUNTS; do`,
 			`    [ -z "$path" ] && continue`,
-			`    sed -i -E "/^[[:space:]]+- \/var\/run\/docker\.sock:/a\\`,
-			`      - $path:$path:ro" docker-compose.agent.yml`,
+			`    grep -qE "^[[:space:]]+- ${path}:${path}:ro" docker-compose.agent.yml && continue`,
+			`    sed -i -E "/^[[:space:]]+- \/var\/run\/docker\.sock:/a\\      - $path:$path:ro" docker-compose.agent.yml`,
 			`  done`,
 			`fi`,
 		}, "\n")
@@ -248,8 +260,8 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 		script := strings.Join([]string{
 			"set -ex",
 			"cd " + helperHostMnt,
-			sedLine,
 			mountSyncScript,
+			sedLine,
 			"docker compose -p " + projectName + " -f docker-compose.agent.yml pull agent",
 			"docker compose -p " + projectName + " -f docker-compose.agent.yml up -d --no-deps --wait --wait-timeout 90 agent",
 		}, "\n")
