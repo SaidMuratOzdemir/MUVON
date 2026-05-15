@@ -47,6 +47,10 @@ type Server struct {
 	// passes it in). Used by expectedHostIPs so DNS verification works
 	// without operators typing the IP into a Settings field.
 	centralPublicIP string
+	// encryptionKey is MUVON_ENCRYPTION_KEY — used to derive the bearer
+	// token when central dials an agent's deployer for live container
+	// log tail. Empty disables the agent-routed path.
+	encryptionKey string
 }
 
 func NewServer(
@@ -60,6 +64,7 @@ func NewServer(
 	agentSvc *agentsvc.Service,
 	frontendFS fs.FS,
 	centralPublicIP string,
+	encryptionKey string,
 ) *Server {
 	return &Server{
 		db:              database,
@@ -75,6 +80,7 @@ func NewServer(
 		frontendFS:      frontendFS,
 		startTime:       time.Now(),
 		centralPublicIP: centralPublicIP,
+		encryptionKey:   encryptionKey,
 	}
 }
 
@@ -167,6 +173,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	api.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
 	api.HandleFunc("PATCH /api/agents/{id}/mounts", s.handleUpdateAgentMounts)
+	api.HandleFunc("PATCH /api/agents/{id}/deployer-addr", s.handleUpdateAgentDeployerAddr)
 	api.HandleFunc("POST /api/agents/{id}/commands", s.handleEnqueueAgentCommand)
 	api.HandleFunc("GET /api/agents/{id}/commands", s.handleListAgentCommands)
 

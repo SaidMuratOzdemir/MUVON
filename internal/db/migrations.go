@@ -1046,4 +1046,18 @@ CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_recent
 		name: "add_agents_extra_mounts", product: "muvon",
 		sql: `ALTER TABLE agents ADD COLUMN IF NOT EXISTS extra_mounts TEXT[] NOT NULL DEFAULT '{}';`,
 	},
+	// Live container tail for agent host containers requires the
+	// central to dial the agent's deployer gRPC over the private
+	// network. host_id is what the agent reports to dialog as the
+	// container_logs.host_id label — operator never sets it; the agent
+	// stamps it on every auth'd request. deployer_addr is operator-set
+	// in the UI (e.g. "10.0.0.3:9100"); empty disables the live-tail
+	// routing for that agent.
+	{
+		name: "add_agents_host_id_deployer_addr", product: "muvon",
+		sql: `ALTER TABLE agents
+		      ADD COLUMN IF NOT EXISTS host_id TEXT NOT NULL DEFAULT '',
+		      ADD COLUMN IF NOT EXISTS deployer_addr TEXT NOT NULL DEFAULT '';
+		      CREATE INDEX IF NOT EXISTS agents_host_id_idx ON agents(host_id) WHERE host_id <> '';`,
+	},
 }

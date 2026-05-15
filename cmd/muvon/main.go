@@ -229,7 +229,7 @@ func main() {
 	}
 
 	// Admin server — central admin gateway
-	adminSrv := admin.NewServer(database, *jwtSecret, ch, logClient, deployerClient, tlsMgr, hm, agentSvc, frontendFS, centralPublicIP)
+	adminSrv := admin.NewServer(database, *jwtSecret, ch, logClient, deployerClient, tlsMgr, hm, agentSvc, frontendFS, centralPublicIP, *encryptionKey)
 	if err := adminSrv.EnsureDefaultAdmin(ctx); err != nil {
 		slog.Warn("admin check failed", "error", err)
 	}

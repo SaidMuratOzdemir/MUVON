@@ -238,6 +238,15 @@ export interface Agent {
   // its embedded deployer. UI edits this; the agent picks the list up
   // on the next config pull and applies it via agent.self_upgrade.
   extra_mounts?: string[];
+  // host_id is what the agent reports as container_logs.host_id when
+  // shipping to dialog. Auto-stamped by central on every auth'd request
+  // — operator never types this. UI uses it to display "live tail
+  // available" next to the deployer_addr field.
+  host_id?: string;
+  // Operator-set "host:port" of the agent's deployer gRPC TCP listener.
+  // Central dials this over the private network to bridge live
+  // container logs for this agent's host. Empty = live tail disabled.
+  deployer_addr?: string;
   created_at: string;
   updated_at: string;
 }

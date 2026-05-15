@@ -33,6 +33,10 @@ interface Props {
   /** Optional dense mode — shrinks vertical padding for embedding into
    * a panel within Apps.tsx / Routes.tsx. */
   dense?: boolean
+  /** Container's host_id from the merged listing. Empty/'central' → use
+   * local deployer; anything else → backend routes to that agent over
+   * the private network. */
+  hostId?: string
 }
 
 // ContainerLogPane renders a virtual-ish (cap + slice) live tail of one
@@ -40,7 +44,7 @@ interface Props {
 // as expanded key/value rows. Auto-follow with pause-on-scroll-up; the
 // "Pause" button forces pause regardless of scroll. Filter text is
 // applied client-side against an in-memory ring.
-export default function ContainerLogPane({ containerId, tail = 200, title, maxLines = 5000, dense }: Props) {
+export default function ContainerLogPane({ containerId, tail = 200, title, maxLines = 5000, dense, hostId }: Props) {
   const [lines, setLines] = useState<PaneLine[]>([])
   const [paused, setPaused] = useState(false)
   const [autoFollow, setAutoFollow] = useState(true)
@@ -59,7 +63,7 @@ export default function ContainerLogPane({ containerId, tail = 200, title, maxLi
     seqRef.current = 0
     const close = api.createContainerLogStream(
       containerId,
-      { tail, follow: true },
+      { tail, follow: true, hostId },
       (chunk: ContainerLogChunk) => {
         if (paused) return
         seqRef.current += 1
@@ -96,10 +100,10 @@ export default function ContainerLogPane({ containerId, tail = 200, title, maxLi
       close()
       closeRef.current = null
     }
-    // We intentionally only re-open when containerId or tail changes.
+    // We intentionally only re-open when containerId/tail/hostId changes.
     // pause/maxLines re-renders are handled by the consumer side.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [containerId, tail])
+  }, [containerId, tail, hostId])
 
   // Auto-follow: when the user is near the bottom we scroll on every
   // append; if they scroll up we suspend follow until they scroll back.

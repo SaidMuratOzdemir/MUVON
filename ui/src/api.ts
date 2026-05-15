@@ -756,6 +756,12 @@ export async function updateAgentMounts(id: string, mounts: string[]): Promise<{
   return request<{ extra_mounts: string[] }>("PATCH", `/api/agents/${id}/mounts`, { extra_mounts: mounts });
 }
 
+// updateAgentDeployerAddr sets the host:port the central admin dials
+// to bridge live container logs for this agent's host. Empty = disable.
+export async function updateAgentDeployerAddr(id: string, addr: string): Promise<{ deployer_addr: string }> {
+  return request<{ deployer_addr: string }>("PATCH", `/api/agents/${id}/deployer-addr`, { deployer_addr: addr });
+}
+
 // ---------------------------------------------------------------------------
 // Agent commands — central → agent control plane
 // ---------------------------------------------------------------------------
@@ -943,10 +949,12 @@ export async function fetchChangelog(): Promise<string> {
 
 // createContainerLogStream opens an EventSource against the live tail
 // SSE bridge. onChunk is invoked for every server message; onError fires
-// on stream error (browser-side). Returns a close function.
+// on stream error (browser-side). Returns a close function. hostId is
+// forwarded so the backend knows whether to dial the local Unix-socket
+// deployer (central) or the matching agent's TCP deployer (private net).
 export function createContainerLogStream(
   containerId: string,
-  opts: { tail?: number; follow?: boolean; streams?: ('stdout' | 'stderr')[]; since?: string },
+  opts: { tail?: number; follow?: boolean; streams?: ('stdout' | 'stderr')[]; since?: string; hostId?: string },
   onChunk: (chunk: ContainerLogChunk) => void,
   onError?: () => void,
 ): () => void {
@@ -958,6 +966,7 @@ export function createContainerLogStream(
     for (const s of opts.streams) qs.set(s, "true");
   }
   if (opts.since) qs.set("since", opts.since);
+  if (opts.hostId) qs.set("host_id", opts.hostId);
   const url = `/api/containers/${encodeURIComponent(containerId)}/logs/stream${qs.toString() ? `?${qs.toString()}` : ""}`;
   const es = new EventSource(url, { withCredentials: true });
   es.onmessage = (e) => {

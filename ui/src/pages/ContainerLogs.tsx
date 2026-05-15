@@ -166,9 +166,10 @@ function LiveTab() {
       <div className="min-h-0">
         {selected ? (
           <ContainerLogPane
-            key={selected}
+            key={`${selected}:${current?.host_id ?? ''}`}
             containerId={selected}
             tail={200}
+            hostId={current?.host_id}
             title={current ? `${current.project ?? '?'}/${current.component ?? '?'} · ${current.release_id?.slice(0, 12) ?? ''}` : selected.slice(0, 12)}
           />
         ) : (

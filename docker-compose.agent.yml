@@ -12,6 +12,14 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      # Deployer gRPC TCP for live container-log tail from central.
+      # AGENT_DEPLOYER_TCP_BIND should be "<private-ip>:9100" so only
+      # the operator's private network can reach it. Empty/unset →
+      # docker binds 0.0.0.0:9100 (don't do that on a public IP unless
+      # you also firewall the port). install-agent.sh sets the variable
+      # when the operator runs with --deployer-tcp-bind or the embedded
+      # deployer is enabled with a discoverable private IP.
+      - "${AGENT_DEPLOYER_TCP_BIND:-9100}:9100"
     environment:
       AGENT_CENTRAL_URL: ${AGENT_CENTRAL_URL:?required}
       AGENT_API_KEY: ${AGENT_API_KEY:?required}
@@ -52,6 +60,9 @@ services:
       AGENT_DEPLOYER_ENABLED: ${AGENT_DEPLOYER_ENABLED:-false}
       AGENT_DEPLOYER_POLL_MS: ${AGENT_DEPLOYER_POLL_MS:-5000}
       AGENT_ENCRYPTION_KEY: ${AGENT_ENCRYPTION_KEY:-}
+      # Bind inside the container — keep at 0.0.0.0:9100; the host-side
+      # bind in `ports:` decides which interface is exposed externally.
+      AGENT_DEPLOYER_TCP_LISTEN: ${AGENT_DEPLOYER_TCP_LISTEN:-0.0.0.0:9100}
 
     volumes:
       - tls_cache:/var/lib/agent/tls           # AGENT_TLS_CACHE default path

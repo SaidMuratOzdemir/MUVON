@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,9 +14,12 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"muvon/internal/agentctrl"
 	"muvon/internal/config"
 	"muvon/internal/deployer"
+	deployergrpc "muvon/internal/deployer/grpcserver"
 	"muvon/internal/deployer/logship"
 	"muvon/internal/health"
 	logclient "muvon/internal/logger/grpcclient"
@@ -24,6 +28,7 @@ import (
 	"muvon/internal/secret"
 	tlspkg "muvon/internal/tls"
 	"muvon/internal/version"
+	deployerpb "muvon/proto/deployerpb"
 	"fmt"
 )
 
@@ -58,6 +63,14 @@ func main() {
 		deployEnabled    = flag.Bool("deployer", boolEnvOr("AGENT_DEPLOYER_ENABLED", false), "Enable the embedded edge deployer (requires reachable Docker socket)")
 		deployPollMs     = flag.Int("deployer-poll-ms", intEnvOr("AGENT_DEPLOYER_POLL_MS", 5000), "Poll interval for the edge deployer loop")
 		deployEncKey     = flag.String("deployer-encryption-key", envOr("AGENT_ENCRYPTION_KEY", ""), "AES-256-GCM passphrase to decrypt secret env vars (must match central MUVON_ENCRYPTION_KEY)")
+		// Live container-log tail surface — exposes the deployer's
+		// StreamContainerLogs RPC on a private-network TCP port so the
+		// central admin UI can dial back and stream agent host docker
+		// logs the same way it streams central ones. Bearer token is
+		// derived from AGENT_ENCRYPTION_KEY (must match central). Empty
+		// = listener stays off and central will surface "live tail
+		// unavailable" for this agent's containers.
+		deployerTCPListen = flag.String("deployer-tcp-listen", envOr("AGENT_DEPLOYER_TCP_LISTEN", ""), "host:port for deployer gRPC TCP listener (e.g. 10.0.0.3:9100); empty disables")
 		// Local config cache — agent writes the last successful payload
 		// here so a cold start during a central outage falls back to the
 		// most recent good config instead of crash-looping. Empty path =
@@ -92,9 +105,23 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Compute host_id once — same value logship will stamp on every
+	// container_log row. Setting it on the agent source makes central
+	// see it on every auth'd call (X-Muvon-Host-Id), persist it on the
+	// agent row, and use it to dial back for live container-log tail.
+	hostID := strings.TrimSpace(*dwHostID)
+	if hostID == "" {
+		if h, err := os.Hostname(); err == nil && h != "" {
+			hostID = "agent:" + h
+		} else {
+			hostID = "agent"
+		}
+	}
+
 	// Config source — pulls from central server, with optional disk cache.
 	src := config.NewAgentSource(*centralURL, *apiKey)
 	src.SetPublicIP(*publicIP)
+	src.SetHostID(hostID)
 	if *configCachePath != "" {
 		if err := src.EnableLocalCache(*configCachePath); err != nil {
 			slog.Warn("config cache disabled", "error", err)
@@ -189,17 +216,10 @@ func main() {
 	}
 
 	// Container log shipping — reuses the central diaLOG TCP connection
-	// and the same x-api-key auth. host_id defaults to os.Hostname so
-	// the SIEM groups logs per agent without any extra config.
+	// and the same x-api-key auth. host_id was computed above so the
+	// SIEM groups logs per agent and central can map dimension rows
+	// back to this agent's row.
 	if *dockerwatch && logClient != nil && dockerCli != nil {
-		hostID := strings.TrimSpace(*dwHostID)
-		if hostID == "" {
-			if h, err := os.Hostname(); err == nil && h != "" {
-				hostID = "agent:" + h
-			} else {
-				hostID = "agent"
-			}
-		}
 		if spool, err := logship.NewSpool(*dwSpoolDir, *dwSpoolMaxBytes, *dwSpoolMaxBytes/16); err != nil {
 			slog.Warn("dockerwatch: spool init failed; container log shipping disabled",
 				"dir", *dwSpoolDir, "error", err)
@@ -247,6 +267,37 @@ func main() {
 				}
 			}()
 			slog.Info("edge deployer started", "poll_ms", *deployPollMs)
+
+			// Expose the deployer's StreamContainerLogs (and friends) to
+			// central via a private-network TCP gRPC listener. Token is
+			// HKDF-derived from AGENT_ENCRYPTION_KEY so the central side
+			// can compute the same expected bearer; no shared secret is
+			// ever transmitted in the clear.
+			if addr := strings.TrimSpace(*deployerTCPListen); addr != "" {
+				token, err := deployergrpc.DeriveDeployerToken(*deployEncKey)
+				if err != nil {
+					slog.Warn("deployer tcp listener disabled (token derivation failed)", "error", err)
+				} else if lis, err := net.Listen("tcp", addr); err != nil {
+					slog.Warn("deployer tcp listener disabled (bind failed)", "addr", addr, "error", err)
+				} else {
+					grpcSrv := grpc.NewServer(
+						grpc.UnaryInterceptor(deployergrpc.UnaryAuthInterceptor(token)),
+						grpc.StreamInterceptor(deployergrpc.StreamAuthInterceptor(token)),
+					)
+					deployerSrv := deployergrpc.New(dockerCli, 0, 0, 0)
+					deployerpb.RegisterDeployerServiceServer(grpcSrv, deployerSrv)
+					go func() {
+						if err := grpcSrv.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+							slog.Error("deployer tcp gRPC server stopped", "error", err)
+						}
+					}()
+					go func() {
+						<-ctx.Done()
+						grpcSrv.GracefulStop()
+					}()
+					slog.Info("deployer tcp gRPC listener started", "addr", addr)
+				}
+			}
 		}
 	}
 

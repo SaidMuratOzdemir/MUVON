@@ -23,6 +23,7 @@ COMPOSE_FILE="${INSTALL_DIR}/docker-compose.agent.yml"
 TARGET_VERSION=""
 PUBLIC_IP_ARG=""
 EXTRA_MOUNTS_ARG=""
+DEPLOYER_TCP_BIND_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) TARGET_VERSION="${2:-}"; shift 2 ;;
@@ -31,6 +32,8 @@ while [ $# -gt 0 ]; do
     --public-ip=*) PUBLIC_IP_ARG="${1#*=}"; shift ;;
     --mount) EXTRA_MOUNTS_ARG="${EXTRA_MOUNTS_ARG} ${2:-}"; shift 2 ;;
     --mount=*) EXTRA_MOUNTS_ARG="${EXTRA_MOUNTS_ARG} ${1#*=}"; shift ;;
+    --deployer-tcp-bind) DEPLOYER_TCP_BIND_ARG="${2:-}"; shift 2 ;;
+    --deployer-tcp-bind=*) DEPLOYER_TCP_BIND_ARG="${1#*=}"; shift ;;
     *) shift ;;
   esac
 done
@@ -273,6 +276,21 @@ if [ "$MODE" = "install" ]; then
       echo "  yalnız /opt/envfiles convention mount'u açık olur."
       _read "  Ek mount yolları (örn '/opt/tatilji /opt/another'): " EXTRA_MOUNTS
     fi
+
+    # Canlı container log tail — central bu portu (gRPC) çağırarak
+    # docker logs --follow akışını UI'ya köprüler. Private network
+    # varsa "10.0.0.X:9100" formatında ver; halka açık IP'ye bind
+    # ediyorsan firewall'la sınırla.
+    if [ -n "$DEPLOYER_TCP_BIND_ARG" ]; then
+      DEPLOYER_TCP_BIND="$DEPLOYER_TCP_BIND_ARG"
+    else
+      echo ""
+      echo "  Live container-log tail için merkezin bağlanacağı host:port."
+      echo "  Private network varsa '<private-ip>:9100' kullan (örn 10.0.0.3:9100)."
+      echo "  Sadece 9100 yazarsan tüm interface'lere açılır — public IP'de"
+      echo "  firewall'la 9100 portunu sadece merkez IP'sine izin ver."
+      _read "  Deployer TCP bind [9100]: " DEPLOYER_TCP_BIND "9100"
+    fi
   fi
 else
   echo ""
@@ -338,6 +356,11 @@ LOG_LEVEL=info
 AGENT_DEPLOYER_ENABLED=${DEPLOYER_ENABLED}
 AGENT_DEPLOYER_POLL_MS=5000
 AGENT_ENCRYPTION_KEY=${ENC_KEY}
+# Live container-log tail from central. AGENT_DEPLOYER_TCP_BIND restricts
+# the host-side bind to a single interface (set "10.0.0.3:9100" for a
+# private-network-only listener). Empty exposes on every interface.
+# Set the matching agents.deployer_addr in central UI to enable routing.
+AGENT_DEPLOYER_TCP_BIND=${DEPLOYER_TCP_BIND}
 
 # Fail-soft startup config cache (volume içinde tutulur)
 # AGENT_CONFIG_CACHE=/var/lib/agent/config.json
@@ -379,6 +402,12 @@ else
   # birden çok kez kullanılabilir, hepsi tek string'e toplandı).
   if [ -n "$EXTRA_MOUNTS_ARG" ]; then
     _env_upsert .env AGENT_EXTRA_MOUNTS         "$EXTRA_MOUNTS_ARG" set
+  fi
+  # v0.1.30: deployer TCP bind for live container-log tail. Empty
+  # default means docker compose falls back to "9100" (= 0.0.0.0:9100).
+  _env_upsert .env AGENT_DEPLOYER_TCP_BIND      ""             ensure
+  if [ -n "$DEPLOYER_TCP_BIND_ARG" ]; then
+    _env_upsert .env AGENT_DEPLOYER_TCP_BIND    "$DEPLOYER_TCP_BIND_ARG" set
   fi
 
   # v0.1.13: public IP self-report. Boşsa auto-detect dene; başarısızsa boş bırak.

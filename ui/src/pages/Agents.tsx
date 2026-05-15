@@ -192,6 +192,62 @@ function ExtraMountsEditor({
   )
 }
 
+// DeployerAddrEditor — operator-set "host:port" the central admin
+// dials over the private network to bridge live container logs for
+// this agent's host. Tiny field, no apply step (no agent-side change
+// needed — it's all central-side routing).
+function DeployerAddrEditor({
+  agentID, initial, hostID, onSaved,
+}: {
+  agentID: string
+  initial: string
+  hostID: string
+  onSaved: () => void
+}) {
+  const [val, setVal] = useState(initial)
+  const [saving, setSaving] = useState(false)
+  const isDirty = val.trim() !== initial.trim()
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      await api.updateAgentDeployerAddr(agentID, val.trim())
+      toast.success(val.trim() ? 'Deployer addr kaydedildi' : 'Deployer addr temizlendi')
+      onSaved()
+    } catch (err) {
+      toast.error(err instanceof api.ApiError ? err.message : 'Kayıt başarısız')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded border border-border/60 bg-background/40 p-3">
+      <div className="flex items-center gap-2">
+        <Label className="text-xs font-medium">Deployer addr (canlı container log için)</Label>
+        {isDirty && <Badge variant="outline" className="text-[10px] text-yellow-400 border-yellow-400/40">unsaved</Badge>}
+      </div>
+      <Input
+        placeholder="10.0.0.3:9100"
+        value={val}
+        onChange={e => setVal(e.target.value)}
+        className="font-mono text-xs bg-background/60"
+      />
+      <p className="text-[11px] text-muted-foreground">
+        Agent'ın deployer gRPC TCP portu (install-agent.sh → <code className="font-mono">AGENT_DEPLOYER_TCP_BIND</code>).
+        Boş bırakırsan canlı tail bu agent için devre dışı.
+        {hostID ? <> Host ID: <code className="font-mono">{hostID}</code></> : null}
+      </p>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" disabled={!isDirty || saving} onClick={handleSave}>
+          {saving ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1.5" />}
+          Kaydet
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export default function Agents() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
@@ -407,6 +463,13 @@ export default function Agents() {
               <ExtraMountsEditor
                 agentID={agent.id}
                 initial={agent.extra_mounts ?? []}
+                onSaved={() => { void load() }}
+              />
+
+              <DeployerAddrEditor
+                agentID={agent.id}
+                initial={agent.deployer_addr ?? ''}
+                hostID={agent.host_id ?? ''}
                 onSaved={() => { void load() }}
               />
 

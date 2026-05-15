@@ -26,6 +26,10 @@ type AgentSource struct {
 	// target — last_remote_addr alone is unreliable in private-network
 	// topologies.
 	publicIP   string
+	// hostID is the string the agent uses as container_logs.host_id when
+	// shipping to dialog. Sent as X-Muvon-Host-Id so central can persist
+	// the mapping (agents.host_id) and dial the right agent for live tail.
+	hostID     string
 	httpClient *http.Client
 
 	// lastVersion tracks the snapshot we last applied, so subsequent
@@ -62,6 +66,13 @@ func NewAgentSource(centralURL, apiKey string) *AgentSource {
 // to last_remote_addr, which is fine for non-NAT setups).
 func (s *AgentSource) SetPublicIP(ip string) {
 	s.publicIP = strings.TrimSpace(ip)
+}
+
+// SetHostID configures the agent's logship host_id. Sent on every
+// config pull and SSE reconnect so central can map this agent's
+// container dimension rows back to the agent record.
+func (s *AgentSource) SetHostID(id string) {
+	s.hostID = strings.TrimSpace(id)
 }
 
 // LastExtraMounts returns the operator-managed bind paths from the most
@@ -161,6 +172,9 @@ func (s *AgentSource) Load(ctx context.Context) (*Config, error) {
 	req.Header.Set("X-Api-Key", s.apiKey)
 	if s.publicIP != "" {
 		req.Header.Set("X-Agent-Public-IP", s.publicIP)
+	}
+	if s.hostID != "" {
+		req.Header.Set("X-Muvon-Host-Id", s.hostID)
 	}
 	if v := s.LastVersion(); v != "" {
 		// Lets central distinguish "agent missed a push" from "agent is

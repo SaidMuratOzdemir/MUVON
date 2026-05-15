@@ -112,3 +112,29 @@ func (s *Server) handleUpdateAgentMounts(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"extra_mounts": cleaned})
 }
+
+// handleUpdateAgentDeployerAddr sets the host:port the central admin
+// dials to stream live container logs for this agent's host. Trimmed;
+// empty string disables the routing (live tail will surface a clear
+// "configure deployer_addr" message).
+func (s *Server) handleUpdateAgentDeployerAddr(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req struct {
+		DeployerAddr string `json:"deployer_addr"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	addr := strings.TrimSpace(req.DeployerAddr)
+	if err := s.db.UpdateAgentDeployerAddr(r.Context(), id, addr); err != nil {
+		if err == pgx.ErrNoRows {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	s.auditLog(r, "update_agent_deployer_addr", "agent", id, map[string]any{"deployer_addr": addr})
+	writeJSON(w, http.StatusOK, map[string]any{"deployer_addr": addr})
+}

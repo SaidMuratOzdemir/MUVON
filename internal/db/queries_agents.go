@@ -42,6 +42,16 @@ type Agent struct {
 	// the host filesystem. UI-managed; agent picks the list up on every
 	// config pull and applies it via agent.self_upgrade.
 	ExtraMounts      []string   `json:"extra_mounts"`
+	// HostID is the string the agent reports as `container_logs.host_id`
+	// when it ships docker logs to dialog. Stamped automatically on each
+	// auth'd request via the X-Muvon-Host-Id header. Used by the central
+	// container log handler to map a container's host_id back to an
+	// agent row so it can dial DeployerAddr for live tail.
+	HostID           string     `json:"host_id"`
+	// DeployerAddr is "host:port" of the agent's deployer gRPC TCP
+	// listener — operator-set in the UI (private network IP). Empty
+	// means live tail for this agent's containers is unavailable.
+	DeployerAddr     string     `json:"deployer_addr"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
@@ -56,14 +66,14 @@ func hashAPIKey(key string) []byte {
 
 const agentSelectCols = `id, name, api_key, is_active, last_seen_at,
 	last_config_pull_at, config_version, last_remote_addr, last_user_agent,
-	public_ip, extra_mounts, created_at, updated_at`
+	public_ip, extra_mounts, host_id, deployer_addr, created_at, updated_at`
 
 func scanAgent(scan func(...any) error) (Agent, error) {
 	var a Agent
 	var extra []string
 	err := scan(&a.ID, &a.Name, &a.APIKey, &a.IsActive, &a.LastSeenAt,
 		&a.LastConfigPullAt, &a.ConfigVersion, &a.LastRemoteAddr, &a.LastUserAgent,
-		&a.PublicIP, &extra, &a.CreatedAt, &a.UpdatedAt)
+		&a.PublicIP, &extra, &a.HostID, &a.DeployerAddr, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return a, err
 	}
@@ -122,8 +132,10 @@ func (d *DB) TouchAgentLastSeen(ctx context.Context, id string) {
 // distinguish "alive on the SSE channel" from "actually applied recent config".
 // publicIP is the agent's self-reported externally-reachable IP; empty string
 // leaves the existing column value alone (so a transient detection failure
-// doesn't blank a previously-known good value).
-func (d *DB) RecordAgentConfigPull(ctx context.Context, id, version, remoteAddr, userAgent, publicIP string) {
+// doesn't blank a previously-known good value). hostID is the same string
+// the agent uses as container_logs.host_id when shipping to dialog; empty
+// leaves the column alone.
+func (d *DB) RecordAgentConfigPull(ctx context.Context, id, version, remoteAddr, userAgent, publicIP, hostID string) {
 	d.Pool.Exec(ctx,
 		`UPDATE muvon.agents
 		 SET last_seen_at = now(),
@@ -131,9 +143,41 @@ func (d *DB) RecordAgentConfigPull(ctx context.Context, id, version, remoteAddr,
 		     config_version = $2,
 		     last_remote_addr = $3,
 		     last_user_agent = $4,
-		     public_ip = CASE WHEN $5 <> '' THEN $5 ELSE public_ip END
+		     public_ip = CASE WHEN $5 <> '' THEN $5 ELSE public_ip END,
+		     host_id = CASE WHEN $6 <> '' THEN $6 ELSE host_id END
 		 WHERE id = $1`,
-		id, version, remoteAddr, userAgent, publicIP)
+		id, version, remoteAddr, userAgent, publicIP, hostID)
+}
+
+// GetAgentByHostID looks up an agent by the host_id it self-reports.
+// Used by the central container log stream handler to pick the right
+// agent to dial for live tail of a container whose dialog dimension
+// row has that host_id.
+func (d *DB) GetAgentByHostID(ctx context.Context, hostID string) (Agent, error) {
+	a, err := scanAgent(d.Pool.QueryRow(ctx,
+		`SELECT `+agentSelectCols+` FROM muvon.agents WHERE host_id = $1`,
+		hostID,
+	).Scan)
+	if err != nil {
+		return a, fmt.Errorf("get agent by host_id: %w", err)
+	}
+	return a, nil
+}
+
+// UpdateAgentDeployerAddr sets the host:port the central admin dials
+// for live container-log tail. Empty string disables that routing for
+// the agent.
+func (d *DB) UpdateAgentDeployerAddr(ctx context.Context, id, addr string) error {
+	tag, err := d.Pool.Exec(ctx,
+		`UPDATE muvon.agents SET deployer_addr = $2, updated_at = now() WHERE id = $1`,
+		id, addr)
+	if err != nil {
+		return fmt.Errorf("update agent deployer_addr: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 func (d *DB) GetAgentByKey(ctx context.Context, apiKey string) (Agent, error) {

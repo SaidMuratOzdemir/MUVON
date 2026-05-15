@@ -8,7 +8,9 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
+	"muvon/internal/deployer/grpcserver"
 	pb "muvon/proto/deployerpb"
 )
 
@@ -38,7 +40,46 @@ func Dial(socketPath string) (*RemoteDeployer, error) {
 	}, nil
 }
 
+// DialTCP connects to an agent's deployer over the private network and
+// attaches the shared bearer token on every call. Used by the central
+// admin handler to stream live container logs from agent hosts.
+func DialTCP(addr, token string) (*RemoteDeployer, error) {
+	conn, err := grpc.NewClient(
+		addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithPerRPCCredentials(&staticToken{token: token}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &RemoteDeployer{
+		conn:   conn,
+		client: pb.NewDeployerServiceClient(conn),
+	}, nil
+}
+
+// staticToken attaches the shared deployer-token metadata on every
+// outgoing RPC. RequireTransportSecurity returns false because the
+// connection is expected to ride a private network (Hetzner cloud
+// network or equivalent); upgrading to TLS is the operator's call.
+type staticToken struct{ token string }
+
+func (s *staticToken) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
+	return map[string]string{grpcserver.AuthMetadataKey: s.token}, nil
+}
+func (s *staticToken) RequireTransportSecurity() bool { return false }
+
 func (r *RemoteDeployer) Close() error { return r.conn.Close() }
+
+// WithAuth attaches the deployer bearer token to an existing outgoing
+// context. Used when the caller already has a context they want to
+// thread through (e.g. SSE handler's r.Context()).
+func WithAuth(ctx context.Context, token string) context.Context {
+	if token == "" {
+		return ctx
+	}
+	return metadata.AppendToOutgoingContext(ctx, grpcserver.AuthMetadataKey, token)
+}
 
 // ListContainers returns a snapshot of currently-known containers from
 // the deployer's perspective (live Docker state).

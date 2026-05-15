@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
+	deployergrpcclient "muvon/internal/deployer/grpcclient"
+	deployergrpc "muvon/internal/deployer/grpcserver"
 	deployerpb "muvon/proto/deployerpb"
 	pb "muvon/proto/logpb"
 )
@@ -276,12 +279,11 @@ func (s *Server) handleGetContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStreamContainerLogs is the SSE bridge to the deployer's gRPC
-// StreamContainerLogs. Mirrors handleStreamLogs's headers and ping
-// cadence so reverse-proxy chains stay friendly.
+// StreamContainerLogs. Routes by ?host_id=: empty/"central" goes
+// through the in-process Unix-socket deployer client; anything else is
+// dialled over the private network to the agent's deployer TCP listener
+// using the HKDF-derived bearer token.
 func (s *Server) handleStreamContainerLogs(w http.ResponseWriter, r *http.Request) {
-	if !s.requireDeployer(w) {
-		return
-	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id is required"})
@@ -295,6 +297,7 @@ func (s *Server) handleStreamContainerLogs(w http.ResponseWriter, r *http.Reques
 	}
 
 	q := r.URL.Query()
+	hostID := strings.TrimSpace(q.Get("host_id"))
 	tail := int32(200)
 	if v := q.Get("tail"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -310,6 +313,64 @@ func (s *Server) handleStreamContainerLogs(w http.ResponseWriter, r *http.Reques
 	}
 	since := q.Get("since")
 
+	// Resolve which deployer to dial BEFORE writing SSE headers, so a
+	// resolution failure can return a structured JSON error.
+	streamReq := &deployerpb.StreamContainerLogsRequest{
+		ContainerId: id,
+		Tail:        tail,
+		Follow:      follow,
+		Streams:     streams,
+		Since:       since,
+	}
+
+	var ch <-chan *deployerpb.ContainerLogChunk
+	var dialErr error
+	var remoteCloser func() error
+
+	if hostID == "" || hostID == "central" {
+		if s.deployerClient == nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "muvon-deployer service unavailable"})
+			return
+		}
+		ch, dialErr = s.deployerClient.StreamContainerLogs(r.Context(), streamReq)
+	} else {
+		// Agent host — look up agent record and dial the operator-
+		// configured deployer_addr over the private network.
+		agent, err := s.db.GetAgentByHostID(r.Context(), hostID)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("no agent registered for host_id %q", hostID)})
+			return
+		}
+		if strings.TrimSpace(agent.DeployerAddr) == "" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "agent has no deployer_addr configured; live tail unavailable. Set Deployer Addr on the Agents page."})
+			return
+		}
+		token, err := deployergrpc.DeriveDeployerToken(s.encryptionKey)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "deployer token derivation failed (MUVON_ENCRYPTION_KEY not set?)"})
+			return
+		}
+		conn, err := deployergrpcclient.DialTCP(agent.DeployerAddr, token)
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("dial agent deployer %s: %v", agent.DeployerAddr, err)})
+			return
+		}
+		remoteCloser = conn.Close
+		ch, dialErr = conn.StreamContainerLogs(r.Context(), streamReq)
+	}
+	if dialErr != nil {
+		if remoteCloser != nil {
+			_ = remoteCloser()
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": dialErr.Error()})
+		return
+	}
+	defer func() {
+		if remoteCloser != nil {
+			_ = remoteCloser()
+		}
+	}()
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -322,19 +383,7 @@ func (s *Server) handleStreamContainerLogs(w http.ResponseWriter, r *http.Reques
 	// Audit so the access trail is in place from day 1 — RBAC may
 	// later restrict the read but the audit log already records who
 	// pulled which container.
-	s.auditLog(r, "container.log_tail", "container", id, map[string]any{"tail": tail, "follow": follow})
-
-	ch, err := s.deployerClient.StreamContainerLogs(r.Context(), &deployerpb.StreamContainerLogsRequest{
-		ContainerId: id,
-		Tail:        tail,
-		Follow:      follow,
-		Streams:     streams,
-		Since:       since,
-	})
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
-	}
+	s.auditLog(r, "container.log_tail", "container", id, map[string]any{"tail": tail, "follow": follow, "host_id": hostID})
 
 	pingTicker := time.NewTicker(30 * time.Second)
 	defer pingTicker.Stop()

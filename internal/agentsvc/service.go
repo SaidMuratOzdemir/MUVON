@@ -135,7 +135,11 @@ func (s *Service) HandleConfig(w http.ResponseWriter, r *http.Request) {
 		// verification has the right target even when source IP is the
 		// agent's private interface (Hetzner private network, etc).
 		publicIP := strings.TrimSpace(r.Header.Get("X-Agent-Public-IP"))
-		go s.db.RecordAgentConfigPull(context.Background(), agentID, payload.Version, remote, ua, publicIP)
+		// host_id is what the agent uses as container_logs.host_id when
+		// shipping to dialog; stamping it here gives the admin a stable
+		// map from dimension rows → agent record for live-tail dial.
+		hostID := strings.TrimSpace(r.Header.Get("X-Muvon-Host-Id"))
+		go s.db.RecordAgentConfigPull(context.Background(), agentID, payload.Version, remote, ua, publicIP, hostID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
