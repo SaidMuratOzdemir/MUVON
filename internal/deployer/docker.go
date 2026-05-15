@@ -69,9 +69,12 @@ type hostConfig struct {
 	// struct's full schema is overkill (no propagation, no labels).
 	Binds []string `json:"Binds,omitempty"`
 	// AutoRemove tells the daemon to delete the container once it
-	// exits — paired with the helper container pattern so successful
-	// short-lived jobs don't leave dangling rows in `docker ps -a`.
+	// exits. Helper containers usually want this OFF so the carcass
+	// can be inspected on failure.
 	AutoRemove bool `json:"AutoRemove,omitempty"`
+	// Init=true injects tini as PID 1 (Docker API 1.25+). Reaps zombie
+	// child processes and forwards signals cleanly.
+	Init *bool `json:"Init,omitempty"`
 }
 
 type restartPolicy struct {

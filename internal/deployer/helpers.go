@@ -29,6 +29,11 @@ type HelperContainerOpts struct {
 	Binds      []string
 	Labels     map[string]string
 	AutoRemove bool
+	// Init=true makes Docker inject tini as PID 1 so child processes
+	// are reaped and signals propagate cleanly. Without it, `sh -c`
+	// runs as PID 1 with no signal handlers, which can leave the
+	// container in surprising states when subcommands abort.
+	Init bool
 }
 
 // RunHelperContainer creates and starts a helper container. The caller
@@ -51,15 +56,20 @@ func (c *DockerClient) RunHelperContainer(ctx context.Context, opts HelperContai
 	}
 	opts.Labels["muvon.managed"] = "true"
 
+	hc := hostConfig{
+		Binds:      opts.Binds,
+		AutoRemove: opts.AutoRemove,
+	}
+	if opts.Init {
+		t := true
+		hc.Init = &t
+	}
 	req := containerCreateRequest{
-		Image:  opts.Image,
-		Cmd:    opts.Cmd,
-		Env:    envSlice,
-		Labels: opts.Labels,
-		HostConfig: hostConfig{
-			Binds:      opts.Binds,
-			AutoRemove: opts.AutoRemove,
-		},
+		Image:      opts.Image,
+		Cmd:        opts.Cmd,
+		Env:        envSlice,
+		Labels:     opts.Labels,
+		HostConfig: hc,
 	}
 	cid, err := c.ContainerCreate(ctx, opts.Name, req)
 	if err != nil {

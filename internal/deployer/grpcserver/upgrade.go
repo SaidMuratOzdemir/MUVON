@@ -132,8 +132,14 @@ func (s *Server) runPGDump(ctx context.Context) (string, error) {
 // runUpgrader docker:cli helper container yaratır: compose dosyasını
 // github'tan tazeler, hedef tag'i sed ile yazar, `compose pull && up -d`
 // çalıştırır. Helper bitince auto-remove. Stdout/stderr event'lere döner.
-func (s *Server) runUpgrader(ctx context.Context, emit func(step, level, msg string, done bool), target string) error {
-	if err := s.docker.ImagePull(ctx, helperImage); err != nil {
+func (s *Server) runUpgrader(parentCtx context.Context, emit func(step, level, msg string, done bool), target string) error {
+	// Helper'ın yaşam döngüsünü gRPC stream'inden ayır: stream koparsa
+	// (deployer recreate sırasında olur) helper'ın Docker call'ları
+	// iptal olmasın. 12 dakika kendi başına yeterli budget.
+	helperCtx, helperCancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer helperCancel()
+
+	if err := s.docker.ImagePull(parentCtx, helperImage); err != nil {
 		return fmt.Errorf("pull %s: %w", helperImage, err)
 	}
 
@@ -143,11 +149,9 @@ func (s *Server) runUpgrader(ctx context.Context, emit func(step, level, msg str
 	}
 
 	// muvon-deployer'ı SONA bırak: helper container bu deployer'ın
-	// spawn'ı; recreate sırasında gRPC stream kopar. Önce muvon +
-	// dialog-siem'i Healthy'ye çek, EN SON deployer'ı recreate et — o
-	// noktada helper'ın yapacağı tek iş zaten kalmamış olur.
+	// spawn'ı. set -ex ile her satır echo'lanır, kör failure görmüyoruz.
 	script := strings.Join([]string{
-		"set -e",
+		"set -ex",
 		"cd " + helperHostMnt,
 		"echo '[upgrader] fetching latest compose...'",
 		"wget -q -O docker-compose.yml https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/docker-compose.yml",
@@ -155,14 +159,14 @@ func (s *Server) runUpgrader(ctx context.Context, emit func(step, level, msg str
 		"echo '[upgrader] pulling images...'",
 		"docker compose pull muvon dialog-siem muvon-deployer",
 		"echo '[upgrader] recreating muvon + dialog-siem...'",
-		"docker compose up -d --no-deps --wait --wait-timeout 90 muvon dialog-siem",
+		"docker compose up -d --no-deps --wait --wait-timeout 180 muvon dialog-siem",
 		"echo '[upgrader] recreating muvon-deployer (last)...'",
-		"docker compose up -d --no-deps --wait --wait-timeout 90 muvon-deployer",
+		"docker compose up -d --no-deps --wait --wait-timeout 180 muvon-deployer",
 		"echo '[upgrader] done'",
 	}, "\n")
 
 	name := "muvon-upgrader-" + time.Now().UTC().Format("20060102-150405")
-	id, logs, wait, err := s.docker.RunHelperContainer(ctx, deployer.HelperContainerOpts{
+	id, logs, wait, err := s.docker.RunHelperContainer(helperCtx, deployer.HelperContainerOpts{
 		Image: helperImage,
 		Name:  name,
 		Cmd:   []string{"sh", "-c", script},
@@ -170,15 +174,17 @@ func (s *Server) runUpgrader(ctx context.Context, emit func(step, level, msg str
 			"/var/run/docker.sock:/var/run/docker.sock",
 			"/opt/muvon:" + helperHostMnt,
 		},
-		Labels:     map[string]string{"muvon.role": "upgrader"},
-		AutoRemove: true,
+		Labels: map[string]string{"muvon.role": "upgrader"},
+		// AutoRemove=false: failure'da carcass kalır, `docker logs <id>`
+		// ile son satırlar görülür. Başarılı yolda aşağıda explicit remove.
+		AutoRemove: false,
+		Init:       true,
 	})
 	if err != nil {
 		return fmt.Errorf("spawn upgrader: %w", err)
 	}
-	_ = id
+	emit("pull", "info", fmt.Sprintf("[upgrader] container: %s", name), false)
 
-	// Drain logs in foreground — we want them sequenced with the wait.
 	dem := deployer.NewLogDemuxer(logs, deployer.DemuxOptions{MaxLine: 64 * 1024})
 	for chunk := range dem.Out() {
 		line := strings.TrimRight(chunk.Line, "\r\n")
@@ -193,11 +199,15 @@ func (s *Server) runUpgrader(ctx context.Context, emit func(step, level, msg str
 
 	exit, err := wait()
 	if err != nil {
+		emit("pull", "error", fmt.Sprintf("[upgrader] wait failed: %v (container %s preserved for inspection)", err, name), false)
 		return fmt.Errorf("wait upgrader: %w", err)
 	}
 	if exit != 0 {
-		return fmt.Errorf("upgrader exited with code %d", exit)
+		emit("pull", "error", fmt.Sprintf("[upgrader] container exited %d — preserved as %s for `docker logs`", exit, name), false)
+		return fmt.Errorf("upgrader exited with code %d (container %s)", exit, name)
 	}
+	// Success path: remove the carcass explicitly.
+	_ = s.docker.ContainerRemove(context.Background(), id, true)
 	return nil
 }
 
