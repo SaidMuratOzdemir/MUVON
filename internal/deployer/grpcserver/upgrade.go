@@ -74,16 +74,12 @@ func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerS
 		return nil
 	}
 
-	// 2) Hedef tag'i .env'e yaz (VERSION=<tag>). install.sh ile aynı
-	//    semantik: yoksa append, varsa overwrite.
+	// 2) Hedef tag normalize (v prefix strip, Docker semver convention).
 	tag := strings.TrimSpace(req.GetTargetTag())
 	if tag == "" {
 		tag = "latest"
 	}
-	if err := writeEnvVersion(filepath.Join(helperHostMnt, ".env"), tag); err != nil {
-		emit("failed", "error", fmt.Sprintf("write .env failed: %v", err), true)
-		return nil
-	}
+	tag = strings.TrimPrefix(tag, "v")
 	emit("pre_check", "info", fmt.Sprintf("target tag: %s", tag), false)
 
 	// 3) Yedek
@@ -100,7 +96,7 @@ func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerS
 
 	// 4) Helper container'ı başlat + stdout/stderr'i event'e dönüştür
 	emit("pull", "info", "spawning muvon-upgrader helper container...", false)
-	if err := s.runUpgrader(ctx, emit); err != nil {
+	if err := s.runUpgrader(ctx, emit, tag); err != nil {
 		emit("failed", "error", fmt.Sprintf("upgrader failed: %v", err), true)
 		return nil
 	}
@@ -110,28 +106,6 @@ func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerS
 	//    sayıyoruz; admin UI sürüm karşılaştırmasını yeniden tetikleyecek.
 	emit("done", "info", "upgrade completed", true)
 	return nil
-}
-
-// writeEnvVersion .env dosyasında VERSION satırını set/append eder.
-// install.sh ile aynı pattern; mevcut diğer satırlar dokunulmaz.
-func writeEnvVersion(path, tag string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(data), "\n")
-	found := false
-	for i, l := range lines {
-		if strings.HasPrefix(l, "VERSION=") {
-			lines[i] = "VERSION=" + tag
-			found = true
-			break
-		}
-	}
-	if !found {
-		lines = append(lines, "VERSION="+tag)
-	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600)
 }
 
 // runPGDump postgres container'a exec edip pg_dump -Fc'yi tetikler ve
@@ -155,20 +129,25 @@ func (s *Server) runPGDump(ctx context.Context) (string, error) {
 	return outPath, nil
 }
 
-// runUpgrader docker:cli image'ından geçici bir container yaratır,
-// host'tan compose dosyasını alarak `compose pull && up -d` çalıştırır
-// ve stdout/stderr'i event'lere dönüştürür. Helper bitince auto-remove.
-func (s *Server) runUpgrader(ctx context.Context, emit func(step, level, msg string, done bool)) error {
-	// Önce image'ı pull et — operator sunucusunda yoksa ilk seferde lazım.
+// runUpgrader docker:cli helper container yaratır: compose dosyasını
+// github'tan tazeler, hedef tag'i sed ile yazar, `compose pull && up -d`
+// çalıştırır. Helper bitince auto-remove. Stdout/stderr event'lere döner.
+func (s *Server) runUpgrader(ctx context.Context, emit func(step, level, msg string, done bool), target string) error {
 	if err := s.docker.ImagePull(ctx, helperImage); err != nil {
 		return fmt.Errorf("pull %s: %w", helperImage, err)
 	}
 
-	// docker compose v2 plugin paketi docker:cli image'ında dahili.
-	// --wait sağlık beklenir; --wait-timeout 120s.
+	sedLine := ""
+	if target != "" && target != "latest" {
+		sedLine = fmt.Sprintf(`sed -i -E "s|(ghcr\\.io/[^:]+):latest|\\1:%s|g" docker-compose.yml`, target)
+	}
+
 	script := strings.Join([]string{
 		"set -e",
 		"cd " + helperHostMnt,
+		"echo '[upgrader] fetching latest compose...'",
+		"wget -q -O docker-compose.yml https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/docker-compose.yml",
+		sedLine,
 		"echo '[upgrader] pulling images...'",
 		"docker compose pull muvon dialog-siem muvon-deployer",
 		"echo '[upgrader] recreating containers...'",
