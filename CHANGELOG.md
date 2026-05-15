@@ -27,6 +27,37 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.27] - 2026-05-15
+
+### BUGFIXES
+
+- **Agent log shipping `Unauthenticated` ile sessizce reddediliyor­du**:
+  Aynı PostgreSQL instance'ı içinde iki ayrı `agents` tablosu var
+  (legacy mimari). `muvon.agents` — operatörün admin panelinden
+  yönettiği canlı tablo, `dialog.agents` — eski dönemden kalma
+  schema-isolated kopya (boş). `queries_agents.go`'daki tüm SQL'ler
+  `FROM agents` ile yazılmıştı, schema search_path'e bağlıydı.
+  Dialog-siem `dialog` schema'sıyla çalıştığı için `dialog.agents`'a
+  bakıyordu — orası boş — her api key invalid.
+
+  Düzeltme: agents tablosunun **schema'sı muvon**'a aittir, dialog-siem
+  yalnız okuma için cross-schema query yapar. Tüm SQL'ler artık
+  `muvon.agents` ile explicit schema-qualified. Dialog-siem auth
+  intercept'u doğru tabloya bakar, agent log batch'leri kabul edilir,
+  `dialog.container_logs` dolar.
+
+  Bu bug, agent tarafında `slog.Warn` ile görünür hale gelen
+  `rpc error: code = Unauthenticated desc = invalid api key` ile
+  tespit edildi (v0.1.26 fix'i sayesinde).
+
+### Schema notu
+
+- `dialog.agents` tablosu artık kullanılmıyor (drop edilmedi —
+  forward-only migration garantisini bozmamak için boş bırakıldı).
+  İleride bir cleanup migration ile temizlenebilir.
+
+---
+
 ## [0.1.26] - 2026-05-15
 
 ### BUGFIXES

@@ -76,7 +76,7 @@ func scanAgent(scan func(...any) error) (Agent, error) {
 
 func (d *DB) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := d.Pool.Query(ctx,
-		`SELECT `+agentSelectCols+` FROM agents ORDER BY created_at DESC`,
+		`SELECT `+agentSelectCols+` FROM muvon.agents ORDER BY created_at DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list agents: %w", err)
@@ -98,7 +98,7 @@ func (d *DB) CreateAgent(ctx context.Context, name, apiKey string) (Agent, error
 	// Persist both the plaintext (for backwards compatibility while we
 	// transition) and the hash (used by the indexed auth lookup).
 	a, err := scanAgent(d.Pool.QueryRow(ctx,
-		`INSERT INTO agents (id, name, api_key, api_key_hash)
+		`INSERT INTO muvon.agents (id, name, api_key, api_key_hash)
 		 VALUES (gen_uuidv7()::text, $1, $2, $3)
 		 RETURNING `+agentSelectCols,
 		name, apiKey, hashAPIKey(apiKey),
@@ -114,7 +114,7 @@ func (d *DB) CreateAgent(ctx context.Context, name, apiKey string) (Agent, error
 }
 
 func (d *DB) TouchAgentLastSeen(ctx context.Context, id string) {
-	d.Pool.Exec(ctx, `UPDATE agents SET last_seen_at = now() WHERE id = $1`, id)
+	d.Pool.Exec(ctx, `UPDATE muvon.agents SET last_seen_at = now() WHERE id = $1`, id)
 }
 
 // RecordAgentConfigPull stamps the agent row with the latest config it pulled.
@@ -125,7 +125,7 @@ func (d *DB) TouchAgentLastSeen(ctx context.Context, id string) {
 // doesn't blank a previously-known good value).
 func (d *DB) RecordAgentConfigPull(ctx context.Context, id, version, remoteAddr, userAgent, publicIP string) {
 	d.Pool.Exec(ctx,
-		`UPDATE agents
+		`UPDATE muvon.agents
 		 SET last_seen_at = now(),
 		     last_config_pull_at = now(),
 		     config_version = $2,
@@ -141,7 +141,7 @@ func (d *DB) GetAgentByKey(ctx context.Context, apiKey string) (Agent, error) {
 	// Indexed lookup on the hash column — this is the fast path for any
 	// agent that has authenticated at least once since the migration.
 	a, err := scanAgent(d.Pool.QueryRow(ctx,
-		`SELECT `+agentSelectCols+` FROM agents WHERE api_key_hash = $1`,
+		`SELECT `+agentSelectCols+` FROM muvon.agents WHERE api_key_hash = $1`,
 		hash,
 	).Scan)
 	if err == nil {
@@ -157,7 +157,7 @@ func (d *DB) GetAgentByKey(ctx context.Context, apiKey string) (Agent, error) {
 	// — that would re-enable the plaintext-lookup vector.
 	a, err = scanAgent(d.Pool.QueryRow(ctx,
 		`SELECT `+agentSelectCols+`
-		   FROM agents
+		   FROM muvon.agents
 		  WHERE api_key = $1 AND api_key_hash IS NULL`,
 		apiKey,
 	).Scan)
@@ -165,7 +165,7 @@ func (d *DB) GetAgentByKey(ctx context.Context, apiKey string) (Agent, error) {
 		return a, fmt.Errorf("get agent by key: %w", err)
 	}
 	_, _ = d.Pool.Exec(ctx,
-		`UPDATE agents SET api_key_hash = $2 WHERE id = $1 AND api_key_hash IS NULL`,
+		`UPDATE muvon.agents SET api_key_hash = $2 WHERE id = $1 AND api_key_hash IS NULL`,
 		a.ID, hash)
 	return a, nil
 }
@@ -175,7 +175,7 @@ func (d *DB) GetAgentByKey(ctx context.Context, apiKey string) (Agent, error) {
 // a command row.
 func (d *DB) GetAgent(ctx context.Context, id string) (Agent, error) {
 	a, err := scanAgent(d.Pool.QueryRow(ctx,
-		`SELECT `+agentSelectCols+` FROM agents WHERE id = $1`, id,
+		`SELECT `+agentSelectCols+` FROM muvon.agents WHERE id = $1`, id,
 	).Scan)
 	if err != nil {
 		return a, fmt.Errorf("get agent: %w", err)
@@ -192,7 +192,7 @@ func (d *DB) UpdateAgentExtraMounts(ctx context.Context, id string, mounts []str
 		mounts = []string{}
 	}
 	tag, err := d.Pool.Exec(ctx,
-		`UPDATE agents SET extra_mounts = $2, updated_at = now() WHERE id = $1`,
+		`UPDATE muvon.agents SET extra_mounts = $2, updated_at = now() WHERE id = $1`,
 		id, mounts)
 	if err != nil {
 		return fmt.Errorf("update agent extra_mounts: %w", err)
@@ -204,7 +204,7 @@ func (d *DB) UpdateAgentExtraMounts(ctx context.Context, id string, mounts []str
 }
 
 func (d *DB) DeleteAgent(ctx context.Context, id string) error {
-	ct, err := d.Pool.Exec(ctx, `DELETE FROM agents WHERE id = $1`, id)
+	ct, err := d.Pool.Exec(ctx, `DELETE FROM muvon.agents WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete agent: %w", err)
 	}
