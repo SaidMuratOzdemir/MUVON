@@ -195,18 +195,24 @@ Bu skill MUVON'u biliyor, **müşteri uygulaması iç işleyişini bilmiyor**. A
 ```
 1. POST /api/system/upgrade 409 alıyorsan: zaten upgrade çalışıyor (broker mutex).
    GET /api/system/upgrade/stream → mevcut akışa katıl, history replay görürsün.
-2. SSE stream EOF olunca panik yok — helper container deployer'ı da recreate ediyor,
-   bu beklenen davranış. UI "Sayfayı yenile" butonu göstermeli.
-3. Sayfayı yenile, GET /api/system/version → çalışan binary digest'i değişti mi?
-   GET /api/system/version/latest ile karşılaştır.
-4. Hâlâ takılıysa SSH ile:
+2. v0.1.4+ admin handler stream EOF sonrası /health'i 60 sn polluyor:
+   - "post_check: deployer stream closed, waiting for muvon..." → normal, bekle
+   - "done: upgrade verified — muvon healthy on new image" → başarılı
+   - "failed: muvon did not become healthy within 60s" → recreate fail, kontrol et
+3. failed event görürsen SSH ile:
    ssh <central> "docker compose -f /opt/muvon/docker-compose.yml ps"
-   → servisler "Up" mı? "Restarting"se bir tanesi ayağa kalkmıyor.
-5. Helper container log: ssh <central> "docker ps -a --filter ancestor=docker:27-cli"
-   → exited helper'ı bul, logs incele.
-6. pg_dump alındı mı: ssh <central> "ls -lt /opt/muvon/backups/ | head -5"
-7. Felaket senaryosu: .env'de VERSION'ı eski tag'e çevir + tekrar upgrade tetikle;
-   ya da pg_dump yedeğinden manuel restore (bkz. README "Backup / restore").
+   → servisler "Up" mı? "Restarting" varsa healthcheck fail.
+4. Helper container exited log: ssh <central> "docker ps -a --filter ancestor=docker:27-cli"
+   → en son exited helper'ı bul, "docker logs <id>" ile script çıktısı oku.
+5. Migration fail (yeni binary eski schema bekliyor): docker compose logs muvon | grep migration.
+6. pg_dump yedek: ssh <central> "ls -lt /opt/muvon/backups/ | head -5"
+7. Felaket senaryosu: compose dosyasını manuel düzenle (tag eskiye çevir) + docker
+   compose up -d --wait; ya da pg_dump yedeğinden restore (bkz. README "Backup / restore").
+
+v0.1.0–v0.1.3 race kapanmadan: o sürümlerin admin handler'ı stream EOF'u
+körü körüne "done" sayardı. v0.1.2 öncesi helper compose'u tazeleyip sed
+yapmazdı (tag pinned compose'ta sabit kalır, upgrade no-op). v0.1.4'e
+manuel install.sh ile geçmek bu race'leri kapatır.
 ```
 
 **Tipik bulgular**:

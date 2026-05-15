@@ -23,12 +23,95 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-İlk etiketlenmemiş çalışma. `v0.1.0` yayınlanırken bu blok aşağıdaki
-şablona göre `## [0.1.0] - YYYY-MM-DD` olur.
+— henüz birikme yok.
 
-### BREAKING
+---
 
-- Henüz yok.
+## [0.1.4] - 2026-05-15
+
+### BUGFIXES
+
+- **UI: Host dialog overflow**: `JWT Identity override` toggle açıldığında
+  form ekran dışına taşıyordu. `DialogContent`'e `max-h-[90vh]
+  overflow-y-auto` eklendi.
+- **UI: UpgradeModal downgrade warning**: Hedef tag çalışan sürümden
+  düşükse (semver karşılaştırması) `window.confirm` ile uyarı + onay
+  iste. Forward-only migration kuralına aykırı dowgrade'leri kazara
+  tetiklemeyi engeller.
+- **System upgrade kademeli recreate**: Helper container artık `up -d
+  --wait` çağrısını **iki fazda** yapar — önce muvon + dialog-siem
+  recreate edilir + Healthy beklenir, sonra **muvon-deployer en son**
+  recreate edilir. Eskiden tek `up -d --wait` çağrısında deployer kendi
+  recreate'i sırasında helper'ın gRPC stream'i koparken muvon yarı
+  start'ta kalıyordu.
+- **System upgrade post-stream healthcheck**: Admin handler artık
+  deployer gRPC stream EOF'unu "başarı" diye yorumlamıyor; bunun yerine
+  lokal `:9443/api/health`'i 60 sn boyunca polluyor, 200 dönerse `done`,
+  dönmezse `failed` event'i yayar. Stream koptu ama upgrade fail ettiğinde
+  UI'da yanlış yeşil tik çıkmasını engeller.
+
+### Upgrade notları
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.1.4
+
+# Agent:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.1.4
+```
+
+Bu sürümden itibaren **Settings → Sistem → Imajı güncelle** gerçek
+production-grade üzere çalışır — gelecekteki update'leri admin UI'dan
+tek tıkla yapabilirsin.
+
+---
+
+## [0.1.3] - 2026-05-15
+
+### BUGFIXES
+
+- **CI VERSION ldflags artık git tag'inden okuyor**: Eskiden repo
+  kökündeki stale `VERSION` dosyası kullanılıyordu; image `:0.1.3` tag'i
+  içinde `--version` "v0.1.0" yazıyordu (kafa karıştırıcı). Şimdi
+  `refs/tags/vX.Y.Z` push'unda tag adı, main push'unda `VERSION` dosyası
+  fallback olarak kullanılır.
+
+---
+
+## [0.1.2] - 2026-05-15
+
+### BUGFIXES
+
+- **System upgrade helper container compose'u tazeliyor**: Eskiden
+  helper sadece `docker compose pull && up -d` çağırıyordu; compose
+  dosyasındaki image tag'leri eski sürümde kalıyordu (env placeholder'ı
+  yok). Helper artık `wget` ile compose'u GitHub'tan tazeler, target
+  tag ile `sed`-replace eder, sonra pull + up çalıştırır.
+- `writeEnvVersion` kaldırıldı (compose `VERSION` env'i kullanmıyor,
+  `.env`'e yazmak no-op + kafa karıştırıcı).
+
+---
+
+## [0.1.1] - 2026-05-15
+
+### BUGFIXES
+
+- **Agent command claim CTE → subquery**: `ClaimNextAgentCommand`'da
+  CTE + `UPDATE...FROM next` + `RETURNING` kombinasyonu kolon
+  ambiguity'sine yol açıyordu (`id` hem `ac` hem `next` tablosunda).
+  Subquery pattern ile değiştirildi; postgres log'larında 30 sn'de bir
+  spam'leyen `column reference "id" is ambiguous` hatası susuyor.
+- **`alerts` → `dialog.alerts` schema qualification**: `alerts` tablosu
+  `dialog` schema'sında; muvon binary'sinin search_path'i
+  (`muvon,public`) kapsamıyor. Tüm SQL referansları `dialog.alerts`
+  ile qualify edildi; admin paneli `Alerts` sayfası artık çalışıyor.
+
+---
+
+## [0.1.0] - 2026-05-14
+
+İlk public release. MUVON + diaLOG + agent + muvon-deployer hibrit
+topoloji ile birlikte.
 
 ### SECURITY
 
@@ -82,13 +165,14 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   `GET /api/system/version/latest` GHCR'ı anonim manifest HEAD ile
   yoklayıp `:latest` digest'ini döner (5 dk cache). `POST
   /api/system/upgrade {target_tag, take_backup}` deployer üzerinde bir
-  helper container (`docker:27-cli`) çalıştırır — `.env`'i yazar,
-  otomatik `pg_dump -Fc` alır, `docker compose pull && up -d --wait`
-  ile tüm stack'i recreate eder. `GET /api/system/upgrade/stream` SSE
-  ile pull/restart/post_check fazlarını canlı yayınlar; eşzamanlı bir
+  helper container (`docker:27-cli`) çalıştırır — otomatik `pg_dump
+  -Fc` alır, `docker compose pull && up -d --wait` ile tüm stack'i
+  recreate eder. `GET /api/system/upgrade/stream` SSE ile
+  pull/restart/post_check fazlarını canlı yayınlar; eşzamanlı bir
   upgrade isteği 409 alır. UI tarafında `SystemUpgradePanel` (çalışan vs
   GHCR karşılaştırma badge'i) + `UpgradeModal` (tag seçici, DB backup
-  toggle, inline CHANGELOG preview, canlı progress).
+  toggle, inline CHANGELOG preview, canlı progress). _Not: v0.1.0–v0.1.3
+  arası bu akışta race var; production'da v0.1.4'e geç._
 - **Central → agent komut kanalı** (`/agents` sayfasından her satırda
   aksiyon menüsü): `agent.cache_flush`, `agent.set_log_level` (TTL ile
   auto-revert), `cert.renew`, `agent.drain`, `agent.restart`,
@@ -102,16 +186,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   succeeded|failed|expired`. UI: `AgentActionMenu` (dropdown + onay
   dialog + cert.renew için domain prompt), `AgentCommandHistory` (son
   10 komut + state badge'leri).
-- **Versiyon altyapısı**: Repo kökünde `VERSION` (tek source of truth,
-  `v0.1.0`). Tüm Go binary'leri build sırasında `-X muvon/internal/
-  version.{Version,Commit}` ldflags ile inject edilir; `--version`
-  flag'i çıktıyı verir, startup log'una da düşer. Dockerfile
-  `VERSION`+`COMMIT` build-arg alır; CI release.yml Plausible-style
-  üçlü-tier tag matrisi yayar (`vX.Y.Z`, `vX.Y`, `vX`, `latest`),
-  operatör `bash <(curl … install.sh) --version 0.1` (minor pin) ya da
-  `--version 0.1.0` (patch pin) ile konservatiflik seçer; install.sh
-  `docker-compose.yml`'deki `:latest` referanslarını seçilen tag ile
-  değiştirir, `.env`'e VERSION yazılmaz.
+- **Versiyon altyapısı**: Repo kökünde `VERSION` (tek source of truth).
+  Tüm Go binary'leri build sırasında `-X muvon/internal/version.{Version,
+  Commit}` ldflags ile inject edilir; `--version` flag'i çıktıyı verir,
+  startup log'una da düşer. Dockerfile `VERSION`+`COMMIT` build-arg
+  alır; CI release.yml Plausible-style üçlü-tier tag matrisi yayar
+  (`vX.Y.Z`, `vX.Y`, `vX`, `latest`), operatör `bash <(curl …
+  install.sh) --version 0.1` (minor pin) ya da `--version 0.1.0`
+  (patch pin) ile konservatiflik seçer; install.sh `docker-compose.yml`'deki
+  `:latest` referanslarını seçilen tag ile değiştirir.
 - **Idempotent install/update flow**: `install.sh` ve
   `install-agent.sh` aynı komutla hem ilk kurulum hem update — `.env`
   varsa update modu, yoksa fresh install. `MUVON_ENCRYPTION_KEY` ASLA
@@ -120,38 +203,6 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   `pg_dump -Fc` (son 5 yedek rotation). Status file
   (`/opt/muvon/.install-status`) SSH disconnect'e karşı süreç ilerleyişi
   saklar. CHANGELOG son sürüm bölümü onay öncesi gösterilir.
-  `install.sh --version vX.Y.Z` ile sürüm pinlenir.
-
-### ENHANCEMENTS
-
-- HTTP access log shipper artık bounded retry queue ile çalışır —
-  geçici central kesintilerinde log düşmesi azalır.
-- Agent fail-soft startup: `AGENT_CONFIG_CACHE` ile son başarılı config
-  diske yazılır; central down'sa stale config ile başlar, arka planda
-  yeniden bağlanır.
-- Agent → central cert push exponential backoff ile yeniden dener
-  (~30 dk'ya kadar).
-- Tüm Go binary'leri `--version` flag'ini destekler; çıktıda repo
-  `VERSION` dosyasından inject edilen sürüm görünür.
-
-### BUGFIXES
-
-- `internal/deployer/service.go` artık `State` interface arkasında
-  çalışıyor — central (`DBState`) ve agent (`APIState`) aynı lifecycle
-  kodunu paylaşır.
-- **Drain + orphan cleanup sertleştirmesi**: `cleanupDraining` artık
-  `ContainerRemove(force=true)` çağırıyor; remove fail ederse instance
-  `draining` state'inde kalır (önceden iyimser şekilde `stopped`
-  işaretlenip tekrar denenmiyordu, container kalıcı orphan oluyordu).
-  Stop ve remove hataları artık `slog.Warn` ile loglanır. Disk
-  birikiminin birincil sebebi buydu.
-- **Orphan reconcile exited container'ları artık görüyor**: eskiden
-  `ContainerList` (running-only) çağrılıyordu; `ContainerListAll(all=1)`
-  ile değiştirildi, böylece failed migration / crashed candidate
-  carcass'ları da temizlenir.
-
-### FEATURES (additional)
-
 - **Per-component image retention (`keep_releases`)**: Yeni
   `deploy_components.keep_releases` kolonu (default 3, SQL CHECK ≥ 1).
   Başarılı promote sonrası `pruneImagesAfterPromote` her component için
@@ -162,29 +213,30 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   input (1-50). Edge agent için `POST
   /api/v1/agent/deployer/prunable-images` endpoint'i.
 
-### Upgrade notları
+### ENHANCEMENTS
 
-Bu sürüm `v0.1.0`'ı tag'lendiğinde yayınlanacak. Şu an `main`
-branch'inde aktif geliştirme. Üretim için `v` tag'lerini bekleyin.
+- HTTP access log shipper artık bounded retry queue ile çalışır —
+  geçici central kesintilerinde log düşmesi azalır.
+- Agent fail-soft startup: `AGENT_CONFIG_CACHE` ile son başarılı config
+  diske yazılır; central down'sa stale config ile başlar, arka planda
+  yeniden bağlanır.
+- Agent → central cert push exponential backoff ile yeniden dener
+  (~30 dk'ya kadar).
+- Tüm Go binary'leri `--version` flag'ini destekler.
 
-Mevcut bir kurulumdan bu commit'lere geçiş:
+### BUGFIXES
 
-```bash
-# Central host:
-bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh)
-
-# Edge agent host:
-bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh)
-```
-
-Script'ler idempotent: mevcut `.env` korunur, yalnızca yeni env
-satırları eklenir. `MUVON_ENCRYPTION_KEY` ilk kurulumda üretilir,
-sonraki çalıştırmalarda **kesinlikle değiştirilmemelidir** — yoksa
-şifreli ayarlar ve servis env secret'ları okunamaz hale gelir.
-
-**Hibrit kurulumda upgrade sırası**: önce central'ı upgrade et, sonra
-her agent'ı tek tek. Aksi durumda yeni agent'lar central'ın eski
-sürümünde olmayan `/api/v1/agent/deployer/*` endpoint'lerine 404 alır.
+- `internal/deployer/service.go` artık `State` interface arkasında
+  çalışıyor — central (`DBState`) ve agent (`APIState`) aynı lifecycle
+  kodunu paylaşır.
+- **Drain + orphan cleanup sertleştirmesi**: `cleanupDraining` artık
+  `ContainerRemove(force=true)` çağırıyor; remove fail ederse instance
+  `draining` state'inde kalır (önceden iyimser şekilde `stopped`
+  işaretlenip tekrar denenmiyordu, container kalıcı orphan oluyordu).
+  Stop ve remove hataları artık `slog.Warn` ile loglanır.
+- **Orphan reconcile exited container'ları artık görüyor**: eskiden
+  `ContainerList` (running-only) çağrılıyordu; `ContainerListAll(all=1)`
+  ile değiştirildi.
 
 ---
 
@@ -208,8 +260,8 @@ satırı kopyalanır.
 ### Upgrade notları
 
 # Central:
-bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version X.Y.Z
 
 # Agent:
-bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version X.Y.Z
 ```

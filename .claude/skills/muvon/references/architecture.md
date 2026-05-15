@@ -88,9 +88,10 @@ Settings → Sistem'den tek tıkla upgrade. Akış:
 
 1. `GET /api/system/version` çalışan binary'nin sürümünü; `GET /api/system/version/latest` GHCR manifest HEAD (anonim, 5 dk cache) `:latest` digest'ini verir. UI karşılaştırır.
 2. `POST /api/system/upgrade {target_tag, take_backup}` → admin → deployer gRPC `SystemUpgrade` (server-streaming).
-3. Deployer: in-process mutex (409 on concurrent) → `.env`'e `VERSION` yaz → `pg_dump -Fc` (postgres container'da `docker exec`) → `docker:27-cli` helper container spawn et (mount: docker socket + `/opt/muvon:/host/muvon:rw`) → helper `docker compose pull && up -d --wait --wait-timeout 120` koşar.
-4. Helper deployer'ı da recreate eder; gRPC stream EOF olur, admin handler bunu `done` yorumlar (Coolify pattern).
-5. UI canlı progress: `GET /api/system/upgrade/stream` SSE (`pull` / `restart` / `post_check` event'leri).
+3. Deployer: in-process mutex (409 on concurrent) → target tag normalize (v strip) → `pg_dump -Fc` (postgres container'da `docker exec`) → `docker:27-cli` helper container spawn et (mount: docker socket + `/opt/muvon:/host/muvon:rw`).
+4. Helper script: `wget` compose'u GitHub raw'dan tazele → `sed` ile `:latest` → `:<target>` → `compose pull` → `compose up -d --no-deps --wait muvon dialog-siem` (önce) → `compose up -d --no-deps --wait muvon-deployer` (SON — helper'ın spawn'ı bu, recreate'i son'a iter).
+5. Deployer recreate'i sırasında gRPC stream EOF olur. Admin handler bunu **başarı saymaz**: `:9443/api/health`'i 60 sn boyunca polluyor; 200 dönerse `done`, dönmezse `failed` event'i yayar.
+6. UI canlı progress: `GET /api/system/upgrade/stream` SSE (`pull` / `restart` / `post_check` event'leri).
 
 `docker-compose.yml` mount gerekleri: `/var/run/docker.sock`, `/opt/muvon:/host/muvon:rw`, `backups` volume.
 

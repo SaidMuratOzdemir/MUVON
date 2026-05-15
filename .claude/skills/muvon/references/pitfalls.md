@@ -187,7 +187,7 @@ Komut handler'ları `cmd/agent/commands.go`'da idempotent yazılır. Aynı komut
 
 Process-wide `upgradeBroker` aktif tek upgrade'e izin verir. İkinci `POST /api/system/upgrade` çağrısı 409 alır. SSE stream (`GET /api/system/upgrade/stream`) late-joining listener'lar için event history replay'i yapar — yani upgrade başladıktan sonra bağlanan UI ilk event'leri kaçırmaz.
 
-Helper container deployer'ı **kendisi de** recreate eder; gRPC stream EOF görünür. Admin handler bu EOF'u `done` event'i olarak yorumlar — bunu hata zannetme. Browser tarafında SSE bağlantısı düşer, UI "Sayfayı yenile" butonu gösterir.
+**v0.1.4'ten itibaren** helper container kademeli recreate yapar (muvon + dialog-siem önce, muvon-deployer en son) — deployer'ın spawn'ı yaptığı helper, kendi recreate sırasında muvon zaten Healthy olduğu için. Plus admin handler stream EOF'unu körü körüne "done" sayma yerine `:9443/api/health`'i 60 sn poll eder; başarısızsa `failed` event'i yayar. v0.1.0–v0.1.3 arası bu davranış yoktu, yarım kalan upgrade'ler UI'da yeşil tik gösteriyordu.
 
 ## 32) `keep_releases` çok düşük = rollback yolu kapanır
 

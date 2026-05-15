@@ -142,6 +142,10 @@ func (s *Server) runUpgrader(ctx context.Context, emit func(step, level, msg str
 		sedLine = fmt.Sprintf(`sed -i -E "s|(ghcr\\.io/[^:]+):latest|\\1:%s|g" docker-compose.yml`, target)
 	}
 
+	// muvon-deployer'ı SONA bırak: helper container bu deployer'ın
+	// spawn'ı; recreate sırasında gRPC stream kopar. Önce muvon +
+	// dialog-siem'i Healthy'ye çek, EN SON deployer'ı recreate et — o
+	// noktada helper'ın yapacağı tek iş zaten kalmamış olur.
 	script := strings.Join([]string{
 		"set -e",
 		"cd " + helperHostMnt,
@@ -150,8 +154,10 @@ func (s *Server) runUpgrader(ctx context.Context, emit func(step, level, msg str
 		sedLine,
 		"echo '[upgrader] pulling images...'",
 		"docker compose pull muvon dialog-siem muvon-deployer",
-		"echo '[upgrader] recreating containers...'",
-		"docker compose up -d --wait --wait-timeout 120",
+		"echo '[upgrader] recreating muvon + dialog-siem...'",
+		"docker compose up -d --no-deps --wait --wait-timeout 90 muvon dialog-siem",
+		"echo '[upgrader] recreating muvon-deployer (last)...'",
+		"docker compose up -d --no-deps --wait --wait-timeout 90 muvon-deployer",
 		"echo '[upgrader] done'",
 	}, "\n")
 

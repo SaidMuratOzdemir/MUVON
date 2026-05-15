@@ -12,6 +12,17 @@ import {
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 
+const SEMVER_RE = /^v?\d+\.\d+\.\d+$/
+function isStrictSemver(s: string): boolean { return SEMVER_RE.test(s.trim()) }
+function compareSemver(a: string, b: string): number {
+  const pa = a.replace(/^v/, '').split('.').map(n => parseInt(n, 10))
+  const pb = b.replace(/^v/, '').split('.').map(n => parseInt(n, 10))
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i]
+  }
+  return 0
+}
+
 interface Props {
   open: boolean
   onClose: () => void
@@ -85,6 +96,18 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag }: Props) 
     if (!effectiveTag) {
       toast.error('Hedef tag boş olamaz')
       return
+    }
+    // Downgrade engelleme: semver formundaki bir tag çalışan sürümden küçükse uyar.
+    // latest/v0/v0.1 gibi semver olmayanlar atlanır (rolling tag, downgrade tanımsız).
+    if (currentTag && isStrictSemver(effectiveTag) && isStrictSemver(currentTag)) {
+      if (compareSemver(effectiveTag, currentTag) < 0) {
+        const ok = window.confirm(
+          `Downgrade: ${currentTag} → ${effectiveTag}\n\n` +
+          `Forward-only migration kuralı: yeni schema'dan eskiye dönüş desteklenmez. ` +
+          `Devam edersen container'lar muhtemelen başlatılamaz. Yine de deneyeyim mi?`,
+        )
+        if (!ok) return
+      }
     }
     setPhase('running')
     setEvents([])

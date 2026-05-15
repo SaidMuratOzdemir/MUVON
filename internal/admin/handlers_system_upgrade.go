@@ -167,13 +167,35 @@ func (s *Server) driveUpgrade(targetTag string, takeBackup bool) {
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
+			// Stream EOF — deployer recreated as part of the upgrade.
+			// This is EXPECTED, but does NOT mean the upgrade succeeded;
+			// the helper container is still finishing. Poll local health
+			// before declaring done so a half-finished compose-up doesn't
+			// flash a green checkmark on the UI.
 			s.upgradeBroker.push(&pb.UpgradeEvent{
-				Step:      "done",
+				Step:      "post_check",
 				Level:     "info",
-				Message:   "stream closed — deployer was likely restarted as part of the upgrade",
+				Message:   "deployer stream closed, waiting for muvon to come back healthy...",
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
-				Done:      true,
+				Done:      false,
 			})
+			if healthy := s.waitLocalHealthy(60 * time.Second); healthy {
+				s.upgradeBroker.push(&pb.UpgradeEvent{
+					Step:      "done",
+					Level:     "info",
+					Message:   "upgrade verified — muvon healthy on new image",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					Done:      true,
+				})
+			} else {
+				s.upgradeBroker.push(&pb.UpgradeEvent{
+					Step:      "failed",
+					Level:     "error",
+					Message:   "muvon did not become healthy within 60s — upgrade likely failed (check `docker compose ps`)",
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+					Done:      true,
+				})
+			}
 			return
 		}
 		s.upgradeBroker.push(ev)
@@ -181,6 +203,27 @@ func (s *Server) driveUpgrade(targetTag string, takeBackup bool) {
 			return
 		}
 	}
+}
+
+// waitLocalHealthy polls /api/health on the local admin port until it
+// returns 200 or the timeout elapses. The check goes through the local
+// loopback bind (:9443) which is always available, even when the public
+// HTTPS listener is restarting alongside the muvon container.
+func (s *Server) waitLocalHealthy(timeout time.Duration) bool {
+	client := &http.Client{Timeout: 3 * time.Second}
+	deadline := time.Now().Add(timeout)
+	url := "http://127.0.0.1:9443/api/health"
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(url)
+		if err == nil {
+			_ = resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return false
 }
 
 // handleSystemUpgradeStream is the SSE endpoint browsers connect to.
