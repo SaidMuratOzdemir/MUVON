@@ -88,6 +88,7 @@ export function ComponentEditorDialog({
   const [agentID, setAgentID] = useState('')
   const [agents, setAgents] = useState<Agent[]>([])
   const [envRows, setEnvRows] = useState<EnvRow[]>([])
+  const [mounts, setMounts] = useState<import('@/types').Mount[]>([])
 
   // Bulk paste
   const [bulkOpen, setBulkOpen] = useState(false)
@@ -117,6 +118,7 @@ export function ComponentEditorDialog({
       setIsRoutable(true)
       setAgentID('')
       setEnvRows([])
+      setMounts([])
       setTab('general')
       return
     }
@@ -138,6 +140,7 @@ export function ComponentEditorDialog({
       setIsRoutable(c.is_routable)
       setAgentID(c.agent_id ?? '')
       setEnvRows(buildEnvRows(c))
+      setMounts(c.mounts ?? [])
       setTab('general')
     }).catch(err => {
       toast.error(err instanceof Error ? err.message : 'Servis bilgileri yüklenemedi')
@@ -263,6 +266,7 @@ export function ComponentEditorDialog({
       env_file_path: envFilePath.trim(),
       env,
       env_secret_keys: envSecretKeys,
+      mounts: mounts.filter(m => m.target.trim() && (m.type !== 'bind' || (m.source ?? '').trim())),
       is_routable: isRoutable,
       // Only sent on create — update endpoint ignores agent_id by design
       // (server preserves the original host to avoid orphaned containers).
@@ -618,6 +622,73 @@ export function ComponentEditorDialog({
                     daha eski (ve canlı bir instance'a bağlı olmayan) imajlar silinir.
                     Düşük tutmak diski boşaltır, rollback hedef sayısını azaltır. Varsayılan 3.
                   </p>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-border">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-xs">Mounts (bind / volume)</Label>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Host path veya named volume container'a bağlanır. Bind için <code className="font-mono">source</code> host path; volume için volume adı.
+                      </p>
+                    </div>
+                    <Button
+                      type="button" size="sm" variant="outline"
+                      onClick={() => setMounts(m => [...m, { type: 'bind', source: '', target: '', read_only: false }])}
+                    >
+                      + Mount
+                    </Button>
+                  </div>
+
+                  {mounts.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground italic">Henüz mount yok.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {mounts.map((m, i) => (
+                        <div key={i} className="grid grid-cols-[100px_1fr_1fr_60px_28px] gap-1.5 items-center">
+                          <select
+                            value={m.type}
+                            onChange={e => setMounts(mm => mm.map((x, j) => j === i ? { ...x, type: e.target.value as typeof x.type } : x))}
+                            className="rounded-md border border-border bg-background px-2 py-1 text-xs font-mono"
+                          >
+                            <option value="bind">bind</option>
+                            <option value="volume">volume</option>
+                            <option value="tmpfs">tmpfs</option>
+                          </select>
+                          <Input
+                            placeholder={m.type === 'bind' ? '/opt/foo/bar' : m.type === 'volume' ? 'volume-name' : '(tmpfs)'}
+                            value={m.source ?? ''}
+                            onChange={e => setMounts(mm => mm.map((x, j) => j === i ? { ...x, source: e.target.value } : x))}
+                            disabled={m.type === 'tmpfs'}
+                            className="font-mono text-xs h-7"
+                          />
+                          <Input
+                            placeholder="/app/.env"
+                            value={m.target}
+                            onChange={e => setMounts(mm => mm.map((x, j) => j === i ? { ...x, target: e.target.value } : x))}
+                            className="font-mono text-xs h-7"
+                          />
+                          <label className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={!!m.read_only}
+                              onChange={e => setMounts(mm => mm.map((x, j) => j === i ? { ...x, read_only: e.target.checked } : x))}
+                              className="h-3 w-3"
+                            />
+                            ro
+                          </label>
+                          <Button
+                            type="button" variant="ghost" size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => setMounts(mm => mm.filter((_, j) => j !== i))}
+                            title="Sil"
+                          >
+                            ×
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

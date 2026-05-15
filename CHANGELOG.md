@@ -23,7 +23,14 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-— henüz birikme yok.
+### FEATURES
+
+- **UI: ComponentEditorDialog → Mounts editor**: "Gelişmiş" sekmesinde
+  bind/volume/tmpfs satırları. Backend (`deploy_components.mounts`
+  JSONB + deployer `HostConfig.Mounts`) zaten vardı, sadece UI eksikti.
+  Host-secret-file pattern'i için kritik: kullanıcı DB credentials'ını
+  `/opt/.../api.env` gibi bir host dosyasına yazar, MUVON'un env_secret_keys'ine koymadan
+  container'a bind eder. MUVON sadece mount path'ini bilir, içeriği değil.
 
 ---
 
