@@ -78,6 +78,19 @@ services:
       #
       # - /root/.docker/config.json:/root/.docker/config.json:ro
 
+      # ── Operator env files (deploy_components.env_file_path) ─────────
+      # Agent embedded-deployer komponentin env_file_path alanında yazan
+      # host yolundan dosyayı okur ve container'a env vars olarak inject
+      # eder (mount değil — dosya permission'ı container user'ı bağlamaz).
+      # Bunun için agent container'ının bu yolu görmesi gerek. Convention:
+      # tüm env file'ları /opt/envfiles/ altına koy; agent compose tek
+      # mount ile hepsine ro erişir. Central muvon-deployer'da aynı yapı
+      # zaten var (docker-compose.yml: muvon-deployer service).
+      # install-agent.sh edge deployer enabled olduğunda bu satırı açar
+      # ve /opt/envfiles dizinini oluşturur.
+      #
+      # - /opt/envfiles:/opt/envfiles:ro
+
 volumes:
   tls_cache:
   logship:

@@ -131,6 +131,20 @@ _enable_docker_config_mount() {
   fi
 }
 
+# Operator env files convention: /opt/envfiles altındaki tüm env file'lar
+# agent'a ro mount edilir. Central muvon-deployer ile simetrik. install
+# zamanı dizini oluşturur (yoksa) ve mount satırını açar.
+_enable_envfiles_mount() {
+  if grep -qE '^[[:space:]]+- /opt/envfiles:/opt/envfiles' "$COMPOSE_FILE"; then
+    return 0
+  fi
+  mkdir -p /opt/envfiles
+  chmod 755 /opt/envfiles
+  sed -i.bak -E \
+    "s|^([[:space:]]+)# - /opt/envfiles:/opt/envfiles:ro|\\1- /opt/envfiles:/opt/envfiles:ro|" \
+    "$COMPOSE_FILE" && rm -f "${COMPOSE_FILE}.bak"
+}
+
 # ── Başlık + mod tespiti ─────────────────────────────────────────────────
 echo ""
 echo "── MUVON Agent ──────────────────────────────────────────────────────"
@@ -294,7 +308,8 @@ EOF
   if [ "$DEPLOYER_ENABLED" = "true" ]; then
     _enable_socket_mount rw
     _enable_docker_config_mount
-    status "ENV" "Docker socket: RW (edge deployer için) + registry creds mount"
+    _enable_envfiles_mount
+    status "ENV" "Docker socket: RW (edge deployer için) + registry creds + /opt/envfiles mount"
   else
     _enable_socket_mount ro
     status "ENV" "Docker socket: RO (yalnız dockerwatch için)"
@@ -341,6 +356,7 @@ else
     fi
     _enable_socket_mount rw
     _enable_docker_config_mount
+    _enable_envfiles_mount
   else
     _enable_socket_mount ro
   fi

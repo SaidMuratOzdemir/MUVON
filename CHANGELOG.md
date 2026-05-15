@@ -27,6 +27,37 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.21] - 2026-05-15
+
+### BUGFIXES
+
+- **Edge agent `env_file_path` host yolunu okuyamıyordu**:
+  Komponent `env_file_path` set ettiğinde central muvon-deployer
+  dosyayı host'taki `/opt/envfiles/`'tan kendi process'inde okuyor
+  (`docker-compose.yml`'da `/opt/envfiles:/opt/envfiles:ro` mount var).
+  Agent compose'da bu mount **yoktu**; embedded deployer host yolunu
+  bulamayınca migration container env vars'sız başlatılıyor, alembic
+  DB'ye bağlanamadan exit 1 ile düşüyordu.
+
+  Düzeltme: agent compose'a aynı `/opt/envfiles:/opt/envfiles:ro`
+  mount'u eklendi (central ile simetrik convention). `install-agent.sh`
+  edge deployer enabled olan kurulumlarda dizini otomatik oluşturur
+  (`mkdir -p /opt/envfiles`) ve mount satırını compose'da açar.
+
+### Upgrade notları
+
+- **Mevcut env file'larınız standart konuma taşınmalı**: `/opt/envfiles/`
+  altına koyun (örnek isim: `tatilji-api.env`). MUVON UI'da o
+  komponentin `env_file_path` alanını yeni yola güncelleyin.
+- install-agent.sh'i bir kez daha çalıştırın — yeni compose dosyası
+  indirilir, `/opt/envfiles` mount'u açılır, agent restart eder.
+- Bind mount (`mounts: [...]`) ile env dosyası geçirenler için bu fix
+  alternatif yol — mount'u tamamen kaldırıp `env_file_path` kullanmak
+  artık doğru pattern. Mount, container'daki non-root user'ın host
+  dosyasını okuyamadığı durumlarda permission denied verir.
+
+---
+
 ## [0.1.20] - 2026-05-15
 
 ### BUGFIXES
