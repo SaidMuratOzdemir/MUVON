@@ -27,6 +27,33 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.19] - 2026-05-15
+
+### BUGFIXES
+
+- **Agent proxy "no backend configured" 502 dönüyordu**:
+  `AgentPayload` `Hosts` + `Routes` taşıyordu ama `RouteRule.ManagedBackends`
+  alanını (yani managed component'a bağlı active container endpoint'leri)
+  taşımıyordu. Agent payload'ı parse edip kendi config'ini kurarken
+  `pickBackend` her zaman boş array görüyor, `ServeHTTP` 502 ile geri
+  dönüyordu. Central'da aynı kod yolu `LoadFromDB` içinde
+  `ListActiveManagedBackends`'i route'a aktardığı için sorun çıkmıyordu.
+
+  Düzeltme: `AgentPayload`'a `managed_backends` field eklendi. Agent'a
+  ait hostların route'larına bağlı tüm active backend'ler bu listede
+  dedupe edilerek gönderiliyor. Agent tarafı `ToConfig` çıkışında
+  component_id'ye göre group'layıp `RouteRule.ManagedBackends`'i
+  dolduruyor. Proxy artık doğru container URL'sini round-robin'le seçer.
+
+### Upgrade notları
+
+- Central + agent **ikisini birlikte** v0.1.19'a alın. Eski agent yeni
+  payload'ı parse eder (geriye dönük uyumlu, field optional) ama
+  `managed_backends` boş kalır, problem devam eder. Eski central yeni
+  agent'a göndermeyi de bilmediği için aynı durum. Symmetric upgrade.
+
+---
+
 ## [0.1.18] - 2026-05-15
 
 ### BUGFIXES

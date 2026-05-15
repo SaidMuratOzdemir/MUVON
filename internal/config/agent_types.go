@@ -13,6 +13,12 @@ type AgentPayload struct {
 	Routes    []db.Route    `json:"routes"`
 	Settings  AgentSettings `json:"settings"`
 	UpdatedAt string        `json:"updated_at"`
+	// ManagedBackends carries the active container endpoints for every
+	// managed component referenced by Routes. Without this the agent's
+	// proxy can match a route but has no URL to dial, and ServeHTTP
+	// fails with "no backend configured". Central knows the list
+	// because the deployer reports instance lifecycle to it.
+	ManagedBackends []db.ManagedBackend `json:"managed_backends,omitempty"`
 	// Version is an opaque short string identifying this snapshot. Agents
 	// echo it back via X-Config-Version on the next pull / SSE reconnect
 	// so central can distinguish "agent missed the push" from "agent
@@ -53,6 +59,9 @@ type AgentSettings struct {
 func AgentPayloadFromConfig(cfg *Config, agentID string) AgentPayload {
 	var hosts []db.Host
 	var routes []db.Route
+	// dedupe managed backends across overlapping routes (same component
+	// can serve multiple routes on the same host).
+	backendsByID := map[string]db.ManagedBackend{}
 	if agentID != "" {
 		for _, hc := range cfg.Hosts {
 			if hc.Host.TargetKind != "agent" {
@@ -64,14 +73,22 @@ func AgentPayloadFromConfig(cfg *Config, agentID string) AgentPayload {
 			hosts = append(hosts, hc.Host)
 			for _, rr := range hc.Routes {
 				routes = append(routes, rr.Route)
+				for _, b := range rr.ManagedBackends {
+					backendsByID[b.InstanceID] = b
+				}
 			}
 		}
 	}
+	managed := make([]db.ManagedBackend, 0, len(backendsByID))
+	for _, b := range backendsByID {
+		managed = append(managed, b)
+	}
 	return AgentPayload{
-		Hosts:     hosts,
-		Routes:    routes,
-		Settings:  globalToAgentSettings(cfg.Global),
-		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		Hosts:           hosts,
+		Routes:          routes,
+		Settings:        globalToAgentSettings(cfg.Global),
+		ManagedBackends: managed,
+		UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
@@ -83,6 +100,12 @@ func (p AgentPayload) ToConfig() *Config {
 	for _, r := range p.Routes {
 		routesByHost[r.HostID] = append(routesByHost[r.HostID], r)
 	}
+	// Backends grouped by component so each managed-proxy route can
+	// resolve to the round-robin pool the deployer populated on central.
+	backendsByComponent := make(map[int][]db.ManagedBackend)
+	for _, b := range p.ManagedBackends {
+		backendsByComponent[b.ComponentID] = append(backendsByComponent[b.ComponentID], b)
+	}
 
 	for _, h := range p.Hosts {
 		if !h.IsActive {
@@ -93,10 +116,14 @@ func (p AgentPayload) ToConfig() *Config {
 			if !r.IsActive {
 				continue
 			}
-			hc.Routes = append(hc.Routes, RouteRule{
+			rule := RouteRule{
 				Route:      r,
 				PathPrefix: r.PathPrefix,
-			})
+			}
+			if r.ManagedComponentID != nil {
+				rule.ManagedBackends = backendsByComponent[*r.ManagedComponentID]
+			}
+			hc.Routes = append(hc.Routes, rule)
 		}
 		// Per-host JWT metadata crosses the wire via db.Host's json tags.
 		// The secret itself is json:"-" on purpose — agents never receive
