@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -190,6 +191,18 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 		if hostDir == "" {
 			hostDir = "/opt/muvon-agent"
 		}
+		// docker compose derives the project name from the directory it
+		// runs in. If the helper container's mount path differs from the
+		// host install dir basename, compose treats it as a new project
+		// and "up -d agent" creates a parallel agent-agent-1 container
+		// alongside the real muvon-agent-agent-1 — the live agent never
+		// gets recreated. Mirror the basename and pass -p explicitly so
+		// the project we touch is the one already running.
+		projectName := filepath.Base(strings.TrimRight(hostDir, "/"))
+		if projectName == "" || projectName == "/" {
+			projectName = "muvon-agent"
+		}
+		helperHostMnt := "/host/" + projectName
 
 		// If the operator pinned a specific tag, rewrite the compose file
 		// before pulling so the recreate lands on it. Empty / "latest"
@@ -203,13 +216,12 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 			sedLine = fmt.Sprintf(`sed -i -E "s|(ghcr\\.io/[^:]+/agent):[^[:space:]\"]*|\\1:%s|g" docker-compose.agent.yml`, targetTag)
 		}
 
-		const helperHostMnt = "/host/agent"
 		script := strings.Join([]string{
 			"set -ex",
 			"cd " + helperHostMnt,
 			sedLine,
-			"docker compose -f docker-compose.agent.yml pull agent",
-			"docker compose -f docker-compose.agent.yml up -d --no-deps --wait --wait-timeout 90 agent",
+			"docker compose -p " + projectName + " -f docker-compose.agent.yml pull agent",
+			"docker compose -p " + projectName + " -f docker-compose.agent.yml up -d --no-deps --wait --wait-timeout 90 agent",
 		}, "\n")
 
 		// helperCtx is rooted in Background so the helper survives this

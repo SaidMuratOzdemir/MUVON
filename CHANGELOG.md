@@ -27,6 +27,49 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.22] - 2026-05-15
+
+### BUGFIXES
+
+- **`agent.self_upgrade` paralel container yaratıyordu, gerçek agent'ı
+  recreate etmiyordu**: v0.1.20'de helper container yaklaşımına
+  geçilmişti ama helper script `cd /host/agent` yapıyordu — `/host/`
+  altındaki klasör adı `agent`, compose project name'i de o adı alıyor
+  (`agent_default`). Operatör install-agent.sh ile gerçek agent'ı
+  `/opt/muvon-agent` altına kurmuş, gerçek compose project name
+  `muvon-agent`. İki ayrı project: helper `agent-agent-1` yeni bir
+  container yaratıyor, gerçek `muvon-agent-agent-1` dokunulmadan
+  çalışmaya devam ediyordu. Pull başarılı + helper exit 0 → command
+  "succeeded" → ama agent eski binary'de kalıyordu.
+
+  Düzeltme: helper mount target'ı `MUVON_HOST_AGENT_DIR`'in basename'ini
+  alır (`/host/muvon-agent`), `docker compose` çağrısı `-p muvon-agent`
+  flag'iyle gerçek project'i hedefler. Helper artık doğru container'ı
+  recreate ediyor.
+
+### FEATURES
+
+- **`install-agent.sh --mount` flag + interactive prompt**: Operator
+  istediği host yollarını agent container'a ro mount edebilir
+  (`AGENT_EXTRA_MOUNTS` env state'i `.env`'de tutulur). v0.1.21'in
+  `/opt/envfiles` convention'ı default mount olarak kalır; ek yollar
+  bunun **üstüne** eklenir. Operatör mevcut yapısını taşımak zorunda
+  değil — örneğin `/opt/tatilji/secrets/api.env` yerinde durur,
+  `--mount /opt/tatilji` ile agent'a tanıtılır.
+
+  Kullanım:
+  ```
+  # Yeni install (interaktif soracak):
+  bash <(curl -fsSL .../install-agent.sh)
+  # CLI flag (tekrarlanabilir):
+  bash <(curl -fsSL .../install-agent.sh) --mount /opt/tatilji --mount /opt/another
+  ```
+  Update mode'da `--mount` verilirse mevcut `AGENT_EXTRA_MOUNTS` değeri
+  override edilir; verilmezse state korunur. Her install çağrısı
+  compose dosyasına mount satırlarını yeniden uygular.
+
+---
+
 ## [0.1.21] - 2026-05-15
 
 ### BUGFIXES

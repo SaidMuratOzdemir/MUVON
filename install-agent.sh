@@ -22,12 +22,15 @@ COMPOSE_FILE="${INSTALL_DIR}/docker-compose.agent.yml"
 
 TARGET_VERSION=""
 PUBLIC_IP_ARG=""
+EXTRA_MOUNTS_ARG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) TARGET_VERSION="${2:-}"; shift 2 ;;
     --version=*) TARGET_VERSION="${1#*=}"; shift ;;
     --public-ip) PUBLIC_IP_ARG="${2:-}"; shift 2 ;;
     --public-ip=*) PUBLIC_IP_ARG="${1#*=}"; shift ;;
+    --mount) EXTRA_MOUNTS_ARG="${EXTRA_MOUNTS_ARG} ${2:-}"; shift 2 ;;
+    --mount=*) EXTRA_MOUNTS_ARG="${EXTRA_MOUNTS_ARG} ${1#*=}"; shift ;;
     *) shift ;;
   esac
 done
@@ -145,6 +148,32 @@ _enable_envfiles_mount() {
     "$COMPOSE_FILE" && rm -f "${COMPOSE_FILE}.bak"
 }
 
+# Operator-defined extra mounts. Boşluklu liste, her elemanı agent
+# container'a ro bind mount eder (host:container aynı path). Convention
+# /opt/envfiles yetmediğinde — örn /opt/<app>/secrets gibi mevcut bir
+# dizini agent'a tanıtmak için. State .env'de tutulur, her install-agent.sh
+# çalıştığında compose'a yeniden uygulanır.
+#
+# $1: boşluklu host yolları listesi (örn "/opt/tatilji /opt/another")
+_apply_extra_mounts() {
+  local paths="$1"
+  [ -z "$paths" ] && return 0
+  for raw in $paths; do
+    local p
+    p="$(echo "$raw" | tr -d '[:space:]')"
+    [ -z "$p" ] && continue
+    [ ! -e "$p" ] && echo "  ⚠  Ek mount yolu yok (yine de eklendi): $p"
+    if grep -qE "^[[:space:]]+- ${p}:${p}" "$COMPOSE_FILE"; then
+      continue
+    fi
+    # docker.sock satırının altına insert. Anchor sabit, yine de "g" yok.
+    sed -i.bak -E \
+      "/^[[:space:]]+- \\/var\\/run\\/docker\\.sock:/a\\
+      - ${p}:${p}:ro" \
+      "$COMPOSE_FILE" && rm -f "${COMPOSE_FILE}.bak"
+  done
+}
+
 # ── Başlık + mod tespiti ─────────────────────────────────────────────────
 echo ""
 echo "── MUVON Agent ──────────────────────────────────────────────────────"
@@ -230,6 +259,20 @@ if [ "$MODE" = "install" ]; then
         break
       fi
     done
+
+    # Ek host mount yolları — operatörün kendi yapısı /opt/envfiles
+    # convention'ı dışında bir yerdeyse (örn /opt/tatilji/secrets). agent
+    # container bu yolları ro mount eder ki embedded deployer
+    # env_file_path veya mounts referansı açabilsin.
+    if [ -n "$EXTRA_MOUNTS_ARG" ]; then
+      EXTRA_MOUNTS="$EXTRA_MOUNTS_ARG"
+    else
+      echo ""
+      echo "  Ek host yollarını agent'a mount edebilirsin (env_file_path veya"
+      echo "  managed component mounts için). Boşluklu liste, boş bırakırsan"
+      echo "  yalnız /opt/envfiles convention mount'u açık olur."
+      _read "  Ek mount yolları (örn '/opt/tatilji /opt/another'): " EXTRA_MOUNTS
+    fi
   fi
 else
   echo ""
@@ -287,6 +330,7 @@ AGENT_API_KEY=${API_KEY}
 AGENT_LOG_ADDR=${LOG_ADDR}
 AGENT_PUBLIC_IP=${PUBLIC_IP}
 MUVON_AGENT_DIR=${INSTALL_DIR}
+AGENT_EXTRA_MOUNTS=${EXTRA_MOUNTS:-}
 
 LOG_LEVEL=info
 
@@ -309,7 +353,8 @@ EOF
     _enable_socket_mount rw
     _enable_docker_config_mount
     _enable_envfiles_mount
-    status "ENV" "Docker socket: RW (edge deployer için) + registry creds + /opt/envfiles mount"
+    _apply_extra_mounts "${EXTRA_MOUNTS:-}"
+    status "ENV" "Docker socket: RW (edge deployer için) + registry creds + /opt/envfiles${EXTRA_MOUNTS:+ + ek mountlar:$EXTRA_MOUNTS}"
   else
     _enable_socket_mount ro
     status "ENV" "Docker socket: RO (yalnız dockerwatch için)"
@@ -328,6 +373,13 @@ else
   _env_upsert .env AGENT_DOCKERWATCH_MANAGED_ONLY "false" ensure
   # v0.1.20: self_upgrade helper container needs host path of compose dir
   _env_upsert .env MUVON_AGENT_DIR              "$INSTALL_DIR" ensure
+  # v0.1.22: operator-defined extra host mounts
+  _env_upsert .env AGENT_EXTRA_MOUNTS           ""             ensure
+  # --mount flag verilmişse mevcut değeri override et (additive değil; flag
+  # birden çok kez kullanılabilir, hepsi tek string'e toplandı).
+  if [ -n "$EXTRA_MOUNTS_ARG" ]; then
+    _env_upsert .env AGENT_EXTRA_MOUNTS         "$EXTRA_MOUNTS_ARG" set
+  fi
 
   # v0.1.13: public IP self-report. Boşsa auto-detect dene; başarısızsa boş bırak.
   if ! grep -qE '^AGENT_PUBLIC_IP=' .env; then
@@ -357,6 +409,10 @@ else
     _enable_socket_mount rw
     _enable_docker_config_mount
     _enable_envfiles_mount
+    # .env'deki AGENT_EXTRA_MOUNTS state'ini her güncellemede compose'a uygula —
+    # compose dosyası yeniden indiriliyor, mount satırları her seferinde silinir.
+    EXISTING_EXTRA=$(grep '^AGENT_EXTRA_MOUNTS=' .env | cut -d= -f2- || true)
+    _apply_extra_mounts "$EXISTING_EXTRA"
   else
     _enable_socket_mount ro
   fi
