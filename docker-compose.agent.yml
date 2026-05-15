@@ -49,7 +49,7 @@ services:
       AGENT_ENCRYPTION_KEY: ${AGENT_ENCRYPTION_KEY:-}
 
     volumes:
-      - tls_cache:/var/lib/app/tls
+      - tls_cache:/var/lib/agent/tls           # AGENT_TLS_CACHE default path
       - logship:/var/lib/agent/logship           # spool when central is unreachable
       - config_cache:/var/lib/agent              # fail-soft startup cache
 

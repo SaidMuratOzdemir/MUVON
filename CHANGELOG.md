@@ -27,6 +27,25 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.15] - 2026-05-15
+
+### BUGFIXES
+
+- **Agent TLS cache volume yanlış path'e mount edilmişti**:
+  `docker-compose.agent.yml` `tls_cache` volume'unu `/var/lib/app/tls`'e
+  bağlıyordu ama agent binary'sinin `AGENT_TLS_CACHE` default'u
+  `/var/lib/agent/tls`. İki ayrı path → agent ACME ile cert alıyor,
+  ephemeral container dizinine yazıyordu, container her recreate'te
+  cache kayboluyordu. Sonuç: her restart Let's Encrypt'ten yeni issue
+  → rate limit (haftada 5/domain) çok hızlı doluyor; TLS Certs ekranı
+  agent-issued cert'leri hiç göstermiyor.
+
+  Düzeltme: compose'taki mount artık `/var/lib/agent/tls` — agent'ın
+  yazdığı path'le aynı. Operatör `bash <(curl -fsSL .../install-agent.sh)`
+  ile yeniden çalıştırınca compose otomatik güncellenir.
+
+---
+
 ## [0.1.14] - 2026-05-15
 
 ### BUGFIXES
