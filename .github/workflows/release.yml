@@ -55,9 +55,14 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Read VERSION
+      - name: Compute VERSION
         id: version
-        run: echo "value=$(cat VERSION 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$(cat VERSION 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build and push
         uses: docker/build-push-action@v6
