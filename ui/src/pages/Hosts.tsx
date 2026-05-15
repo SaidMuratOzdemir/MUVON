@@ -550,7 +550,7 @@ export default function Hosts() {
 
       {/* Host Dialog */}
       <Dialog open={hostDialog.open} onOpenChange={v => !v && setHostDialog({ open: false, host: null })}>
-        <DialogContent className="bg-card border-border">
+        <DialogContent className="bg-card border-border max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{hostDialog.host ? 'Edit Host' : 'Add Host'}</DialogTitle>
             <DialogDescription>Configure a virtual host for the reverse proxy</DialogDescription>
