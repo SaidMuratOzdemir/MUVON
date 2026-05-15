@@ -25,10 +25,12 @@ BACKUP_DIR="${INSTALL_DIR}/backups"
 
 # --version X.Y.Z (veya vX.Y.Z) → compose dosyasındaki :latest'i bu tag ile değiştir.
 TARGET_VERSION=""
+ASSUME_YES="${MUVON_YES:-false}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) TARGET_VERSION="${2:-}"; shift 2 ;;
     --version=*) TARGET_VERSION="${1#*=}"; shift ;;
+    --yes|-y) ASSUME_YES=true; shift ;;
     *) shift ;;
   esac
 done
@@ -51,15 +53,18 @@ fail() {
   exit 1
 }
 
-# curl | bash durumunda bile TTY'dan okuyabilmek için
+# Non-interactive SSH'ta /dev/tty yok; default'a düş veya boş bırak.
 _ask() {
   local prompt="$1" varname="$2" default="${3:-}"
   if [ -t 0 ]; then
     read -r -p "$prompt" "$varname"
-  else
+  elif [ -r /dev/tty ]; then
     read -r -p "$prompt" "$varname" </dev/tty
+  else
+    printf -v "$varname" '%s' "$default"
+    return 0
   fi
-  if [ -z "${!varname}" ] && [ -n "$default" ]; then
+  if [ -z "${!varname:-}" ] && [ -n "$default" ]; then
     printf -v "$varname" '%s' "$default"
   fi
 }
@@ -278,7 +283,9 @@ if [ "$MODE" = "update" ]; then
     echo "─────────────────────────────────────────────────────────────────────"
     rm -f /tmp/muvon-changelog.md
     echo ""
-    if ! _ask_yes_no "  Devam edeyim mi? [y/N]: "; then
+    if [ "$ASSUME_YES" = "true" ]; then
+      echo "  (--yes / MUVON_YES=1 set, onay atlandı)"
+    elif ! _ask_yes_no "  Devam edeyim mi? [y/N]: "; then
       status "ABORT" "Kullanıcı iptal etti."
       exit 0
     fi
