@@ -128,6 +128,11 @@ type componentRequest struct {
 	EnvSecretKeys           *[]string          `json:"env_secret_keys"`
 	Mounts                  *[]db.Mount        `json:"mounts"`
 	IsRoutable              *bool              `json:"is_routable"`
+	// AgentID picks which host runs this component's containers. Honoured
+	// only on CREATE — update endpoints intentionally ignore it because
+	// rebinding a running component to a new host would orphan containers
+	// on the original. Operator deletes + recreates to change host.
+	AgentID *string `json:"agent_id"`
 	// KeepReleases bounds how many recent succeeded releases keep their
 	// images on the host (default 3 from the SQL DEFAULT). Min 1, max 50
 	// — beyond that the disk savings invert and inspection gets painful.
@@ -345,6 +350,25 @@ func (s *Server) handleCreateDeployComponent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	in := buildComponentInput(req, componentDefaults(), project.ID)
+	// AgentID is honoured only at create time. We apply it here instead of
+	// in buildComponentInput so update handlers stay safe — they share the
+	// builder, and CLAUDE.md forbids switching agent_id after creation.
+	if req.AgentID != nil {
+		in.AgentID = strings.TrimSpace(*req.AgentID)
+	}
+	// Validate agent_id points at a real, active agent — silently accepting
+	// an unknown UUID would create a component no deployer can ever claim.
+	if in.AgentID != "" {
+		ag, err := s.db.GetAgent(r.Context(), in.AgentID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent_id does not match any registered agent"})
+			return
+		}
+		if !ag.IsActive {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "agent is inactive — re-activate or pick a different host"})
+			return
+		}
+	}
 	encrypted, err := s.encryptComponentEnv(in.Env, in.EnvSecretKeys)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

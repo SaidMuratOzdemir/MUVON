@@ -27,6 +27,26 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.12] - 2026-05-15
+
+### BUGFIXES
+
+- **Component create endpoint `agent_id`'yi sessizce yutuyordu**:
+  `componentRequest` struct'ında `AgentID` field'ı tanımlı değildi.
+  Frontend doğru payload gönderiyordu ama JSON unmarshal `agent_id`'yi
+  düşürüyor, sonra `buildComponentInput` `base.AgentID = ""` (defaults)
+  ile dolduruyordu. Sonuç: wizard'da edge agent seçilse bile komponent
+  her zaman central'a düşüyordu. v0.1.11 wizard fix'i de tek başına işe
+  yaramıyordu; gerçek bug backend tarafındaydı.
+
+  Düzeltme: `componentRequest`'e `AgentID *string \`json:"agent_id"\``
+  eklendi. Create handler'da request varsa uygulanıyor (update handler'lar
+  CLAUDE.md kuralı gereği by-design ignore — orphan container önleme).
+  Bonus: agent_id boş değilse `agents` tablosunda var olup `is_active`
+  olduğu doğrulanıyor; tanınmayan UUID veya inactive agent için 400 BadRequest.
+
+---
+
 ## [0.1.11] - 2026-05-15
 
 ### BUGFIXES
