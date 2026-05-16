@@ -142,7 +142,7 @@ function LiveTab() {
                   >
                     <div className="flex w-full items-center gap-1">
                       <span className="truncate font-mono">{c.container_name || c.container_id.slice(0, 12)}</span>
-                      {c.live ? (
+                      {c.live || c.state === 'running' ? (
                         <Badge variant="outline" className="ml-auto border-emerald-400/40 text-[10px] text-emerald-300">live</Badge>
                       ) : (
                         <Badge variant="outline" className="ml-auto text-[10px]">{c.state}</Badge>

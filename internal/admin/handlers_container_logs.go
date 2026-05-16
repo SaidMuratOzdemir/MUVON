@@ -168,10 +168,14 @@ func (s *Server) handleListContainers(w http.ResponseWriter, r *http.Request) {
 					m.LastLogAt = c.LastLogAt
 				}
 				if !m.Live && m.State == "" {
+					// Dialog dimension doesn't carry docker state; we
+					// infer from FinishedAt — same signal the running/
+					// exited filter uses. Empty FinishedAt = treat as
+					// running (UI badge matches filter behavior).
 					if c.FinishedAt != "" {
 						m.State = "exited"
 					} else {
-						m.State = "unknown"
+						m.State = "running"
 					}
 				}
 			}
