@@ -23,25 +23,59 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+— henüz birikme yok.
+
+---
+
+## [0.1.31] - 2026-05-16
+
+### BUGFIXES
+
+- **Rerun aynı release için zaman zaman 'no candidate instances'
+  hatasıyla anında düşüyordu**: Daha önce başarıyla promote olmuş bir
+  deployment'ı UI'dan Rerun ile yeniden tetikleyince (örn .env değişti,
+  container'ı yeni env ile recreate et) deployment ~5 ms içinde
+  'failed' düşüyordu. `PromoteDeployInstances` ilk promote'ta
+  `deploy_release_components.status`'u 'succeeded'a alıyor; enqueue
+  yolundaki ON CONFLICT branch'i rerun'da `image_ref`/`image_digest`
+  güncelliyor ama `status`'u 'pending'e geri çekmiyordu.
+  `LoadDeploymentPlan` ise `WHERE rc.status='pending'` filtresiyle
+  bileşenleri seçtiğinden, rerun'da plan zero-component yüklüyordu,
+  `processDeployment` for döngüsüne hiç girmeyip doğrudan
+  Promote'u boş candidate listesiyle çağırıyordu → 500.
+
+  Düzeltme: ON CONFLICT branch'i artık `status = 'pending'` da yazıyor.
+  Fresh deploy ve rerun ikisinde de aynı pre-condition (rc.status =
+  pending) garanti.
+
+- **Container Logs listesinde agent host container'ları "unknown"
+  badge'i ile görünüyordu**: v0.1.28'deki state filtresi düzeltmesi
+  ile birlikte agent container'ları artık listede çıkıyordu, ama
+  state inference branch'inde `m.Live=false` & `FinishedAt=""` durumu
+  "unknown" olarak etiketleniyordu — filter mantığı bu durumu zaten
+  "running" sayıyor, badge tutarsızdı. Backend artık `state='running'`
+  döndürüyor; UI Live badge'ini state==='running' kapsayacak şekilde
+  genişletti, central + agent container'ların badge'i aynı yeşil
+  "live" çipi.
+
 ### ENHANCEMENTS
 
-- **install-agent.sh + compose template + CHANGELOG v0.1.30 docs
+- **install-agent.sh + docker-compose.agent.yml + CHANGELOG v0.1.30
   provider-agnostik dile çekildi**: v0.1.30 yayınında live container
   tail dokümantasyonu Hetzner Cloud private network örnekleriyle
-  (`10.0.0.3:9100`, "Hetzner Cloud Firewall private bypass") gömülmüş
-  bir şekilde gitmişti. Özelliğin kendisi her zaman provider-agnostik
-  çalışıyordu; sadece operatöre verilen örnekler/yorumlar belirli bir
-  sağlayıcıya angaje görünüyordu. Şimdi:
+  (`10.0.0.3:9100`, "Hetzner Cloud Firewall private bypass") gömülü
+  gitmişti. Özelliğin kendisi her zaman provider-agnostikti; sadece
+  operatöre verilen örnekler/yorumlar belirli bir sağlayıcıya angaje
+  görünüyordu. Şimdi:
 
   - `install-agent.sh` prompt'u üç senaryoyu listeliyor: iç ağ
     (private network / VPC / mesh), public IP + firewall, ve "kapalı
     tut" (live tail bu agent için devre dışı).
-  - `docker-compose.agent.yml` yorumu Hetzner-spesifik dil yerine
-    "iç ağ adresi (provider private network, VPC subnet, VPN mesh)"
-    diyor.
+  - `docker-compose.agent.yml` yorumu "iç ağ adresi (provider private
+    network, VPC subnet, VPN mesh)" diyor.
   - CHANGELOG v0.1.30 girişi `<private-ip>:9100` placeholder'ı
-    kullanıyor, firewall mantığı provider-agnostik (Hetzner Cloud
-    FW / AWS Security Group / iptables / nftables eşit listede).
+    kullanıyor; firewall mantığı provider-agnostik (Hetzner Cloud FW
+    / AWS Security Group / iptables / nftables eşit listede).
 
   Davranışsal değişiklik yok; sadece dokümantasyon ve operatör UX.
 
