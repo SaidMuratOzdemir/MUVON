@@ -278,17 +278,32 @@ if [ "$MODE" = "install" ]; then
     fi
 
     # Canlı container log tail — central bu portu (gRPC) çağırarak
-    # docker logs --follow akışını UI'ya köprüler. Private network
-    # varsa "10.0.0.X:9100" formatında ver; halka açık IP'ye bind
-    # ediyorsan firewall'la sınırla.
+    # docker logs --follow akışını UI'ya köprüler. Yetkilendirme
+    # AGENT_ENCRYPTION_KEY'den HKDF ile türetilir; key olmadan
+    # listener kalkmaz.
     if [ -n "$DEPLOYER_TCP_BIND_ARG" ]; then
       DEPLOYER_TCP_BIND="$DEPLOYER_TCP_BIND_ARG"
     else
       echo ""
-      echo "  Live container-log tail için merkezin bağlanacağı host:port."
-      echo "  Private network varsa '<private-ip>:9100' kullan (örn 10.0.0.3:9100)."
-      echo "  Sadece 9100 yazarsan tüm interface'lere açılır — public IP'de"
-      echo "  firewall'la 9100 portunu sadece merkez IP'sine izin ver."
+      echo "  Canlı container log tail için merkez'in bu agent'a ulaşacağı"
+      echo "  host:port. Üç tipik senaryo:"
+      echo ""
+      echo "    1) İç ağ (private network / VPC / mesh):"
+      echo "       <private-ip>:9100  (örn provider-içi RFC1918 adresi,"
+      echo "       Tailscale/Wireguard mesh IP'si, AWS/GCP VPC subnet IP'si)"
+      echo "       → Önerilen. Public yüzey sıfır."
+      echo ""
+      echo "    2) Public IP + güvenlik duvarı:"
+      echo "       0.0.0.0:9100  (veya çıplak 9100)"
+      echo "       → Provider firewall'unda (Hetzner Cloud FW / AWS Security"
+      echo "       Group / iptables / nftables / vs) yalnız merkez'in IP'sine"
+      echo "       9100/tcp izin ver. Token zaten zorunlu; yine de defansif"
+      echo "       derinlik için kapatılı tut."
+      echo ""
+      echo "    3) Erişimsiz:"
+      echo "       Boş bırak → live tail bu agent için kapalı kalır;"
+      echo "       History sekmesi (dialog üzerinden) yine çalışır."
+      echo ""
       _read "  Deployer TCP bind [9100]: " DEPLOYER_TCP_BIND "9100"
     fi
   fi
@@ -356,10 +371,14 @@ LOG_LEVEL=info
 AGENT_DEPLOYER_ENABLED=${DEPLOYER_ENABLED}
 AGENT_DEPLOYER_POLL_MS=5000
 AGENT_ENCRYPTION_KEY=${ENC_KEY}
-# Live container-log tail from central. AGENT_DEPLOYER_TCP_BIND restricts
-# the host-side bind to a single interface (set "10.0.0.3:9100" for a
-# private-network-only listener). Empty exposes on every interface.
-# Set the matching agents.deployer_addr in central UI to enable routing.
+# Canlı container log tail için merkez'in dial edeceği port.
+# AGENT_DEPLOYER_TCP_BIND iki şekil alabilir:
+#   "<host>:9100" → host-side bind tek interface'e (örn private IP).
+#   "9100"        → tüm interface'lere (0.0.0.0:9100). Public yüzeyi
+#                    olan host'ta provider firewall'unda 9100/tcp'yi
+#                    yalnız merkez'in IP'sine izin ver.
+# Central UI → Agents → bu agent'ın "Deployer addr" alanı bu değeri
+# (host:port halini) bilmeli — yoksa routing açılamaz.
 AGENT_DEPLOYER_TCP_BIND=${DEPLOYER_TCP_BIND}
 
 # Fail-soft startup config cache (volume içinde tutulur)

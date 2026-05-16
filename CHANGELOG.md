@@ -23,7 +23,27 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-— henüz birikme yok.
+### ENHANCEMENTS
+
+- **install-agent.sh + compose template + CHANGELOG v0.1.30 docs
+  provider-agnostik dile çekildi**: v0.1.30 yayınında live container
+  tail dokümantasyonu Hetzner Cloud private network örnekleriyle
+  (`10.0.0.3:9100`, "Hetzner Cloud Firewall private bypass") gömülmüş
+  bir şekilde gitmişti. Özelliğin kendisi her zaman provider-agnostik
+  çalışıyordu; sadece operatöre verilen örnekler/yorumlar belirli bir
+  sağlayıcıya angaje görünüyordu. Şimdi:
+
+  - `install-agent.sh` prompt'u üç senaryoyu listeliyor: iç ağ
+    (private network / VPC / mesh), public IP + firewall, ve "kapalı
+    tut" (live tail bu agent için devre dışı).
+  - `docker-compose.agent.yml` yorumu Hetzner-spesifik dil yerine
+    "iç ağ adresi (provider private network, VPC subnet, VPN mesh)"
+    diyor.
+  - CHANGELOG v0.1.30 girişi `<private-ip>:9100` placeholder'ı
+    kullanıyor, firewall mantığı provider-agnostik (Hetzner Cloud
+    FW / AWS Security Group / iptables / nftables eşit listede).
+
+  Davranışsal değişiklik yok; sadece dokümantasyon ve operatör UX.
 
 ---
 
@@ -33,30 +53,37 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 - **Canlı container log tail artık agent host'lardaki container'lar için
   de çalışıyor**: Central admin UI'da Container Logs → Live tab'ında
-  agent makinesindeki bir container'a tıkladığında akış kopmadan
+  agent makinesindeki bir container'a tıklandığında akış kopmadan
   başlıyor. Önceki davranışta sadece central host'taki container'lar
   canlı görülebiliyordu — agent'takiler için "Live tail bağlantısı
   koptu" düşüyordu çünkü merkezi muvon-deployer agent host'taki
   Docker socket'ini göremiyor.
 
-  Yeni mimari: agent binary kendi deployer gRPC server'ını private
-  network TCP portunda (default `0.0.0.0:9100`, ports map'lemesi
-  `${AGENT_DEPLOYER_TCP_BIND:-9100}:9100`) yayınlıyor. Central admin
-  container'ın `host_id`'sine bakıp ya local Unix socket deployer'a
-  ya da agent'ın TCP portuna dial ediyor.
+  Yeni mimari: agent binary kendi deployer gRPC server'ını TCP portunda
+  yayınlıyor (default `9100`; `AGENT_DEPLOYER_TCP_BIND` ile bind
+  edilecek interface seçilir). Central admin container'ın `host_id`'sine
+  bakıp ya local Unix socket deployer'a ya da agent'ın TCP adresine
+  dial ediyor.
 
   Güvenlik: bearer token HKDF ile `MUVON_ENCRYPTION_KEY`'den türetilir
   (label `muvon-deployer-rpc-v1`). Token wire'a düz yazılmaz — central
   ve agent aynı anahtardan aynı token'ı hesaplar. Anahtar yoksa
   endpoint 503 döner ve listener kalkmaz.
 
+  Network topolojisi **provider-agnostik**: central ↔ agent arası
+  herhangi bir iç ağ üzerinden çalışır — provider private network
+  (Hetzner Cloud, AWS VPC, GCP VPC, vs), VPN mesh (Tailscale,
+  Wireguard), bare-metal LAN. Public IP'den dial edilecekse
+  provider firewall'unda yalnız merkez IP'sine 9100/tcp izni gerekir
+  (token doğrulama zaten devrede, firewall defansif derinlik).
+
   Operatör adımları:
-  - **Agent**: `install-agent.sh ... --deployer-tcp-bind 10.0.0.3:9100`
-    (kurulum veya update). Update'te `_env_upsert` ile sadece bu satır
-    güncellenir. Çıplak `9100` verirsen 0.0.0.0'a bind eder — public
-    IP'de firewall'la merkeze izin ver.
+  - **Agent**: `install-agent.sh ... --deployer-tcp-bind <bind>`
+    (kurulum veya update). `<bind>` örnekleri: `<private-ip>:9100`
+    (iç ağ önerilen), `0.0.0.0:9100` (tüm interface, firewall'la
+    sıkıştırılmış olmak şartıyla), boş (live tail kapalı).
   - **Central**: UI → Agents → ilgili agent → "Deployer addr (canlı
-    container log için)" alanına `10.0.0.3:9100` yaz, Kaydet.
+    container log için)" alanına `<host>:<port>` yaz, Kaydet.
   - **Mapping otomatik**: agent her config pull'da `X-Muvon-Host-Id`
     header'ı ile self-reports; central `agents.host_id` kolonuna
     persist eder. Operatör host_id elle eşleme yapmaz.

@@ -12,13 +12,19 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      # Deployer gRPC TCP for live container-log tail from central.
-      # AGENT_DEPLOYER_TCP_BIND should be "<private-ip>:9100" so only
-      # the operator's private network can reach it. Empty/unset →
-      # docker binds 0.0.0.0:9100 (don't do that on a public IP unless
-      # you also firewall the port). install-agent.sh sets the variable
-      # when the operator runs with --deployer-tcp-bind or the embedded
-      # deployer is enabled with a discoverable private IP.
+      # Deployer gRPC TCP — central'ın canlı container log tail için
+      # dial edeceği port. AGENT_DEPLOYER_TCP_BIND iki şekil alır:
+      #
+      #   "<host>:9100"   — host-side bind tek interface'e. Önerilen:
+      #                     bir iç ağ adresi (provider private network,
+      #                     VPC subnet, VPN mesh interface — Tailscale,
+      #                     Wireguard, vs). Public yüzey sıfır.
+      #   "9100"          — tüm interface'lere (0.0.0.0:9100). Public
+      #                     IP'si olan host'ta provider firewall'unda
+      #                     yalnız merkez'in IP'sine 9100/tcp izin ver.
+      #
+      # Token doğrulaması (HKDF-türetilmiş bearer) zaten zorunlu,
+      # firewall sıkmasına gerek yok ama defansif derinlik tavsiye.
       - "${AGENT_DEPLOYER_TCP_BIND:-9100}:9100"
     environment:
       AGENT_CENTRAL_URL: ${AGENT_CENTRAL_URL:?required}
