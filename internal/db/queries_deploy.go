@@ -752,7 +752,16 @@ func (d *DB) EnqueueDeployment(ctx context.Context, in EnqueueDeploymentInput) (
 			`INSERT INTO deploy_release_components (release_uuid, component_id, image_ref, image_digest, status)
 			 VALUES ($1, $2, $3, $4, 'pending')
 			 ON CONFLICT (release_uuid, component_id) DO UPDATE
-			 SET image_ref = EXCLUDED.image_ref, image_digest = EXCLUDED.image_digest, updated_at = now()`,
+			 SET image_ref = EXCLUDED.image_ref,
+			     image_digest = EXCLUDED.image_digest,
+			     -- Reset on rerun: PromoteDeployInstances flips this to
+			     -- 'succeeded' after a successful deploy. LoadDeployment
+			     -- Plan filters WHERE status='pending', so without this
+			     -- reset a rerun loads zero components and falls straight
+			     -- through to Promote with an empty candidate list ("no
+			     -- candidate instances" 500).
+			     status = 'pending',
+			     updated_at = now()`,
 			releaseUUID, componentID, component.ImageRef, component.ImageDigest,
 		); err != nil {
 			return Deployment{}, false, fmt.Errorf("enqueue deployment release component: %w", err)
