@@ -153,12 +153,24 @@ func (m *Manager) Run(ctx context.Context) {
 		slog.Warn("logship: initial enumeration failed", "error", err)
 	}
 
-	// 3. Subscribe to events with backoff. Each subscription runs
+	// 3. Reconcile finished_at for any container Docker knows is
+	// exited but our dimension may still think is alive — covers the
+	// gap when the previous logship died before its container's Die
+	// event reached dialog (the typical agent.self_upgrade scenario,
+	// where the helper kills the old agent while it's still shipping).
+	// Docker is authoritative; we ship one dimension marker per exited
+	// container using its real State.FinishedAt. Idempotent: re-running
+	// just re-writes the same finished_at.
+	if err := m.reconcileFinished(ctx); err != nil {
+		slog.Warn("logship: finished_at reconcile failed", "error", err)
+	}
+
+	// 4. Subscribe to events with backoff. Each subscription runs
 	// until the docker daemon disconnects; outer loop restarts on
 	// disconnect.
 	go m.runEventsLoop(ctx)
 
-	// 4. Periodic spool replay — handles the case where dialog-siem
+	// 5. Periodic spool replay — handles the case where dialog-siem
 	// is down for a while; we keep accumulating in spool and try
 	// to flush it every few seconds.
 	go m.runReplayLoop(ctx)
@@ -190,6 +202,62 @@ func (m *Manager) attachExisting(ctx context.Context) error {
 			continue
 		}
 		m.startTail(ctx, c.ID, summaryToMeta(c, m.hostID))
+	}
+	return nil
+}
+
+// reconcileFinished ships a dimension-only marker (no log lines) for
+// every container Docker reports as non-running. Dialog upserts the
+// dimension row with finished_at from Docker's authoritative
+// State.FinishedAt, fixing rows that were stuck NULL because the
+// previous logship missed the Die event (agent restart / upgrade gap).
+//
+// Cost: one Inspect + one tiny SendContainerLogBatch per exited
+// container. Bounded by the number of exited containers Docker still
+// retains on the host (auto-removed helpers + drained release
+// containers — typically dozens, not thousands).
+//
+// Called once at startup, NOT on every events-stream reconnect (the
+// gap-recovery scenario only happens across process boundaries).
+func (m *Manager) reconcileFinished(ctx context.Context) error {
+	containers, err := m.docker.ContainerListAll(ctx, m.managedOnly)
+	if err != nil {
+		return err
+	}
+	shipped := 0
+	for _, c := range containers {
+		if c.State == "running" {
+			continue
+		}
+		insp, err := m.docker.ContainerInspect(ctx, c.ID)
+		if err != nil {
+			slog.Debug("logship: reconcile inspect failed", "id", shortID(c.ID), "error", err)
+			continue
+		}
+		// Docker reports zero time when the container has never started
+		// (e.g. created but never run). Skip those — they have no
+		// meaningful finished_at and dialog has no log rows for them.
+		if insp.FinishedAt.IsZero() {
+			continue
+		}
+		meta := inspectToMeta(insp, m.hostID)
+		finished := insp.FinishedAt
+		batch := &pb.ContainerLogBatch{Meta: metaToProto(meta, &finished, 0)}
+		sendCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err = m.sink.SendContainerLogBatch(sendCtx, batch)
+		cancel()
+		if err != nil {
+			// Spool so the next replay catches it. Marker is the same
+			// shape stopTail spools on its error path.
+			_ = m.spool.Append(meta.ContainerID, []SpooledEntry{
+				dimensionMarker(meta, &finished),
+			})
+			continue
+		}
+		shipped++
+	}
+	if shipped > 0 {
+		slog.Info("logship: reconciled finished_at for exited containers", "count", shipped)
 	}
 	return nil
 }
