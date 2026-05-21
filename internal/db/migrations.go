@@ -1060,4 +1060,13 @@ CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_recent
 		      ADD COLUMN IF NOT EXISTS deployer_addr TEXT NOT NULL DEFAULT '';
 		      CREATE INDEX IF NOT EXISTS agents_host_id_idx ON agents(host_id) WHERE host_id <> '';`,
 	},
+	// Opt-in path/query preservation for redirect routes. Default
+	// false keeps existing routes literal (target URL is sent as-is to
+	// http.Redirect, callers landing on it ignore their original path).
+	// Opt-in true appends r.URL.Path + raw query to the target — the
+	// common www → apex case where `/foo?x=1` must survive the bounce.
+	{
+		name: "add_routes_redirect_preserve_path", product: "muvon",
+		sql: `ALTER TABLE routes ADD COLUMN IF NOT EXISTS redirect_preserve_path BOOLEAN NOT NULL DEFAULT false;`,
+	},
 }

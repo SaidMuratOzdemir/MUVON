@@ -283,7 +283,17 @@ func (h *Handler) serveRedirect(w http.ResponseWriter, r *http.Request, route *c
 		http.Error(w, "no redirect URL", http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, *route.Route.RedirectURL, http.StatusMovedPermanently)
+	target := *route.Route.RedirectURL
+	// Opt-in path/query preservation. Strip a trailing slash from the
+	// configured target so we don't produce //foo when the operator
+	// writes "https://apex/" and the request hits "/foo".
+	if route.Route.RedirectPreservePath {
+		target = strings.TrimRight(target, "/") + r.URL.Path
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+	}
+	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
 func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request, route *config.RouteRule) {

@@ -27,6 +27,24 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.32] - 2026-05-21
+
+### FEATURES
+
+- **Redirect route'larında opt-in path/query preservation**: `route_type='redirect'`
+  satırlarına yeni boolean alan `redirect_preserve_path` (default `false`).
+  Açıkken proxy, gelen request'in `r.URL.Path` ve raw query string'ini
+  `redirect_url`'in sonuna ekleyip 301 atar; `redirect_url`'in trailing
+  slash'ı trim'lenir ki `//foo` üretilmesin. Klasik www → apex use case
+  artık `www.x.com/foo?q=1` → `https://x.com/foo?q=1` şeklinde path/query'i
+  koruyor. Default `false` mevcut literal-redirect davranışını bozmadan
+  bırakır.
+
+  Migration `add_routes_redirect_preserve_path`: tek `BOOLEAN NOT NULL
+  DEFAULT false` kolonu, forward-only.
+
+---
+
 ## [0.1.31] - 2026-05-16
 
 ### BUGFIXES
