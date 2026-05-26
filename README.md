@@ -249,8 +249,8 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 
 | Schema | Service | Tables |
 |--------|---------|--------|
-| `muvon` | MUVON | hosts (`tls_mode`), routes, settings, tls_certificates, admin_users, admin_refresh_tokens, admin_audit_log, agents (`api_key_hash`), deploy_projects, deploy_components (`agent_id`, `paused`, `env`, `env_secret_keys`), deploy_releases, deploy_release_components, deploy_instances, deployments (`agent_id`), deployment_events |
-| `dialog` | diaLOG | http_logs (Hypertable), http_log_bodies (Hypertable), log_notes, alerts, container_logs (Hypertable), containers |
+| `muvon` | MUVON | hosts (`tls_mode`, `rum_enabled`), routes, settings, tls_certificates, admin_users, admin_refresh_tokens, admin_audit_log, agents (`api_key_hash`), deploy_projects, deploy_components (`agent_id`, `paused`, `env`, `env_secret_keys`), deploy_releases, deploy_release_components, deploy_instances, deployments (`agent_id`), deployment_events |
+| `dialog` | diaLOG | http_logs (Hypertable, `trace_id`), http_log_bodies (Hypertable), log_notes, alerts, container_logs (Hypertable), containers, client_events (Hypertable) |
 
 ---
 
@@ -308,6 +308,8 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Correlation Engine | path_scan, auth_brute, error_spike, traffic_anomaly, sensitive_access, data_export_burst |
 | Alerting | Slack webhook + SMTP, per-fingerprint cooldown |
 | Container Logs | stdout/stderr capture from managed containers, dimension table for picker |
+| Client Events (RUM) | Browser telemetry ingested at `/__muvon/rum`: page views, JS errors, web vitals, fetch failures, form/DOM signals — joined to http_logs by `trace_id` |
+| Trace Context | W3C `traceparent` honoured/generated per request; reflected to the browser via `Server-Timing` so client events correlate with proxy + container logs on one id |
 
 ### Admin Panel
 
@@ -320,6 +322,7 @@ React 19 + Vite 8 + shadcn/ui. Bundled into the `muvon` binary via `//go:embed`.
 | Logs | `/logs` | Search, filter, view, star, note, live-tail |
 | Alerts | `/alerts` | Correlation engine output, ack/dismiss |
 | Containers | `/containers` | Live tail + history (managed and agent containers) |
+| Client Events | `/client-events` | Browser RUM telemetry; filter by trace/session/app/event, click `trace_id` to pivot to the matching http_logs |
 | Uygulamalar | `/apps` | Central-hosted apps (services on the MUVON server); wizard, env editor, CI/CD snippets, rollback, pause |
 | Uzak Uygulamalar | `/apps/edge` | Same UI filtered to apps whose services run on an agent host |
 | Agents | `/agents` | API key management for hub-and-spoke setups (plaintext key revealed once on create) |
@@ -506,6 +509,18 @@ ui/
 | `PUT` | `/api/logs/:id/note` | Add/update note |
 | `POST` | `/api/logs/:id/star` | Toggle star |
 | `GET` | `/api/logs/:id/jwt` | Reveal raw JWT (audit-logged) |
+
+### Client Events / RUM
+
+Edge endpoints under the reserved `/__muvon/` namespace, served on each
+proxied host when `hosts.rum_enabled` is on (no JWT — public, fail-open).
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `POST` | `/__muvon/rum` | Ingest a browser event batch; always `204` (drops on parse error / full pipeline) |
+| `GET` | `/__muvon/rum/config` | Sampling config served to clients (`sample_rates`, `max_batch_bytes`) |
+| `GET` | `/__muvon/rum.js` | The embedded browser client lib (ETag-cached) |
+| `GET` | `/api/client-events` | Admin search (filter by `trace_id`/`session_id`/`app`/`event_name`, cursor) — proxied to diaLOG |
 
 ### Alerts
 

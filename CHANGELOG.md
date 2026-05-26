@@ -27,6 +27,63 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.33] - 2026-05-26
+
+### FEATURES
+
+- **W3C Trace Context ile cross-tier correlation**: Proxy artık her istek
+  için ürettiği UUIDv7'nin 128 bitini lowercase hex `trace-id` olarak da
+  kullanıyor — `X-Request-ID` aynı id'nin insan-okur tireli alias'ı (iki
+  rakip id yok). Geçerli inbound `traceparent` **yalnız `TrustedProxies`'ten
+  gelince** sürdürülür (public edge'de istemci kendi trace-id'sini dayatamaz),
+  aksi halde taze üretilir; her hop için yeni `span-id`. Upstream'e
+  `traceparent` enjekte edilir; tarayıcıya `Server-Timing: traceparent;desc=
+  "00-<trace>-<span>-01"` yansıtılır (CORS'lu route'larda
+  `Access-Control-Expose-Headers: Server-Timing` + `Timing-Allow-Origin`).
+  `http_logs`'a `trace_id`/`span_id` kolonları eklendi — üç kanalın (http /
+  container / client) ortak join anahtarı.
+
+  Migration `add_http_logs_trace_id`: nullable iki kolon + partial index,
+  forward-only.
+
+- **Channel 3 — client-side telemetry (RUM) ingest**: Per-host opt-in
+  (`hosts.rum_enabled`) reserved `POST /__muvon/rum` endpoint'i tarayıcı
+  event'lerini (page_view, js_error, unhandled_rejection, resource_error,
+  fetch, web_vital, route_change, visibility, pagehide, dom_error) toplar.
+  Edge enrich: server-receive zamanı + trusted-proxy-aware client IP + host;
+  GeoIP merkezi (SIEM) tarafında (agent'lar GeoLite taşımaz). Fail-open: pipe
+  doluysa/yoksa **her zaman 204 + drop**, trafik etkilenmez. Yeni
+  `client_events` TimescaleDB hypertable (`trace_id` + `session_id` join
+  anahtarları), container_logs desenini aynalayan ayrı ince pipeline
+  (`SendClientEventBatch` gRPC, drop-on-overflow). Admin panelde **Client
+  Events** sayfası + `trace_id` ile http_logs'a join; Hosts düzenlemede RUM
+  toggle. Sampling oranı + batch boyutu admin-tunable (`rum_sample_rate`,
+  `rum_max_batch_bytes`), `GET /__muvon/rum/config`'ten servis edilir ve
+  agent'lara push'lanır.
+
+  Migration'lar `create_client_events_hypertable`,
+  `add_client_events_compression_retention` (dialog), `add_hosts_rum_enabled`,
+  `seed_rum_settings` (muvon) — hepsi forward-only.
+
+- **Tarayıcı telemetri client lib (`clientlib`)**: ~6 KB zero-dependency
+  native TS, edge `GET /__muvon/rum.js`'te servis eder (per-host opt-in,
+  ETag-cache, binary'ye `go:embed`). Müşteri tek satır ekler:
+  `<script src="/__muvon/rum.js" async></script>`. Otomatik enstrümantasyon:
+  fetch/XHR patch (+ Server-Timing'den `trace_id` okuma), `window.onerror` /
+  `unhandledrejection`, web-vitals (LCP/CLS/INP/FCP/TTFB), History API route
+  değişimi, `sendBeacon` ile pagehide/visibilitychange flush, `[data-mv-error]`
+  / `[data-mv-track]` DOM kancaları. Tüm enstrümantasyon hata-yutar — telemetri
+  host sayfayı asla kıramaz. `make clientlib` bundle'ı yeniden üretir; çıktı
+  (`.pb.go` gibi) repoda commit'li, böylece Node'suz `go build` çalışır.
+
+### ENHANCEMENTS
+
+- **Tekrarlanabilir protobuf codegen**: `make proto` hedefi pinlenmiş plugin
+  sürümleriyle (`protoc-gen-go v1.36.11`, `protoc-gen-go-grpc v1.6.1`)
+  `proto/`'yu yeniden üretir; sessiz versiyon drift'ini önler.
+
+---
+
 ## [0.1.32] - 2026-05-21
 
 ### FEATURES
