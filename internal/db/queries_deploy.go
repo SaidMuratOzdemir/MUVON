@@ -85,9 +85,32 @@ type DeployComponent struct {
 	// on the host. After every successful promote, image refs older than
 	// the last N succeeded releases (and not still referenced by a live
 	// instance) are removed from the local Docker daemon. Default 3.
-	KeepReleases int       `json:"keep_releases"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	KeepReleases int `json:"keep_releases"`
+	// Command overrides the image's default CMD for the long-running
+	// container — lets one image run as web / celery worker / beat. Empty
+	// = image default (mirrors MigrationCommand for the one-off step).
+	Command []string `json:"command"`
+	// HealthMode decides how a candidate is judged healthy before promote:
+	//   "http"    — GET HealthPath on InternalPort, expect HealthExpectedStatus (default).
+	//   "exec"    — run HealthCommand inside the container; exit 0 = healthy.
+	//   "running" — container stays up without exiting/crash-looping.
+	// Workers with no HTTP surface use exec (e.g. celery inspect ping) or
+	// running (beat).
+	HealthMode    string   `json:"health_mode"`
+	HealthCommand []string `json:"health_command"`
+	// DeployStrategy controls the rollout:
+	//   "blue_green" — candidate reaches healthy before the old instance
+	//                  drains (zero-downtime, default).
+	//   "recreate"   — stop the old instance before starting the candidate
+	//                  (brief downtime, but never two at once — required for
+	//                  singletons like celery-beat).
+	DeployStrategy string `json:"deploy_strategy"`
+	// DeployOrder sequences rollout within a deployment, ascending. Put the
+	// migration-carrying component (e.g. web) before workers so they never
+	// start against an un-migrated schema. Default 0.
+	DeployOrder int       `json:"deploy_order"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type DeployProjectSummary struct {
@@ -239,7 +262,9 @@ const deployComponentSelectCols = `c.id, c.project_id, p.slug, c.slug, c.name, c
 	c.internal_port, c.health_path, c.health_expected_status, c.migration_command,
 	c.restart_retries, c.drain_timeout_seconds, c.long_drain_timeout_seconds, c.networks,
 	c.env_file_path, c.env, c.mounts, c.is_routable, c.env_secret_keys,
-	COALESCE(c.agent_id, ''), c.paused, c.keep_releases, c.created_at, c.updated_at`
+	COALESCE(c.agent_id, ''), c.paused, c.keep_releases,
+	c.command, c.health_mode, c.health_command, c.deploy_strategy, c.deploy_order,
+	c.created_at, c.updated_at`
 
 func scanDeployComponent(scan func(...any) error) (DeployComponent, error) {
 	var c DeployComponent
@@ -249,7 +274,9 @@ func scanDeployComponent(scan func(...any) error) (DeployComponent, error) {
 		&c.InternalPort, &c.HealthPath, &c.HealthExpectedStatus, &c.MigrationCommand,
 		&c.RestartRetries, &c.DrainTimeoutSeconds, &c.LongDrainTimeoutSeconds, &c.Networks,
 		&c.EnvFilePath, &envRaw, &mountsRaw, &c.IsRoutable, &c.EnvSecretKeys,
-		&c.AgentID, &c.Paused, &c.KeepReleases, &c.CreatedAt, &c.UpdatedAt,
+		&c.AgentID, &c.Paused, &c.KeepReleases,
+		&c.Command, &c.HealthMode, &c.HealthCommand, &c.DeployStrategy, &c.DeployOrder,
+		&c.CreatedAt, &c.UpdatedAt,
 	)
 	if err != nil {
 		return c, err
@@ -410,6 +437,39 @@ type DeployComponentInput struct {
 	AgentID      string
 	Paused       bool
 	KeepReleases int
+
+	Command        []string
+	HealthMode     string
+	HealthCommand  []string
+	DeployStrategy string
+	DeployOrder    int
+}
+
+// normalizeComponentDefaults fills NOT NULL array columns from nil slices and
+// applies enum defaults, so create/update never write NULL or an invalid mode
+// regardless of what the caller left unset.
+func normalizeComponentDefaults(in *DeployComponentInput) {
+	if in.MigrationCommand == nil {
+		in.MigrationCommand = []string{}
+	}
+	if in.Networks == nil {
+		in.Networks = []string{}
+	}
+	if in.EnvSecretKeys == nil {
+		in.EnvSecretKeys = []string{}
+	}
+	if in.Command == nil {
+		in.Command = []string{}
+	}
+	if in.HealthCommand == nil {
+		in.HealthCommand = []string{}
+	}
+	if in.HealthMode == "" {
+		in.HealthMode = "http"
+	}
+	if in.DeployStrategy == "" {
+		in.DeployStrategy = "blue_green"
+	}
 }
 
 func (d *DB) GetDeployComponent(ctx context.Context, projectSlug, componentSlug string) (DeployComponent, error) {
@@ -442,6 +502,7 @@ func (d *DB) CreateDeployComponent(ctx context.Context, in DeployComponentInput)
 	if in.EnvSecretKeys == nil {
 		in.EnvSecretKeys = []string{}
 	}
+	normalizeComponentDefaults(&in)
 	// Empty agent_id → store NULL so the FK lookup short-circuits.
 	var agentID any
 	if in.AgentID != "" {
@@ -454,21 +515,27 @@ func (d *DB) CreateDeployComponent(ctx context.Context, in DeployComponentInput)
 		        health_path, health_expected_status, migration_command,
 		        restart_retries, drain_timeout_seconds, long_drain_timeout_seconds,
 		        networks, env_file_path, env, mounts, is_routable, env_secret_keys,
-		        agent_id, paused, keep_releases
+		        agent_id, paused, keep_releases,
+		        command, health_mode, health_command, deploy_strategy, deploy_order
 		    ) VALUES (
-		        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+		        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+		        $22, $23, $24, $25, $26
 		    )
 		    RETURNING id, project_id, slug, name, source_repo, image_repo, internal_port,
 		              health_path, health_expected_status, migration_command,
 		              restart_retries, drain_timeout_seconds, long_drain_timeout_seconds,
 		              networks, env_file_path, env, mounts, is_routable, env_secret_keys,
-		              COALESCE(agent_id, '') AS agent_id, paused, keep_releases, created_at, updated_at
+		              COALESCE(agent_id, '') AS agent_id, paused, keep_releases,
+		              command, health_mode, health_command, deploy_strategy, deploy_order,
+		              created_at, updated_at
 		 )
 		 SELECT ins.id, ins.project_id, p.slug, ins.slug, ins.name, ins.source_repo, ins.image_repo,
 		        ins.internal_port, ins.health_path, ins.health_expected_status, ins.migration_command,
 		        ins.restart_retries, ins.drain_timeout_seconds, ins.long_drain_timeout_seconds,
 		        ins.networks, ins.env_file_path, ins.env, ins.mounts, ins.is_routable,
-		        ins.env_secret_keys, ins.agent_id, ins.paused, ins.keep_releases, ins.created_at, ins.updated_at
+		        ins.env_secret_keys, ins.agent_id, ins.paused, ins.keep_releases,
+		        ins.command, ins.health_mode, ins.health_command, ins.deploy_strategy, ins.deploy_order,
+		        ins.created_at, ins.updated_at
 		 FROM ins
 		 JOIN deploy_projects p ON p.id = ins.project_id`,
 		in.ProjectID, in.Slug, in.Name, in.SourceRepo, in.ImageRepo, in.InternalPort,
@@ -476,6 +543,7 @@ func (d *DB) CreateDeployComponent(ctx context.Context, in DeployComponentInput)
 		in.RestartRetries, in.DrainTimeoutSeconds, in.LongDrainTimeoutSeconds,
 		in.Networks, in.EnvFilePath, envJSON, mountsJSON, in.IsRoutable, in.EnvSecretKeys,
 		agentID, in.Paused, in.KeepReleases,
+		in.Command, in.HealthMode, in.HealthCommand, in.DeployStrategy, in.DeployOrder,
 	).Scan)
 	if err != nil {
 		return c, fmt.Errorf("create deploy component: %w", err)
@@ -492,15 +560,7 @@ func (d *DB) UpdateDeployComponent(ctx context.Context, projectSlug, componentSl
 	if err != nil {
 		return DeployComponent{}, fmt.Errorf("update deploy component mounts marshal: %w", err)
 	}
-	if in.MigrationCommand == nil {
-		in.MigrationCommand = []string{}
-	}
-	if in.Networks == nil {
-		in.Networks = []string{}
-	}
-	if in.EnvSecretKeys == nil {
-		in.EnvSecretKeys = []string{}
-	}
+	normalizeComponentDefaults(&in)
 	// Update never reassigns agent_id — switching hosts while containers
 	// are running would orphan instances on the old side. Operators must
 	// delete + recreate the component to move it. Paused is updatable.
@@ -525,6 +585,11 @@ func (d *DB) UpdateDeployComponent(ctx context.Context, projectSlug, componentSl
 		        env_secret_keys = $18,
 		        paused = $19,
 		        keep_releases = $20,
+		        command = $21,
+		        health_mode = $22,
+		        health_command = $23,
+		        deploy_strategy = $24,
+		        deploy_order = $25,
 		        updated_at = now()
 		    FROM deploy_projects p
 		    WHERE c.project_id = p.id AND p.slug = $1 AND c.slug = $2
@@ -532,13 +597,17 @@ func (d *DB) UpdateDeployComponent(ctx context.Context, projectSlug, componentSl
 		              c.health_path, c.health_expected_status, c.migration_command,
 		              c.restart_retries, c.drain_timeout_seconds, c.long_drain_timeout_seconds,
 		              c.networks, c.env_file_path, c.env, c.mounts, c.is_routable, c.env_secret_keys,
-		              COALESCE(c.agent_id, '') AS agent_id, c.paused, c.keep_releases, c.created_at, c.updated_at
+		              COALESCE(c.agent_id, '') AS agent_id, c.paused, c.keep_releases,
+		              c.command, c.health_mode, c.health_command, c.deploy_strategy, c.deploy_order,
+		              c.created_at, c.updated_at
 		 )
 		 SELECT upd.id, upd.project_id, p.slug, upd.slug, upd.name, upd.source_repo, upd.image_repo,
 		        upd.internal_port, upd.health_path, upd.health_expected_status, upd.migration_command,
 		        upd.restart_retries, upd.drain_timeout_seconds, upd.long_drain_timeout_seconds,
 		        upd.networks, upd.env_file_path, upd.env, upd.mounts, upd.is_routable,
-		        upd.env_secret_keys, upd.agent_id, upd.paused, upd.keep_releases, upd.created_at, upd.updated_at
+		        upd.env_secret_keys, upd.agent_id, upd.paused, upd.keep_releases,
+		        upd.command, upd.health_mode, upd.health_command, upd.deploy_strategy, upd.deploy_order,
+		        upd.created_at, upd.updated_at
 		 FROM upd
 		 JOIN deploy_projects p ON p.id = upd.project_id`,
 		projectSlug, componentSlug, in.Name, in.SourceRepo, in.ImageRepo, in.InternalPort,
@@ -546,6 +615,7 @@ func (d *DB) UpdateDeployComponent(ctx context.Context, projectSlug, componentSl
 		in.RestartRetries, in.DrainTimeoutSeconds, in.LongDrainTimeoutSeconds,
 		in.Networks, in.EnvFilePath, envJSON, mountsJSON, in.IsRoutable, in.EnvSecretKeys,
 		in.Paused, in.KeepReleases,
+		in.Command, in.HealthMode, in.HealthCommand, in.DeployStrategy, in.DeployOrder,
 	).Scan)
 	if err != nil {
 		return c, fmt.Errorf("update deploy component: %w", err)
@@ -904,7 +974,10 @@ func (d *DB) LoadDeploymentPlan(ctx context.Context, deploymentID string) (Deplo
 			&item.Component.RestartRetries, &item.Component.DrainTimeoutSeconds, &item.Component.LongDrainTimeoutSeconds,
 			&item.Component.Networks, &item.Component.EnvFilePath, &envRaw, &mountsRaw, &item.Component.IsRoutable,
 			&item.Component.EnvSecretKeys, &item.Component.AgentID, &item.Component.Paused,
-			&item.Component.KeepReleases, &item.Component.CreatedAt, &item.Component.UpdatedAt,
+			&item.Component.KeepReleases,
+			&item.Component.Command, &item.Component.HealthMode, &item.Component.HealthCommand,
+			&item.Component.DeployStrategy, &item.Component.DeployOrder,
+			&item.Component.CreatedAt, &item.Component.UpdatedAt,
 			&item.Release.ReleaseUUID, &item.Release.ComponentID, &item.Release.Slug, &item.Release.ImageRef,
 			&item.Release.ImageDigest, &item.Release.Status, &item.Release.CreatedAt, &item.Release.UpdatedAt,
 		); err != nil {

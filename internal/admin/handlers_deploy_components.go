@@ -137,6 +137,14 @@ type componentRequest struct {
 	// images on the host (default 3 from the SQL DEFAULT). Min 1, max 50
 	// — beyond that the disk savings invert and inspection gets painful.
 	KeepReleases *int `json:"keep_releases"`
+	// Worker support. Command overrides the image CMD; HealthMode is
+	// http|exec|running; HealthCommand is the probe for exec mode;
+	// DeployStrategy is blue_green|recreate; DeployOrder sequences rollout.
+	Command        *[]string `json:"command"`
+	HealthMode     *string   `json:"health_mode"`
+	HealthCommand  *[]string `json:"health_command"`
+	DeployStrategy *string   `json:"deploy_strategy"`
+	DeployOrder    *int      `json:"deploy_order"`
 }
 
 func validateComponentForCreate(req componentRequest) error {
@@ -154,6 +162,30 @@ func validateComponentForCreate(req componentRequest) error {
 	}
 	if req.KeepReleases != nil && (*req.KeepReleases < 1 || *req.KeepReleases > 50) {
 		return errors.New("keep_releases must be between 1 and 50")
+	}
+	return validateComponentEnums(req)
+}
+
+// validateComponentEnums guards the worker-deploy enum/shape fields. Shared by
+// create and update so an invalid mode can't slip in via either path.
+func validateComponentEnums(req componentRequest) error {
+	if req.HealthMode != nil {
+		mode := strings.TrimSpace(*req.HealthMode)
+		switch mode {
+		case "", "http", "exec", "running":
+		default:
+			return errors.New("health_mode must be http, exec, or running")
+		}
+		if mode == "exec" && (req.HealthCommand == nil || len(*req.HealthCommand) == 0) {
+			return errors.New("health_command is required when health_mode is exec")
+		}
+	}
+	if req.DeployStrategy != nil {
+		switch strings.TrimSpace(*req.DeployStrategy) {
+		case "", "blue_green", "recreate":
+		default:
+			return errors.New("deploy_strategy must be blue_green or recreate")
+		}
 	}
 	return nil
 }
@@ -185,6 +217,11 @@ func buildComponentInput(req componentRequest, base db.DeployComponent, projectI
 		AgentID:                 base.AgentID,
 		Paused:                  base.Paused,
 		KeepReleases:            base.KeepReleases,
+		Command:                 base.Command,
+		HealthMode:              base.HealthMode,
+		HealthCommand:           base.HealthCommand,
+		DeployStrategy:          base.DeployStrategy,
+		DeployOrder:             base.DeployOrder,
 	}
 	if req.Name != nil {
 		in.Name = strings.TrimSpace(*req.Name)
@@ -237,6 +274,21 @@ func buildComponentInput(req componentRequest, base db.DeployComponent, projectI
 	if req.KeepReleases != nil {
 		in.KeepReleases = *req.KeepReleases
 	}
+	if req.Command != nil {
+		in.Command = *req.Command
+	}
+	if req.HealthMode != nil {
+		in.HealthMode = strings.TrimSpace(*req.HealthMode)
+	}
+	if req.HealthCommand != nil {
+		in.HealthCommand = *req.HealthCommand
+	}
+	if req.DeployStrategy != nil {
+		in.DeployStrategy = strings.TrimSpace(*req.DeployStrategy)
+	}
+	if req.DeployOrder != nil {
+		in.DeployOrder = *req.DeployOrder
+	}
 	return in
 }
 
@@ -257,6 +309,11 @@ func componentDefaults() db.DeployComponent {
 		Mounts:                  []db.Mount{},
 		IsRoutable:              true,
 		KeepReleases:            3,
+		Command:                 []string{},
+		HealthMode:              "http",
+		HealthCommand:           []string{},
+		DeployStrategy:          "blue_green",
+		DeployOrder:             0,
 	}
 }
 
@@ -403,6 +460,10 @@ func (s *Server) handleUpdateDeployComponent(w http.ResponseWriter, r *http.Requ
 	var req componentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if err := validateComponentEnums(req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 	// Update never reassigns the slug — path is the source of truth.

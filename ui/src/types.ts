@@ -333,6 +333,14 @@ export interface DeployComponent {
   // each successful promote the deployer drops everything older that isn't
   // still bound to a live instance. Default 3.
   keep_releases: number;
+  // Worker support: command overrides the image CMD; health_mode is
+  // http|exec|running; health_command is the exec probe; deploy_strategy is
+  // blue_green|recreate; deploy_order sequences rollout (ascending).
+  command: string[];
+  health_mode: string;
+  health_command: string[];
+  deploy_strategy: string;
+  deploy_order: number;
   created_at: string;
   updated_at: string;
 }

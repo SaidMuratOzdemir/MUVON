@@ -1150,4 +1150,20 @@ SELECT add_retention_policy('client_events', INTERVAL '30 days', if_not_exists =
 			('rum_max_batch_bytes', '65536')
 		ON CONFLICT (key) DO NOTHING;`,
 	},
+	// Worker-process support for managed deploy. command overrides the
+	// image CMD (one image as web / celery / beat); health_mode picks how a
+	// candidate is judged healthy (http GET | exec exit-0 | running); when
+	// 'exec', health_command is run inside the container. deploy_strategy
+	// 'recreate' stops the old instance before the candidate (singletons
+	// like celery-beat). deploy_order sequences rollout (migration-carrying
+	// component first). All defaults reproduce today's behaviour exactly.
+	{
+		name: "add_deploy_components_worker_fields", product: "muvon",
+		sql: `ALTER TABLE deploy_components
+		      ADD COLUMN IF NOT EXISTS command         TEXT[]  NOT NULL DEFAULT '{}',
+		      ADD COLUMN IF NOT EXISTS health_mode     TEXT    NOT NULL DEFAULT 'http',
+		      ADD COLUMN IF NOT EXISTS health_command  TEXT[]  NOT NULL DEFAULT '{}',
+		      ADD COLUMN IF NOT EXISTS deploy_strategy TEXT    NOT NULL DEFAULT 'blue_green',
+		      ADD COLUMN IF NOT EXISTS deploy_order    INTEGER NOT NULL DEFAULT 0;`,
+	},
 }

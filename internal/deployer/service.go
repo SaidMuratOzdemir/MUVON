@@ -116,6 +116,12 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 	if err != nil {
 		return err
 	}
+	// Roll components out in deploy_order (ascending) so the migration-
+	// carrying component (e.g. web) completes before workers start against a
+	// possibly un-migrated schema. Stable: equal orders keep input sequence.
+	sort.SliceStable(plan.Components, func(i, j int) bool {
+		return plan.Components[i].Component.DeployOrder < plan.Components[j].Component.DeployOrder
+	})
 	_ = s.state.AddEvent(ctx, deploymentID, "started", "Deployment started", nil)
 
 	candidates := make([]string, 0, len(plan.Components))
@@ -146,6 +152,16 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 			}
 		}
 
+		// Recreate strategy: stop the previous active container(s) for this
+		// component BEFORE the candidate starts, so a singleton (e.g.
+		// celery-beat) never runs two instances at once. Trades a brief gap
+		// for correctness; blue-green (default) keeps the zero-downtime overlap.
+		if component.DeployStrategy == "recreate" {
+			if err := s.stopOldForRecreate(ctx, deploymentID, plan, component); err != nil {
+				return fmt.Errorf("recreate stop-old %s: %w", component.Slug, err)
+			}
+		}
+
 		mounts, err := buildDockerMounts(component.Mounts)
 		if err != nil {
 			return fmt.Errorf("invalid mounts for %s: %w", component.Slug, err)
@@ -153,6 +169,7 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 		containerName := containerName(plan.Project.Slug, component.Slug, plan.Release.ReleaseID)
 		createReq := containerCreateRequest{
 			Image: imageRef,
+			Cmd:   component.Command,
 			Env:   envList(env),
 			Labels: map[string]string{
 				"muvon.project":    plan.Project.Slug,
@@ -293,7 +310,7 @@ func (s *Service) waitHealthyWithRestart(ctx context.Context, deploymentID strin
 				return fmt.Errorf("restart candidate %s: %w", component.Slug, err)
 			}
 		}
-		if err := s.waitHealthy(ctx, component, backendURL); err == nil {
+		if err := s.waitHealthy(ctx, component, containerID, backendURL); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -302,7 +319,21 @@ func (s *Service) waitHealthyWithRestart(ctx context.Context, deploymentID strin
 	return fmt.Errorf("candidate %s failed health after %d attempt(s): %w", component.Slug, attempts, lastErr)
 }
 
-func (s *Service) waitHealthy(ctx context.Context, component db.DeployComponent, backendURL string) error {
+// waitHealthy dispatches the candidate health check by HealthMode. The
+// default (and "http") preserves the original HTTP probe verbatim, so
+// existing components are unaffected.
+func (s *Service) waitHealthy(ctx context.Context, component db.DeployComponent, containerID, backendURL string) error {
+	switch component.HealthMode {
+	case "exec":
+		return s.waitHealthyExec(ctx, component, containerID)
+	case "running":
+		return s.waitHealthyRunning(ctx, component, containerID)
+	default: // "http" or "" — unchanged behaviour
+		return s.waitHealthyHTTP(ctx, component, backendURL)
+	}
+}
+
+func (s *Service) waitHealthyHTTP(ctx context.Context, component db.DeployComponent, backendURL string) error {
 	healthURL := strings.TrimRight(backendURL, "/") + normalizePath(component.HealthPath)
 	timeout := time.Duration(component.DrainTimeoutSeconds) * time.Second
 	if timeout <= 0 {
@@ -344,6 +375,126 @@ func (s *Service) waitHealthy(ctx context.Context, component db.DeployComponent,
 		lastErr = fmt.Errorf("health timed out")
 	}
 	return lastErr
+}
+
+// waitHealthyExec runs HealthCommand inside the candidate until it exits 0 or
+// the timeout elapses. For workers that can self-report (e.g. `celery -A
+// config inspect ping`) — proves the worker is functional, not just "up".
+func (s *Service) waitHealthyExec(ctx context.Context, component db.DeployComponent, containerID string) error {
+	if len(component.HealthCommand) == 0 {
+		return fmt.Errorf("health_mode=exec requires health_command")
+	}
+	timeout := time.Duration(component.DrainTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(3 * time.Second):
+	}
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		if _, err := s.docker.ContainerExecCapture(ctx, containerID, component.HealthCommand); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("exec health timed out")
+	}
+	return lastErr
+}
+
+// waitHealthyRunning treats the candidate as healthy once it has stayed in the
+// "running" state for a short grace window without exiting or its restart
+// count climbing (crash-loop). For workers with no probe surface (e.g.
+// celery-beat). Weaker than exec — prefer exec where the worker can answer.
+func (s *Service) waitHealthyRunning(ctx context.Context, component db.DeployComponent, containerID string) error {
+	const graceWindow = 8 * time.Second
+	timeout := time.Duration(component.DrainTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	if timeout < graceWindow+2*time.Second {
+		timeout = graceWindow + 2*time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	baseRestart := -1
+	var runningSince time.Time
+	var lastErr error
+	for time.Now().Before(deadline) {
+		st, err := s.docker.ContainerInspect(ctx, containerID)
+		if err != nil {
+			lastErr = err
+		} else {
+			switch st.State {
+			case "exited", "dead":
+				return fmt.Errorf("container exited (code %d) before becoming healthy", st.ExitCode)
+			case "running":
+				if baseRestart < 0 {
+					baseRestart = st.RestartCount
+				}
+				if st.RestartCount > baseRestart {
+					return fmt.Errorf("container crash-looping (restarts=%d)", st.RestartCount)
+				}
+				if runningSince.IsZero() {
+					runningSince = time.Now()
+				}
+				if time.Since(runningSince) >= graceWindow {
+					return nil
+				}
+			default: // created, restarting, paused — not yet stable
+				runningSince = time.Time{}
+				lastErr = fmt.Errorf("container state %q", st.State)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("container did not stay running for %s", graceWindow)
+	}
+	return lastErr
+}
+
+// stopOldForRecreate stops the previous active container(s) of a recreate
+// component before its candidate starts, so a singleton never overlaps. Finds
+// them by managed labels (same project+component, a different release) — no DB
+// mutation here; the normal Promote → cleanupDraining flow reconciles the rows
+// afterward (ContainerStop on an already-stopped container is a no-op). A stop
+// error fails the deploy: better to abort than start a second singleton on top
+// of a still-running old one.
+func (s *Service) stopOldForRecreate(ctx context.Context, deploymentID string, plan db.DeploymentPlan, component db.DeployComponent) error {
+	containers, err := s.docker.ContainerListAll(ctx, true)
+	if err != nil {
+		return err
+	}
+	for _, c := range containers {
+		if c.Labels["muvon.project"] != plan.Project.Slug ||
+			c.Labels["muvon.component"] != component.Slug ||
+			c.Labels["muvon.release_id"] == plan.Release.ReleaseID {
+			continue
+		}
+		if c.State == "exited" || c.State == "dead" {
+			continue // already down — cleanup/reconcile will remove it
+		}
+		_ = s.state.AddEvent(ctx, deploymentID, "recreate_stop", "Stopping previous instance before recreate", map[string]string{"component": component.Slug, "container": c.ID})
+		if err := s.docker.ContainerStop(ctx, c.ID, 10); err != nil {
+			return fmt.Errorf("stop old container %s: %w", c.ID, err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) cleanupDraining(ctx context.Context) error {

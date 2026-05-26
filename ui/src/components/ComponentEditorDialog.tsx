@@ -75,6 +75,14 @@ export function ComponentEditorDialog({
   const [restartRetries, setRestartRetries] = useState('1')
   const [drainTimeout, setDrainTimeout] = useState('30')
   const [longDrainTimeout, setLongDrainTimeout] = useState('300')
+  // Worker support: command (newline-per-arg) overrides the image CMD;
+  // healthMode http|exec|running; healthCommand the exec probe; deployStrategy
+  // blue_green|recreate; deployOrder sequences rollout.
+  const [command, setCommand] = useState('')
+  const [healthMode, setHealthMode] = useState('http')
+  const [healthCommand, setHealthCommand] = useState('')
+  const [deployStrategy, setDeployStrategy] = useState('blue_green')
+  const [deployOrder, setDeployOrder] = useState('0')
   // Image retention window for rollback. Lower = less disk, fewer rollback
   // hops; higher = more disk, more recovery surface. SQL CHECK enforces ≥1.
   const [keepReleases, setKeepReleases] = useState('3')
@@ -113,6 +121,11 @@ export function ComponentEditorDialog({
       setLongDrainTimeout('300')
       setKeepReleases('3')
       setMigrationCommand('')
+      setCommand('')
+      setHealthMode('http')
+      setHealthCommand('')
+      setDeployStrategy('blue_green')
+      setDeployOrder('0')
       setNetworks('')
       setEnvFilePath('')
       setIsRoutable(true)
@@ -135,6 +148,11 @@ export function ComponentEditorDialog({
       setLongDrainTimeout(String(c.long_drain_timeout_seconds))
       setKeepReleases(String(c.keep_releases ?? 3))
       setMigrationCommand((c.migration_command ?? []).join('\n'))
+      setCommand((c.command ?? []).join('\n'))
+      setHealthMode(c.health_mode ?? 'http')
+      setHealthCommand((c.health_command ?? []).join('\n'))
+      setDeployStrategy(c.deploy_strategy ?? 'blue_green')
+      setDeployOrder(String(c.deploy_order ?? 0))
       setNetworks((c.networks ?? []).join(', '))
       setEnvFilePath(c.env_file_path ?? '')
       setIsRoutable(c.is_routable)
@@ -268,6 +286,15 @@ export function ComponentEditorDialog({
       env_secret_keys: envSecretKeys,
       mounts: mounts.filter(m => m.target.trim() && (m.type !== 'bind' || (m.source ?? '').trim())),
       is_routable: isRoutable,
+      command: command.trim()
+        ? command.split('\n').map(s => s.trim()).filter(Boolean)
+        : [],
+      health_mode: healthMode,
+      health_command: healthCommand.trim()
+        ? healthCommand.split('\n').map(s => s.trim()).filter(Boolean)
+        : [],
+      deploy_strategy: deployStrategy,
+      deploy_order: Number(deployOrder) || 0,
       // Only sent on create — update endpoint ignores agent_id by design
       // (server preserves the original host to avoid orphaned containers).
       ...(isCreate ? { agent_id: agentID || undefined } : {}),
@@ -551,6 +578,71 @@ export function ComponentEditorDialog({
                   />
                   <p className="text-[11px] text-muted-foreground">
                     Her release'de yeni container'lar başlamadan önce bir kez çalışır. <strong>Her satır bir argüman</strong> — örn 3 satır: <code>bash</code>, <code>-c</code>, <code>komut zinciri</code>. Boş bırakırsanız atlanır.
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Çalıştırma komutu (CMD override)</Label>
+                  <Textarea
+                    placeholder={"celery\n-A\nconfig\nworker\n-l\ninfo"}
+                    value={command}
+                    onChange={e => setCommand(e.target.value)}
+                    rows={3}
+                    className="font-mono text-xs resize-y"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Image'ın default CMD'sini ezer — tek image'ı web / celery / beat olarak çalıştırmak için. <strong>Her satır bir argüman</strong>. Boş = image default.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Sağlık modu</Label>
+                    <select
+                      value={healthMode}
+                      onChange={e => setHealthMode(e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs"
+                    >
+                      <option value="http">http — HTTP GET sağlık yolu</option>
+                      <option value="exec">exec — container'da komut (exit 0)</option>
+                      <option value="running">running — ayakta + crash yok</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Deploy stratejisi</Label>
+                    <select
+                      value={deployStrategy}
+                      onChange={e => setDeployStrategy(e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs"
+                    >
+                      <option value="blue_green">blue_green — sıfır kesinti</option>
+                      <option value="recreate">recreate — önce eskiyi durdur</option>
+                    </select>
+                  </div>
+                </div>
+                {healthMode === 'exec' && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Sağlık komutu (exec)</Label>
+                    <Textarea
+                      placeholder={"celery\n-A\nconfig\ninspect\nping"}
+                      value={healthCommand}
+                      onChange={e => setHealthCommand(e.target.value)}
+                      rows={2}
+                      className="font-mono text-xs resize-y"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Container içinde çalışır; exit 0 = healthy. <strong>Her satır bir argüman</strong> (örn <code>celery -A config inspect ping</code>).
+                    </p>
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Deploy sırası</Label>
+                  <Input
+                    type="number"
+                    value={deployOrder}
+                    onChange={e => setDeployOrder(e.target.value)}
+                    className="font-mono text-xs"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Küçük önce. Migration taşıyan component'i (örn web) worker'lardan önce koyun.
                   </p>
                 </div>
                 <div className="space-y-1.5">

@@ -440,11 +440,15 @@ type ContainerInspectResult struct {
 	Image      string // "sha256:..." digest
 	ImageRef   string // human image reference from Config.Image
 	Labels     map[string]string
-	State      string // running, exited, paused, ...
+	State      string // running, exited, paused, restarting, ...
 	Status     string // human readable
 	StartedAt  time.Time
 	FinishedAt time.Time
 	ExitCode   int
+	// RestartCount climbs each time Docker auto-restarts the container
+	// (restart policy). A rising count between health polls signals a
+	// crash-loop — a "running" snapshot alone would miss it.
+	RestartCount int
 }
 
 func (c *DockerClient) ContainerInspect(ctx context.Context, id string) (ContainerInspectResult, error) {
@@ -468,7 +472,8 @@ func (c *DockerClient) ContainerInspect(ctx context.Context, id string) (Contain
 			StartedAt  string `json:"StartedAt"`
 			FinishedAt string `json:"FinishedAt"`
 		} `json:"State"`
-		Config struct {
+		RestartCount int `json:"RestartCount"`
+		Config       struct {
 			Image  string            `json:"Image"`
 			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
@@ -484,6 +489,7 @@ func (c *DockerClient) ContainerInspect(ctx context.Context, id string) (Contain
 	out.State = raw.State.Status
 	out.Status = raw.State.Status
 	out.ExitCode = raw.State.ExitCode
+	out.RestartCount = raw.RestartCount
 	if t, err := time.Parse(time.RFC3339Nano, raw.State.StartedAt); err == nil && !t.IsZero() {
 		out.StartedAt = t
 	}

@@ -520,6 +520,11 @@ export interface DeployComponentInput {
   agent_id?: string;
   paused?: boolean;
   keep_releases?: number;
+  command?: string[];
+  health_mode?: string;
+  health_command?: string[];
+  deploy_strategy?: string;
+  deploy_order?: number;
 }
 
 export async function getDeployComponent(
