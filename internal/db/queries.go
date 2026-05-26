@@ -55,6 +55,10 @@ type Host struct {
 	// sees the mistake immediately.
 	TargetKind     string  `json:"target_kind"`
 	TargetAgentID  *string `json:"target_agent_id,omitempty"`
+	// RUMEnabled opts this host into accepting browser telemetry beacons at
+	// the reserved /__muvon/rum path. Off by default — the edge treats the
+	// path as a normal (unmatched) route until an operator turns it on.
+	RUMEnabled     bool      `json:"rum_enabled"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -62,7 +66,7 @@ type Host struct {
 const hostSelectCols = `id, domain, is_active, force_https, tls_mode, trusted_proxies,
 	jwt_identity_enabled, jwt_identity_mode, jwt_claims, jwt_secret,
 	identity_header_name, store_raw_jwt,
-	target_kind, target_agent_id,
+	target_kind, target_agent_id, rum_enabled,
 	created_at, updated_at`
 
 func scanHost(scan func(...any) error) (Host, error) {
@@ -71,7 +75,7 @@ func scanHost(scan func(...any) error) (Host, error) {
 	err := scan(&h.ID, &h.Domain, &h.IsActive, &h.ForceHTTPS, &h.TLSMode, &trusted,
 		&h.JWTIdentityEnabled, &h.JWTIdentityMode, &h.JWTClaims, &h.JWTSecret,
 		&h.IdentityHeaderName, &h.StoreRawJWT,
-		&h.TargetKind, &h.TargetAgentID,
+		&h.TargetKind, &h.TargetAgentID, &h.RUMEnabled,
 		&h.CreatedAt, &h.UpdatedAt)
 	if err != nil {
 		return h, err
@@ -176,7 +180,7 @@ func normalizeTarget(t HostTarget) (string, *string, error) {
 	return kind, nil, nil
 }
 
-func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS bool, tlsMode string, trustedProxies []string, jwt HostJWT, target HostTarget) (Host, error) {
+func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS bool, tlsMode string, trustedProxies []string, jwt HostJWT, target HostTarget, rumEnabled bool) (Host, error) {
 	if trustedProxies == nil {
 		trustedProxies = []string{}
 	}
@@ -200,13 +204,13 @@ func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS
 		`INSERT INTO hosts (domain, is_active, force_https, tls_mode, trusted_proxies,
 			jwt_identity_enabled, jwt_identity_mode, jwt_claims, jwt_secret,
 			identity_header_name, store_raw_jwt,
-			target_kind, target_agent_id)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			target_kind, target_agent_id, rum_enabled)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		 RETURNING `+hostSelectCols,
 		domain, isActive, forceHTTPS, tlsMode, trustedProxies,
 		jwt.Enabled, jwt.Mode, jwt.Claims, jwt.Secret,
 		jwt.headerOrDefault(), jwt.StoreRaw,
-		tKind, tAgent,
+		tKind, tAgent, rumEnabled,
 	).Scan)
 	if err != nil {
 		return h, fmt.Errorf("create host: %w", err)
@@ -214,7 +218,7 @@ func (d *DB) CreateHost(ctx context.Context, domain string, isActive, forceHTTPS
 	return h, nil
 }
 
-func (d *DB) UpdateHost(ctx context.Context, id int, domain string, isActive, forceHTTPS bool, tlsMode string, trustedProxies []string, jwt HostJWT, target HostTarget) (Host, error) {
+func (d *DB) UpdateHost(ctx context.Context, id int, domain string, isActive, forceHTTPS bool, tlsMode string, trustedProxies []string, jwt HostJWT, target HostTarget, rumEnabled bool) (Host, error) {
 	if trustedProxies == nil {
 		trustedProxies = []string{}
 	}
@@ -236,13 +240,13 @@ func (d *DB) UpdateHost(ctx context.Context, id int, domain string, isActive, fo
 		`UPDATE hosts SET domain=$2, is_active=$3, force_https=$4, tls_mode=$5, trusted_proxies=$6,
 			jwt_identity_enabled=$7, jwt_identity_mode=$8, jwt_claims=$9, jwt_secret=$10,
 			identity_header_name=$11, store_raw_jwt=$12,
-			target_kind=$13, target_agent_id=$14,
+			target_kind=$13, target_agent_id=$14, rum_enabled=$15,
 			updated_at=now()
 		 WHERE id=$1 RETURNING `+hostSelectCols,
 		id, domain, isActive, forceHTTPS, tlsMode, trustedProxies,
 		jwt.Enabled, jwt.Mode, jwt.Claims, jwt.Secret,
 		jwt.headerOrDefault(), jwt.StoreRaw,
-		tKind, tAgent,
+		tKind, tAgent, rumEnabled,
 	).Scan)
 	if err != nil {
 		return h, fmt.Errorf("update host: %w", err)

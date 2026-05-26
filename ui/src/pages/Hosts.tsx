@@ -423,6 +423,7 @@ export default function Hosts() {
     jwt_secret_set: false,
     identity_header_name: '',
     store_raw_jwt: false,
+    rum_enabled: false,
     // Terminator binding — chosen on create, editable. "central" = central
     // MUVON serves this host; "agent" = the named edge agent does.
     target_kind: 'central' as 'central' | 'agent',
@@ -452,6 +453,7 @@ export default function Hosts() {
       jwt_identity_enabled: false, jwt_identity_mode: 'verify', jwt_claims: '',
       jwt_secret: '', jwt_secret_set: false, identity_header_name: '',
       store_raw_jwt: false,
+      rum_enabled: false,
       target_kind: 'central', target_agent_id: '',
     })
     setHostDialog({ open: true, host: null })
@@ -473,6 +475,7 @@ export default function Hosts() {
       jwt_secret_set: typeof h.jwt_secret === 'string' && h.jwt_secret !== '',
       identity_header_name: h.identity_header_name || '',
       store_raw_jwt: h.store_raw_jwt ?? false,
+      rum_enabled: h.rum_enabled ?? false,
       target_kind: h.target_kind ?? 'central',
       target_agent_id: h.target_agent_id ?? '',
     })
@@ -813,6 +816,24 @@ export default function Hosts() {
                   </div>
                 </>
               )}
+
+              {/* RUM ingest — independent of JWT, always shown. */}
+              <div className="flex items-start justify-between px-4 py-3 gap-3 border-t border-border/50">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium">Tarayıcı telemetrisi (RUM)</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    Bu host'ta <code className="font-mono">/__muvon/rum</code> ingest endpoint'ini açar.
+                    Tarayıcı event'leri (web-vitals, JS hata, fetch) <code className="font-mono">client_events</code>'e
+                    düşer ve <code className="font-mono">trace_id</code> ile http_logs'a bağlanır. Kapalıyken
+                    path normal route gibi davranır.
+                  </p>
+                </div>
+                <Switch
+                  checked={hostForm.rum_enabled}
+                  onCheckedChange={v => setHostForm(f => ({ ...f, rum_enabled: v }))}
+                  className="cursor-pointer"
+                />
+              </div>
             </div>
           </div>
           <DialogFooter>

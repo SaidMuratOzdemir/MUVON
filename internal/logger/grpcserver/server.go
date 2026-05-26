@@ -25,11 +25,12 @@ type EnrichmentStatusFunc func() *pb.EnrichmentStatusResponse
 // Server implements logpb.LogServiceServer by writing to the log pipeline.
 type Server struct {
 	pb.UnimplementedLogServiceServer
-	pipeline          *logger.Pipeline
-	containerPipeline *logger.ContainerPipeline
-	database          *db.DB
-	configFn          ConfigFunc
-	enrichStatusFn    EnrichmentStatusFunc
+	pipeline            *logger.Pipeline
+	containerPipeline   *logger.ContainerPipeline
+	clientEventPipeline *logger.ClientEventPipeline
+	database            *db.DB
+	configFn            ConfigFunc
+	enrichStatusFn      EnrichmentStatusFunc
 }
 
 // New wires the gRPC server. configFn may be nil — when absent, user-display

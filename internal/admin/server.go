@@ -193,6 +193,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/containers/{id}/logs/stream", s.handleStreamContainerLogs)
 	api.HandleFunc("GET /api/container-logs", s.handleSearchContainerLogs)
 	api.HandleFunc("GET /api/container-logs/{id}/context", s.handleContainerLogContext)
+	api.HandleFunc("GET /api/client-events", s.handleSearchClientEvents)
 	api.HandleFunc("GET /api/system/health/ingest", s.handleIngestHealth)
 
 	// Managed application deploys

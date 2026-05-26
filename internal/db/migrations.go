@@ -1081,4 +1081,61 @@ CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_recent
 		      ADD COLUMN IF NOT EXISTS span_id  TEXT;
 		      CREATE INDEX IF NOT EXISTS idx_http_logs_trace ON http_logs (trace_id) WHERE trace_id IS NOT NULL;`,
 	},
+	// Channel 3: browser RUM telemetry. The edge (/__muvon/rum) enriches
+	// each event with server-receive time + client IP, the SIEM adds GeoIP,
+	// and rows land here. `time` is the partition column (server-receive);
+	// client_ts keeps the untrusted browser clock for skew analysis.
+	// trace_id joins http_logs/container_logs; session_id groups a visit.
+	{
+		name: "create_client_events_hypertable", product: "dialog",
+		sql: `
+CREATE TABLE IF NOT EXISTS client_events (
+    id           UUID DEFAULT gen_uuidv7() NOT NULL,
+    time         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    client_ts    TIMESTAMPTZ,
+    app          TEXT NOT NULL DEFAULT '',
+    release      TEXT,
+    host_id      TEXT NOT NULL DEFAULT 'central',
+    host         TEXT,
+    session_id   TEXT NOT NULL,
+    view_id      TEXT,
+    route        TEXT,
+    url_path     TEXT,
+    trace_id     TEXT,
+    span_id      TEXT,
+    event_name   TEXT NOT NULL,
+    client_ip    TEXT NOT NULL DEFAULT '',
+    country      TEXT,
+    city         TEXT,
+    user_agent   TEXT,
+    attrs        JSONB,
+    PRIMARY KEY (id, time)
+);
+SELECT create_hypertable('client_events', by_range('time', INTERVAL '1 day'), if_not_exists => true);
+CREATE INDEX IF NOT EXISTS idx_client_events_trace      ON client_events (trace_id) WHERE trace_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_client_events_session_ts ON client_events (session_id, time DESC);
+CREATE INDEX IF NOT EXISTS idx_client_events_time       ON client_events (time DESC);
+CREATE INDEX IF NOT EXISTS idx_client_events_event_ts   ON client_events (event_name, time DESC);
+CREATE INDEX IF NOT EXISTS idx_client_events_app_ts     ON client_events (app, time DESC);
+CREATE INDEX IF NOT EXISTS idx_client_events_attrs_gin  ON client_events USING gin (attrs jsonb_path_ops) WHERE attrs IS NOT NULL;`,
+	},
+	{
+		name: "add_client_events_compression_retention", product: "dialog",
+		sql: `
+ALTER TABLE client_events SET (
+    timescaledb.compress,
+    timescaledb.compress_segmentby = 'session_id',
+    timescaledb.compress_orderby = 'time DESC'
+);
+SELECT add_compression_policy('client_events', INTERVAL '7 days', if_not_exists => true);
+SELECT add_retention_policy('client_events', INTERVAL '30 days', if_not_exists => true);`,
+	},
+	// Per-host opt-in for browser telemetry ingest. Off by default so the
+	// reserved /__muvon/rum path stays inert until an operator enables RUM
+	// for a host. Lives in the muvon schema with the rest of host config and
+	// rides the existing host → agent config push.
+	{
+		name: "add_hosts_rum_enabled", product: "muvon",
+		sql: `ALTER TABLE hosts ADD COLUMN IF NOT EXISTS rum_enabled BOOLEAN NOT NULL DEFAULT false;`,
+	},
 }

@@ -47,6 +47,12 @@ func main() {
 		cBatch     = flag.Int("container-batch", intEnvOr("DIALOG_CONTAINER_BATCH", 1000), "Container log pipeline batch size")
 		cFlushMs   = flag.Int("container-flush-ms", intEnvOr("DIALOG_CONTAINER_FLUSH_MS", 2000), "Container log pipeline flush interval (ms)")
 		containerIngestEnabled = flag.Bool("container-ingest", boolEnvOr("DIALOG_CONTAINER_INGEST", true), "Enable container log ingest pipeline")
+
+		ceBufSize  = flag.Int("client-event-buffer", intEnvOr("DIALOG_CLIENT_EVENT_BUFFER", 10000), "Client event pipeline buffer size")
+		ceWorkers  = flag.Int("client-event-workers", intEnvOr("DIALOG_CLIENT_EVENT_WORKERS", 2), "Client event pipeline worker count")
+		ceBatch    = flag.Int("client-event-batch", intEnvOr("DIALOG_CLIENT_EVENT_BATCH", 1000), "Client event pipeline batch size")
+		ceFlushMs  = flag.Int("client-event-flush-ms", intEnvOr("DIALOG_CLIENT_EVENT_FLUSH_MS", 2000), "Client event pipeline flush interval (ms)")
+		clientEventIngestEnabled = flag.Bool("client-event-ingest", boolEnvOr("DIALOG_CLIENT_EVENT_INGEST", true), "Enable client event (RUM) ingest pipeline")
 		logLevel      = flag.String("log-level", envOr("DIALOG_LOG_LEVEL", "info"), "Log level")
 		encryptionKey = flag.String("encryption-key", envOr("MUVON_ENCRYPTION_KEY", ""), "AES-256-GCM encryption key for secrets in DB")
 		showVersion   = flag.Bool("version", false, "Print version and exit")
@@ -122,6 +128,18 @@ func main() {
 		slog.Info("container log ingest disabled (DIALOG_CONTAINER_INGEST=false)")
 	}
 
+	// Client event (RUM) pipeline — fed by the edge's /__muvon/rum handler
+	// via SendClientEventBatch. Separate thin pipe like containers, but it
+	// carries a GeoIP enricher (set below) since the edge stamps only the
+	// client IP.
+	var clientEventPipeline *logger.ClientEventPipeline
+	if *clientEventIngestEnabled {
+		clientEventFlushInterval := time.Duration(*ceFlushMs) * time.Millisecond
+		clientEventPipeline = logger.NewClientEventPipeline(database.Pool, *ceBufSize, *ceWorkers, *ceBatch, clientEventFlushInterval)
+	} else {
+		slog.Info("client event ingest disabled (DIALOG_CLIENT_EVENT_INGEST=false)")
+	}
+
 	// GeoIP — central enrichment for every log entry, regardless of whether
 	// the entry came from the local Unix socket or an agent's TCP gRPC. The
 	// Manager owns load state so a misconfigured path surfaces as a status
@@ -139,6 +157,9 @@ func main() {
 		_ = geoMgr.Apply(newCfg.Global.GeoIPEnabled, newCfg.Global.GeoIPDBPath)
 	})
 	pipeline.SetGeoEnricher(geoMgr.Lookup)
+	if clientEventPipeline != nil {
+		clientEventPipeline.SetGeoEnricher(geoMgr.Lookup)
+	}
 
 	// JWT identity enrichment — extracts claims from Authorization header
 	// centrally. Host-scoped override wins when that host's override is
@@ -236,6 +257,9 @@ func main() {
 	if containerPipeline != nil {
 		logSrv.SetContainerPipeline(containerPipeline)
 	}
+	if clientEventPipeline != nil {
+		logSrv.SetClientEventPipeline(clientEventPipeline)
+	}
 	logSrv.SetEnrichmentStatusFn(func() *pb.EnrichmentStatusResponse {
 		gs := geoMgr.GetStatus()
 		resp := &pb.EnrichmentStatusResponse{
@@ -275,6 +299,9 @@ func main() {
 		pipeline.Stop()
 		if containerPipeline != nil {
 			containerPipeline.Stop()
+		}
+		if clientEventPipeline != nil {
+			clientEventPipeline.Stop()
 		}
 		alertMgr.Stop()
 		_ = geoMgr.Close()

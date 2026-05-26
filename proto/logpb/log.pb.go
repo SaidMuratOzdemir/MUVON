@@ -1696,6 +1696,577 @@ func (x *ContainerLogBatch) GetEntries() []*ContainerLogEntry {
 	return nil
 }
 
+// ClientEvent is one browser-side occurrence (page_view, js_error,
+// web_vital, fetch, …). trace_id/span_id are read by the browser from the
+// proxy's Server-Timing header and let an event join http_logs.
+type ClientEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EventName     string                 `protobuf:"bytes,1,opt,name=event_name,json=eventName,proto3" json:"event_name,omitempty"`
+	ClientTs      string                 `protobuf:"bytes,2,opt,name=client_ts,json=clientTs,proto3" json:"client_ts,omitempty"` // RFC3339Nano, browser clock — untrusted, debug only
+	TraceId       string                 `protobuf:"bytes,3,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`    // lowercase hex; correlates with http_logs.trace_id
+	SpanId        string                 `protobuf:"bytes,4,opt,name=span_id,json=spanId,proto3" json:"span_id,omitempty"`
+	Attrs         map[string]string      `protobuf:"bytes,5,rep,name=attrs,proto3" json:"attrs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientEvent) Reset() {
+	*x = ClientEvent{}
+	mi := &file_proto_logpb_log_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientEvent) ProtoMessage() {}
+
+func (x *ClientEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientEvent.ProtoReflect.Descriptor instead.
+func (*ClientEvent) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ClientEvent) GetEventName() string {
+	if x != nil {
+		return x.EventName
+	}
+	return ""
+}
+
+func (x *ClientEvent) GetClientTs() string {
+	if x != nil {
+		return x.ClientTs
+	}
+	return ""
+}
+
+func (x *ClientEvent) GetTraceId() string {
+	if x != nil {
+		return x.TraceId
+	}
+	return ""
+}
+
+func (x *ClientEvent) GetSpanId() string {
+	if x != nil {
+		return x.SpanId
+	}
+	return ""
+}
+
+func (x *ClientEvent) GetAttrs() map[string]string {
+	if x != nil {
+		return x.Attrs
+	}
+	return nil
+}
+
+// ClientEventBatch carries one envelope (session/view dimension + edge-stamped
+// fields) and the events it groups. The browser supplies app/session/view;
+// host/host_id/client_ip/user_agent/received_at are stamped by the edge and
+// never trusted from the client.
+type ClientEventBatch struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	App           string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
+	Release       string                 `protobuf:"bytes,2,opt,name=release,proto3" json:"release,omitempty"`
+	Sdk           string                 `protobuf:"bytes,3,opt,name=sdk,proto3" json:"sdk,omitempty"`
+	SessionId     string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ViewId        string                 `protobuf:"bytes,5,opt,name=view_id,json=viewId,proto3" json:"view_id,omitempty"`
+	Route         string                 `protobuf:"bytes,6,opt,name=route,proto3" json:"route,omitempty"`
+	UrlPath       string                 `protobuf:"bytes,7,opt,name=url_path,json=urlPath,proto3" json:"url_path,omitempty"`
+	Host          string                 `protobuf:"bytes,8,opt,name=host,proto3" json:"host,omitempty"`                   // vhost the beacon hit
+	HostId        string                 `protobuf:"bytes,9,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"` // "central" or agent UUID
+	ClientIp      string                 `protobuf:"bytes,10,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	UserAgent     string                 `protobuf:"bytes,11,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
+	ReceivedAt    string                 `protobuf:"bytes,12,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"` // RFC3339Nano, edge server-receive time
+	Events        []*ClientEvent         `protobuf:"bytes,20,rep,name=events,proto3" json:"events,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientEventBatch) Reset() {
+	*x = ClientEventBatch{}
+	mi := &file_proto_logpb_log_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientEventBatch) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientEventBatch) ProtoMessage() {}
+
+func (x *ClientEventBatch) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientEventBatch.ProtoReflect.Descriptor instead.
+func (*ClientEventBatch) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *ClientEventBatch) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetRelease() string {
+	if x != nil {
+		return x.Release
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetSdk() string {
+	if x != nil {
+		return x.Sdk
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetViewId() string {
+	if x != nil {
+		return x.ViewId
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetRoute() string {
+	if x != nil {
+		return x.Route
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetUrlPath() string {
+	if x != nil {
+		return x.UrlPath
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetHostId() string {
+	if x != nil {
+		return x.HostId
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetClientIp() string {
+	if x != nil {
+		return x.ClientIp
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetUserAgent() string {
+	if x != nil {
+		return x.UserAgent
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetReceivedAt() string {
+	if x != nil {
+		return x.ReceivedAt
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetEvents() []*ClientEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+type SearchClientEventsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TraceId       string                 `protobuf:"bytes,1,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"` // cross-channel join key
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	App           string                 `protobuf:"bytes,3,opt,name=app,proto3" json:"app,omitempty"`
+	HostId        string                 `protobuf:"bytes,4,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"`
+	EventName     string                 `protobuf:"bytes,5,opt,name=event_name,json=eventName,proto3" json:"event_name,omitempty"`
+	From          string                 `protobuf:"bytes,6,opt,name=from,proto3" json:"from,omitempty"` // RFC3339
+	To            string                 `protobuf:"bytes,7,opt,name=to,proto3" json:"to,omitempty"`
+	Limit         int32                  `protobuf:"varint,8,opt,name=limit,proto3" json:"limit,omitempty"`
+	Before        string                 `protobuf:"bytes,9,opt,name=before,proto3" json:"before,omitempty"` // cursor: row id, returns older rows
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SearchClientEventsRequest) Reset() {
+	*x = SearchClientEventsRequest{}
+	mi := &file_proto_logpb_log_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SearchClientEventsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SearchClientEventsRequest) ProtoMessage() {}
+
+func (x *SearchClientEventsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SearchClientEventsRequest.ProtoReflect.Descriptor instead.
+func (*SearchClientEventsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *SearchClientEventsRequest) GetTraceId() string {
+	if x != nil {
+		return x.TraceId
+	}
+	return ""
+}
+
+func (x *SearchClientEventsRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SearchClientEventsRequest) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
+}
+
+func (x *SearchClientEventsRequest) GetHostId() string {
+	if x != nil {
+		return x.HostId
+	}
+	return ""
+}
+
+func (x *SearchClientEventsRequest) GetEventName() string {
+	if x != nil {
+		return x.EventName
+	}
+	return ""
+}
+
+func (x *SearchClientEventsRequest) GetFrom() string {
+	if x != nil {
+		return x.From
+	}
+	return ""
+}
+
+func (x *SearchClientEventsRequest) GetTo() string {
+	if x != nil {
+		return x.To
+	}
+	return ""
+}
+
+func (x *SearchClientEventsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *SearchClientEventsRequest) GetBefore() string {
+	if x != nil {
+		return x.Before
+	}
+	return ""
+}
+
+type SearchClientEventsResponse struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Rows             []*ClientEventRow      `protobuf:"bytes,1,rep,name=rows,proto3" json:"rows,omitempty"`
+	NextBeforeCursor string                 `protobuf:"bytes,2,opt,name=next_before_cursor,json=nextBeforeCursor,proto3" json:"next_before_cursor,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *SearchClientEventsResponse) Reset() {
+	*x = SearchClientEventsResponse{}
+	mi := &file_proto_logpb_log_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SearchClientEventsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SearchClientEventsResponse) ProtoMessage() {}
+
+func (x *SearchClientEventsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SearchClientEventsResponse.ProtoReflect.Descriptor instead.
+func (*SearchClientEventsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *SearchClientEventsResponse) GetRows() []*ClientEventRow {
+	if x != nil {
+		return x.Rows
+	}
+	return nil
+}
+
+func (x *SearchClientEventsResponse) GetNextBeforeCursor() string {
+	if x != nil {
+		return x.NextBeforeCursor
+	}
+	return ""
+}
+
+type ClientEventRow struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                             // UUIDv7
+	Time          string                 `protobuf:"bytes,2,opt,name=time,proto3" json:"time,omitempty"`                         // RFC3339Nano, server-receive
+	ClientTs      string                 `protobuf:"bytes,3,opt,name=client_ts,json=clientTs,proto3" json:"client_ts,omitempty"` // RFC3339Nano, browser clock (may be empty)
+	App           string                 `protobuf:"bytes,4,opt,name=app,proto3" json:"app,omitempty"`
+	Release       string                 `protobuf:"bytes,5,opt,name=release,proto3" json:"release,omitempty"`
+	HostId        string                 `protobuf:"bytes,6,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"`
+	Host          string                 `protobuf:"bytes,7,opt,name=host,proto3" json:"host,omitempty"`
+	SessionId     string                 `protobuf:"bytes,8,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ViewId        string                 `protobuf:"bytes,9,opt,name=view_id,json=viewId,proto3" json:"view_id,omitempty"`
+	Route         string                 `protobuf:"bytes,10,opt,name=route,proto3" json:"route,omitempty"`
+	UrlPath       string                 `protobuf:"bytes,11,opt,name=url_path,json=urlPath,proto3" json:"url_path,omitempty"`
+	TraceId       string                 `protobuf:"bytes,12,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	SpanId        string                 `protobuf:"bytes,13,opt,name=span_id,json=spanId,proto3" json:"span_id,omitempty"`
+	EventName     string                 `protobuf:"bytes,14,opt,name=event_name,json=eventName,proto3" json:"event_name,omitempty"`
+	ClientIp      string                 `protobuf:"bytes,15,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	Country       string                 `protobuf:"bytes,16,opt,name=country,proto3" json:"country,omitempty"`
+	City          string                 `protobuf:"bytes,17,opt,name=city,proto3" json:"city,omitempty"`
+	UserAgent     string                 `protobuf:"bytes,18,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
+	AttrsJson     string                 `protobuf:"bytes,19,opt,name=attrs_json,json=attrsJson,proto3" json:"attrs_json,omitempty"` // raw JSONB, opaque on the wire
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClientEventRow) Reset() {
+	*x = ClientEventRow{}
+	mi := &file_proto_logpb_log_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientEventRow) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientEventRow) ProtoMessage() {}
+
+func (x *ClientEventRow) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_logpb_log_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientEventRow.ProtoReflect.Descriptor instead.
+func (*ClientEventRow) Descriptor() ([]byte, []int) {
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ClientEventRow) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetTime() string {
+	if x != nil {
+		return x.Time
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetClientTs() string {
+	if x != nil {
+		return x.ClientTs
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetApp() string {
+	if x != nil {
+		return x.App
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetRelease() string {
+	if x != nil {
+		return x.Release
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetHostId() string {
+	if x != nil {
+		return x.HostId
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetViewId() string {
+	if x != nil {
+		return x.ViewId
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetRoute() string {
+	if x != nil {
+		return x.Route
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetUrlPath() string {
+	if x != nil {
+		return x.UrlPath
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetTraceId() string {
+	if x != nil {
+		return x.TraceId
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetSpanId() string {
+	if x != nil {
+		return x.SpanId
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetEventName() string {
+	if x != nil {
+		return x.EventName
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetClientIp() string {
+	if x != nil {
+		return x.ClientIp
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetCountry() string {
+	if x != nil {
+		return x.Country
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetCity() string {
+	if x != nil {
+		return x.City
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetUserAgent() string {
+	if x != nil {
+		return x.UserAgent
+	}
+	return ""
+}
+
+func (x *ClientEventRow) GetAttrsJson() string {
+	if x != nil {
+		return x.AttrsJson
+	}
+	return ""
+}
+
 // SearchContainerLogsRequest filters by container/project/release/host
 // dimensions and a free-text + attrs search. Cursor pagination uses UUIDv7
 // ids: `before` returns rows with id < cursor (older), `after` returns
@@ -1726,7 +2297,7 @@ type SearchContainerLogsRequest struct {
 
 func (x *SearchContainerLogsRequest) Reset() {
 	*x = SearchContainerLogsRequest{}
-	mi := &file_proto_logpb_log_proto_msgTypes[21]
+	mi := &file_proto_logpb_log_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1738,7 +2309,7 @@ func (x *SearchContainerLogsRequest) String() string {
 func (*SearchContainerLogsRequest) ProtoMessage() {}
 
 func (x *SearchContainerLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[21]
+	mi := &file_proto_logpb_log_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1751,7 +2322,7 @@ func (x *SearchContainerLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchContainerLogsRequest.ProtoReflect.Descriptor instead.
 func (*SearchContainerLogsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{21}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SearchContainerLogsRequest) GetContainerId() string {
@@ -1879,7 +2450,7 @@ type SearchContainerLogsResponse struct {
 
 func (x *SearchContainerLogsResponse) Reset() {
 	*x = SearchContainerLogsResponse{}
-	mi := &file_proto_logpb_log_proto_msgTypes[22]
+	mi := &file_proto_logpb_log_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1891,7 +2462,7 @@ func (x *SearchContainerLogsResponse) String() string {
 func (*SearchContainerLogsResponse) ProtoMessage() {}
 
 func (x *SearchContainerLogsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[22]
+	mi := &file_proto_logpb_log_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1904,7 +2475,7 @@ func (x *SearchContainerLogsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchContainerLogsResponse.ProtoReflect.Descriptor instead.
 func (*SearchContainerLogsResponse) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{22}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *SearchContainerLogsResponse) GetRows() []*ContainerLogRow {
@@ -1952,7 +2523,7 @@ type ContainerLogRow struct {
 
 func (x *ContainerLogRow) Reset() {
 	*x = ContainerLogRow{}
-	mi := &file_proto_logpb_log_proto_msgTypes[23]
+	mi := &file_proto_logpb_log_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1964,7 +2535,7 @@ func (x *ContainerLogRow) String() string {
 func (*ContainerLogRow) ProtoMessage() {}
 
 func (x *ContainerLogRow) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[23]
+	mi := &file_proto_logpb_log_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1977,7 +2548,7 @@ func (x *ContainerLogRow) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerLogRow.ProtoReflect.Descriptor instead.
 func (*ContainerLogRow) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{23}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ContainerLogRow) GetId() string {
@@ -2108,7 +2679,7 @@ type ListContainersRequest struct {
 
 func (x *ListContainersRequest) Reset() {
 	*x = ListContainersRequest{}
-	mi := &file_proto_logpb_log_proto_msgTypes[24]
+	mi := &file_proto_logpb_log_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2120,7 +2691,7 @@ func (x *ListContainersRequest) String() string {
 func (*ListContainersRequest) ProtoMessage() {}
 
 func (x *ListContainersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[24]
+	mi := &file_proto_logpb_log_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2133,7 +2704,7 @@ func (x *ListContainersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListContainersRequest.ProtoReflect.Descriptor instead.
 func (*ListContainersRequest) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{24}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ListContainersRequest) GetProject() string {
@@ -2188,7 +2759,7 @@ type ListContainersResponse struct {
 
 func (x *ListContainersResponse) Reset() {
 	*x = ListContainersResponse{}
-	mi := &file_proto_logpb_log_proto_msgTypes[25]
+	mi := &file_proto_logpb_log_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2200,7 +2771,7 @@ func (x *ListContainersResponse) String() string {
 func (*ListContainersResponse) ProtoMessage() {}
 
 func (x *ListContainersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[25]
+	mi := &file_proto_logpb_log_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2213,7 +2784,7 @@ func (x *ListContainersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListContainersResponse.ProtoReflect.Descriptor instead.
 func (*ListContainersResponse) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{25}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ListContainersResponse) GetContainers() []*Container {
@@ -2253,7 +2824,7 @@ type Container struct {
 
 func (x *Container) Reset() {
 	*x = Container{}
-	mi := &file_proto_logpb_log_proto_msgTypes[26]
+	mi := &file_proto_logpb_log_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2265,7 +2836,7 @@ func (x *Container) String() string {
 func (*Container) ProtoMessage() {}
 
 func (x *Container) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[26]
+	mi := &file_proto_logpb_log_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2278,7 +2849,7 @@ func (x *Container) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Container.ProtoReflect.Descriptor instead.
 func (*Container) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{26}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *Container) GetId() string {
@@ -2396,7 +2967,7 @@ type GetContainerLogContextRequest struct {
 
 func (x *GetContainerLogContextRequest) Reset() {
 	*x = GetContainerLogContextRequest{}
-	mi := &file_proto_logpb_log_proto_msgTypes[27]
+	mi := &file_proto_logpb_log_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2408,7 +2979,7 @@ func (x *GetContainerLogContextRequest) String() string {
 func (*GetContainerLogContextRequest) ProtoMessage() {}
 
 func (x *GetContainerLogContextRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[27]
+	mi := &file_proto_logpb_log_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2421,7 +2992,7 @@ func (x *GetContainerLogContextRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetContainerLogContextRequest.ProtoReflect.Descriptor instead.
 func (*GetContainerLogContextRequest) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{27}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GetContainerLogContextRequest) GetId() string {
@@ -2447,7 +3018,7 @@ type GetContainerLastLogAtRequest struct {
 
 func (x *GetContainerLastLogAtRequest) Reset() {
 	*x = GetContainerLastLogAtRequest{}
-	mi := &file_proto_logpb_log_proto_msgTypes[28]
+	mi := &file_proto_logpb_log_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2459,7 +3030,7 @@ func (x *GetContainerLastLogAtRequest) String() string {
 func (*GetContainerLastLogAtRequest) ProtoMessage() {}
 
 func (x *GetContainerLastLogAtRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[28]
+	mi := &file_proto_logpb_log_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2472,7 +3043,7 @@ func (x *GetContainerLastLogAtRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetContainerLastLogAtRequest.ProtoReflect.Descriptor instead.
 func (*GetContainerLastLogAtRequest) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{28}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *GetContainerLastLogAtRequest) GetContainerId() string {
@@ -2493,7 +3064,7 @@ type GetContainerLastLogAtResponse struct {
 
 func (x *GetContainerLastLogAtResponse) Reset() {
 	*x = GetContainerLastLogAtResponse{}
-	mi := &file_proto_logpb_log_proto_msgTypes[29]
+	mi := &file_proto_logpb_log_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2505,7 +3076,7 @@ func (x *GetContainerLastLogAtResponse) String() string {
 func (*GetContainerLastLogAtResponse) ProtoMessage() {}
 
 func (x *GetContainerLastLogAtResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[29]
+	mi := &file_proto_logpb_log_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2518,7 +3089,7 @@ func (x *GetContainerLastLogAtResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetContainerLastLogAtResponse.ProtoReflect.Descriptor instead.
 func (*GetContainerLastLogAtResponse) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{29}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *GetContainerLastLogAtResponse) GetLastLogAt() string {
@@ -2536,7 +3107,7 @@ type IngestStatusRequest struct {
 
 func (x *IngestStatusRequest) Reset() {
 	*x = IngestStatusRequest{}
-	mi := &file_proto_logpb_log_proto_msgTypes[30]
+	mi := &file_proto_logpb_log_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2548,7 +3119,7 @@ func (x *IngestStatusRequest) String() string {
 func (*IngestStatusRequest) ProtoMessage() {}
 
 func (x *IngestStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[30]
+	mi := &file_proto_logpb_log_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2561,7 +3132,7 @@ func (x *IngestStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngestStatusRequest.ProtoReflect.Descriptor instead.
 func (*IngestStatusRequest) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{30}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{35}
 }
 
 type IngestStatusResponse struct {
@@ -2584,7 +3155,7 @@ type IngestStatusResponse struct {
 
 func (x *IngestStatusResponse) Reset() {
 	*x = IngestStatusResponse{}
-	mi := &file_proto_logpb_log_proto_msgTypes[31]
+	mi := &file_proto_logpb_log_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2596,7 +3167,7 @@ func (x *IngestStatusResponse) String() string {
 func (*IngestStatusResponse) ProtoMessage() {}
 
 func (x *IngestStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_logpb_log_proto_msgTypes[31]
+	mi := &file_proto_logpb_log_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2609,7 +3180,7 @@ func (x *IngestStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngestStatusResponse.ProtoReflect.Descriptor instead.
 func (*IngestStatusResponse) Descriptor() ([]byte, []int) {
-	return file_proto_logpb_log_proto_rawDescGZIP(), []int{31}
+	return file_proto_logpb_log_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *IngestStatusResponse) GetEnqueuedTotal() int64 {
@@ -2845,7 +3416,76 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"q\n" +
 	"\x11ContainerLogBatch\x12(\n" +
 	"\x04meta\x18\x01 \x01(\v2\x14.logpb.ContainerMetaR\x04meta\x122\n" +
-	"\aentries\x18\x02 \x03(\v2\x18.logpb.ContainerLogEntryR\aentries\"\x9d\x04\n" +
+	"\aentries\x18\x02 \x03(\v2\x18.logpb.ContainerLogEntryR\aentries\"\xec\x01\n" +
+	"\vClientEvent\x12\x1d\n" +
+	"\n" +
+	"event_name\x18\x01 \x01(\tR\teventName\x12\x1b\n" +
+	"\tclient_ts\x18\x02 \x01(\tR\bclientTs\x12\x19\n" +
+	"\btrace_id\x18\x03 \x01(\tR\atraceId\x12\x17\n" +
+	"\aspan_id\x18\x04 \x01(\tR\x06spanId\x123\n" +
+	"\x05attrs\x18\x05 \x03(\v2\x1d.logpb.ClientEvent.AttrsEntryR\x05attrs\x1a8\n" +
+	"\n" +
+	"AttrsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xef\x02\n" +
+	"\x10ClientEventBatch\x12\x10\n" +
+	"\x03app\x18\x01 \x01(\tR\x03app\x12\x18\n" +
+	"\arelease\x18\x02 \x01(\tR\arelease\x12\x10\n" +
+	"\x03sdk\x18\x03 \x01(\tR\x03sdk\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x04 \x01(\tR\tsessionId\x12\x17\n" +
+	"\aview_id\x18\x05 \x01(\tR\x06viewId\x12\x14\n" +
+	"\x05route\x18\x06 \x01(\tR\x05route\x12\x19\n" +
+	"\burl_path\x18\a \x01(\tR\aurlPath\x12\x12\n" +
+	"\x04host\x18\b \x01(\tR\x04host\x12\x17\n" +
+	"\ahost_id\x18\t \x01(\tR\x06hostId\x12\x1b\n" +
+	"\tclient_ip\x18\n" +
+	" \x01(\tR\bclientIp\x12\x1d\n" +
+	"\n" +
+	"user_agent\x18\v \x01(\tR\tuserAgent\x12\x1f\n" +
+	"\vreceived_at\x18\f \x01(\tR\n" +
+	"receivedAt\x12*\n" +
+	"\x06events\x18\x14 \x03(\v2\x12.logpb.ClientEventR\x06events\"\xf1\x01\n" +
+	"\x19SearchClientEventsRequest\x12\x19\n" +
+	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x10\n" +
+	"\x03app\x18\x03 \x01(\tR\x03app\x12\x17\n" +
+	"\ahost_id\x18\x04 \x01(\tR\x06hostId\x12\x1d\n" +
+	"\n" +
+	"event_name\x18\x05 \x01(\tR\teventName\x12\x12\n" +
+	"\x04from\x18\x06 \x01(\tR\x04from\x12\x0e\n" +
+	"\x02to\x18\a \x01(\tR\x02to\x12\x14\n" +
+	"\x05limit\x18\b \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06before\x18\t \x01(\tR\x06before\"u\n" +
+	"\x1aSearchClientEventsResponse\x12)\n" +
+	"\x04rows\x18\x01 \x03(\v2\x15.logpb.ClientEventRowR\x04rows\x12,\n" +
+	"\x12next_before_cursor\x18\x02 \x01(\tR\x10nextBeforeCursor\"\xef\x03\n" +
+	"\x0eClientEventRow\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04time\x18\x02 \x01(\tR\x04time\x12\x1b\n" +
+	"\tclient_ts\x18\x03 \x01(\tR\bclientTs\x12\x10\n" +
+	"\x03app\x18\x04 \x01(\tR\x03app\x12\x18\n" +
+	"\arelease\x18\x05 \x01(\tR\arelease\x12\x17\n" +
+	"\ahost_id\x18\x06 \x01(\tR\x06hostId\x12\x12\n" +
+	"\x04host\x18\a \x01(\tR\x04host\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\b \x01(\tR\tsessionId\x12\x17\n" +
+	"\aview_id\x18\t \x01(\tR\x06viewId\x12\x14\n" +
+	"\x05route\x18\n" +
+	" \x01(\tR\x05route\x12\x19\n" +
+	"\burl_path\x18\v \x01(\tR\aurlPath\x12\x19\n" +
+	"\btrace_id\x18\f \x01(\tR\atraceId\x12\x17\n" +
+	"\aspan_id\x18\r \x01(\tR\x06spanId\x12\x1d\n" +
+	"\n" +
+	"event_name\x18\x0e \x01(\tR\teventName\x12\x1b\n" +
+	"\tclient_ip\x18\x0f \x01(\tR\bclientIp\x12\x18\n" +
+	"\acountry\x18\x10 \x01(\tR\acountry\x12\x12\n" +
+	"\x04city\x18\x11 \x01(\tR\x04city\x12\x1d\n" +
+	"\n" +
+	"user_agent\x18\x12 \x01(\tR\tuserAgent\x12\x1d\n" +
+	"\n" +
+	"attrs_json\x18\x13 \x01(\tR\tattrsJson\"\x9d\x04\n" +
 	"\x1aSearchContainerLogsRequest\x12!\n" +
 	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\x12%\n" +
 	"\x0econtainer_name\x18\x02 \x01(\tR\rcontainerName\x12\x18\n" +
@@ -2944,7 +3584,7 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x14spool_oldest_seconds\x18\x05 \x01(\x03R\x12spoolOldestSeconds\x12\x1a\n" +
 	"\bdegraded\x18\x06 \x01(\bR\bdegraded\x12\"\n" +
 	"\rlast_batch_at\x18\a \x01(\tR\vlastBatchAt\x12+\n" +
-	"\x11containers_active\x18\b \x01(\x03R\x10containersActive2\xdc\b\n" +
+	"\x11containers_active\x18\b \x01(\x03R\x10containersActive2\xf4\t\n" +
 	"\n" +
 	"LogService\x12(\n" +
 	"\tSendEntry\x12\x0f.logpb.LogEntry\x1a\n" +
@@ -2966,7 +3606,10 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x13GetEnrichmentStatus\x12\x1e.logpb.EnrichmentStatusRequest\x1a\x1f.logpb.EnrichmentStatusResponse\x12G\n" +
 	"\fGetLogRawJWT\x12\x1a.logpb.GetLogRawJWTRequest\x1a\x1b.logpb.GetLogRawJWTResponse\x12=\n" +
 	"\x15SendContainerLogBatch\x12\x18.logpb.ContainerLogBatch\x1a\n" +
-	".logpb.Ack\x12\\\n" +
+	".logpb.Ack\x12;\n" +
+	"\x14SendClientEventBatch\x12\x17.logpb.ClientEventBatch\x1a\n" +
+	".logpb.Ack\x12Y\n" +
+	"\x12SearchClientEvents\x12 .logpb.SearchClientEventsRequest\x1a!.logpb.SearchClientEventsResponse\x12\\\n" +
 	"\x13SearchContainerLogs\x12!.logpb.SearchContainerLogsRequest\x1a\".logpb.SearchContainerLogsResponse\x12M\n" +
 	"\x0eListContainers\x12\x1c.logpb.ListContainersRequest\x1a\x1d.logpb.ListContainersResponse\x12b\n" +
 	"\x16GetContainerLogContext\x12$.logpb.GetContainerLogContextRequest\x1a\".logpb.SearchContainerLogsResponse\x12J\n" +
@@ -2985,7 +3628,7 @@ func file_proto_logpb_log_proto_rawDescGZIP() []byte {
 	return file_proto_logpb_log_proto_rawDescData
 }
 
-var file_proto_logpb_log_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
+var file_proto_logpb_log_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_proto_logpb_log_proto_goTypes = []any{
 	(*LogEntry)(nil),                      // 0: logpb.LogEntry
 	(*UserIdentity)(nil),                  // 1: logpb.UserIdentity
@@ -3008,78 +3651,91 @@ var file_proto_logpb_log_proto_goTypes = []any{
 	(*ContainerLogEntry)(nil),             // 18: logpb.ContainerLogEntry
 	(*ContainerMeta)(nil),                 // 19: logpb.ContainerMeta
 	(*ContainerLogBatch)(nil),             // 20: logpb.ContainerLogBatch
-	(*SearchContainerLogsRequest)(nil),    // 21: logpb.SearchContainerLogsRequest
-	(*SearchContainerLogsResponse)(nil),   // 22: logpb.SearchContainerLogsResponse
-	(*ContainerLogRow)(nil),               // 23: logpb.ContainerLogRow
-	(*ListContainersRequest)(nil),         // 24: logpb.ListContainersRequest
-	(*ListContainersResponse)(nil),        // 25: logpb.ListContainersResponse
-	(*Container)(nil),                     // 26: logpb.Container
-	(*GetContainerLogContextRequest)(nil), // 27: logpb.GetContainerLogContextRequest
-	(*GetContainerLastLogAtRequest)(nil),  // 28: logpb.GetContainerLastLogAtRequest
-	(*GetContainerLastLogAtResponse)(nil), // 29: logpb.GetContainerLastLogAtResponse
-	(*IngestStatusRequest)(nil),           // 30: logpb.IngestStatusRequest
-	(*IngestStatusResponse)(nil),          // 31: logpb.IngestStatusResponse
-	nil,                                   // 32: logpb.LogEntry.RequestHeadersEntry
-	nil,                                   // 33: logpb.LogEntry.ResponseHeadersEntry
-	nil,                                   // 34: logpb.UserIdentity.ClaimsEntry
-	nil,                                   // 35: logpb.LogStatsResponse.StatusDistributionEntry
-	nil,                                   // 36: logpb.ContainerLogEntry.AttrsEntry
-	nil,                                   // 37: logpb.ContainerMeta.LabelsEntry
-	nil,                                   // 38: logpb.SearchContainerLogsRequest.AttrsEntry
+	(*ClientEvent)(nil),                   // 21: logpb.ClientEvent
+	(*ClientEventBatch)(nil),              // 22: logpb.ClientEventBatch
+	(*SearchClientEventsRequest)(nil),     // 23: logpb.SearchClientEventsRequest
+	(*SearchClientEventsResponse)(nil),    // 24: logpb.SearchClientEventsResponse
+	(*ClientEventRow)(nil),                // 25: logpb.ClientEventRow
+	(*SearchContainerLogsRequest)(nil),    // 26: logpb.SearchContainerLogsRequest
+	(*SearchContainerLogsResponse)(nil),   // 27: logpb.SearchContainerLogsResponse
+	(*ContainerLogRow)(nil),               // 28: logpb.ContainerLogRow
+	(*ListContainersRequest)(nil),         // 29: logpb.ListContainersRequest
+	(*ListContainersResponse)(nil),        // 30: logpb.ListContainersResponse
+	(*Container)(nil),                     // 31: logpb.Container
+	(*GetContainerLogContextRequest)(nil), // 32: logpb.GetContainerLogContextRequest
+	(*GetContainerLastLogAtRequest)(nil),  // 33: logpb.GetContainerLastLogAtRequest
+	(*GetContainerLastLogAtResponse)(nil), // 34: logpb.GetContainerLastLogAtResponse
+	(*IngestStatusRequest)(nil),           // 35: logpb.IngestStatusRequest
+	(*IngestStatusResponse)(nil),          // 36: logpb.IngestStatusResponse
+	nil,                                   // 37: logpb.LogEntry.RequestHeadersEntry
+	nil,                                   // 38: logpb.LogEntry.ResponseHeadersEntry
+	nil,                                   // 39: logpb.UserIdentity.ClaimsEntry
+	nil,                                   // 40: logpb.LogStatsResponse.StatusDistributionEntry
+	nil,                                   // 41: logpb.ContainerLogEntry.AttrsEntry
+	nil,                                   // 42: logpb.ContainerMeta.LabelsEntry
+	nil,                                   // 43: logpb.ClientEvent.AttrsEntry
+	nil,                                   // 44: logpb.SearchContainerLogsRequest.AttrsEntry
 }
 var file_proto_logpb_log_proto_depIdxs = []int32{
-	32, // 0: logpb.LogEntry.request_headers:type_name -> logpb.LogEntry.RequestHeadersEntry
-	33, // 1: logpb.LogEntry.response_headers:type_name -> logpb.LogEntry.ResponseHeadersEntry
+	37, // 0: logpb.LogEntry.request_headers:type_name -> logpb.LogEntry.RequestHeadersEntry
+	38, // 1: logpb.LogEntry.response_headers:type_name -> logpb.LogEntry.ResponseHeadersEntry
 	1,  // 2: logpb.LogEntry.user_identity:type_name -> logpb.UserIdentity
-	34, // 3: logpb.UserIdentity.claims:type_name -> logpb.UserIdentity.ClaimsEntry
+	39, // 3: logpb.UserIdentity.claims:type_name -> logpb.UserIdentity.ClaimsEntry
 	0,  // 4: logpb.LogBatch.entries:type_name -> logpb.LogEntry
 	6,  // 5: logpb.SearchLogsResponse.logs:type_name -> logpb.LogSummary
 	0,  // 6: logpb.LogDetail.entry:type_name -> logpb.LogEntry
-	35, // 7: logpb.LogStatsResponse.status_distribution:type_name -> logpb.LogStatsResponse.StatusDistributionEntry
-	36, // 8: logpb.ContainerLogEntry.attrs:type_name -> logpb.ContainerLogEntry.AttrsEntry
-	37, // 9: logpb.ContainerMeta.labels:type_name -> logpb.ContainerMeta.LabelsEntry
+	40, // 7: logpb.LogStatsResponse.status_distribution:type_name -> logpb.LogStatsResponse.StatusDistributionEntry
+	41, // 8: logpb.ContainerLogEntry.attrs:type_name -> logpb.ContainerLogEntry.AttrsEntry
+	42, // 9: logpb.ContainerMeta.labels:type_name -> logpb.ContainerMeta.LabelsEntry
 	19, // 10: logpb.ContainerLogBatch.meta:type_name -> logpb.ContainerMeta
 	18, // 11: logpb.ContainerLogBatch.entries:type_name -> logpb.ContainerLogEntry
-	38, // 12: logpb.SearchContainerLogsRequest.attrs:type_name -> logpb.SearchContainerLogsRequest.AttrsEntry
-	23, // 13: logpb.SearchContainerLogsResponse.rows:type_name -> logpb.ContainerLogRow
-	26, // 14: logpb.ListContainersResponse.containers:type_name -> logpb.Container
-	0,  // 15: logpb.LogService.SendEntry:input_type -> logpb.LogEntry
-	2,  // 16: logpb.LogService.SendBatch:input_type -> logpb.LogBatch
-	4,  // 17: logpb.LogService.SearchLogs:input_type -> logpb.SearchLogsRequest
-	7,  // 18: logpb.LogService.GetLog:input_type -> logpb.GetLogRequest
-	9,  // 19: logpb.LogService.GetLogStats:input_type -> logpb.GetLogStatsRequest
-	11, // 20: logpb.LogService.StreamLogs:input_type -> logpb.StreamLogsRequest
-	12, // 21: logpb.LogService.UpsertNote:input_type -> logpb.UpsertNoteRequest
-	13, // 22: logpb.LogService.ToggleStar:input_type -> logpb.ToggleStarRequest
-	14, // 23: logpb.LogService.GetEnrichmentStatus:input_type -> logpb.EnrichmentStatusRequest
-	15, // 24: logpb.LogService.GetLogRawJWT:input_type -> logpb.GetLogRawJWTRequest
-	20, // 25: logpb.LogService.SendContainerLogBatch:input_type -> logpb.ContainerLogBatch
-	21, // 26: logpb.LogService.SearchContainerLogs:input_type -> logpb.SearchContainerLogsRequest
-	24, // 27: logpb.LogService.ListContainers:input_type -> logpb.ListContainersRequest
-	27, // 28: logpb.LogService.GetContainerLogContext:input_type -> logpb.GetContainerLogContextRequest
-	30, // 29: logpb.LogService.GetIngestStatus:input_type -> logpb.IngestStatusRequest
-	28, // 30: logpb.LogService.GetContainerLastLogAt:input_type -> logpb.GetContainerLastLogAtRequest
-	3,  // 31: logpb.LogService.SendEntry:output_type -> logpb.Ack
-	3,  // 32: logpb.LogService.SendBatch:output_type -> logpb.Ack
-	5,  // 33: logpb.LogService.SearchLogs:output_type -> logpb.SearchLogsResponse
-	8,  // 34: logpb.LogService.GetLog:output_type -> logpb.LogDetail
-	10, // 35: logpb.LogService.GetLogStats:output_type -> logpb.LogStatsResponse
-	0,  // 36: logpb.LogService.StreamLogs:output_type -> logpb.LogEntry
-	3,  // 37: logpb.LogService.UpsertNote:output_type -> logpb.Ack
-	3,  // 38: logpb.LogService.ToggleStar:output_type -> logpb.Ack
-	17, // 39: logpb.LogService.GetEnrichmentStatus:output_type -> logpb.EnrichmentStatusResponse
-	16, // 40: logpb.LogService.GetLogRawJWT:output_type -> logpb.GetLogRawJWTResponse
-	3,  // 41: logpb.LogService.SendContainerLogBatch:output_type -> logpb.Ack
-	22, // 42: logpb.LogService.SearchContainerLogs:output_type -> logpb.SearchContainerLogsResponse
-	25, // 43: logpb.LogService.ListContainers:output_type -> logpb.ListContainersResponse
-	22, // 44: logpb.LogService.GetContainerLogContext:output_type -> logpb.SearchContainerLogsResponse
-	31, // 45: logpb.LogService.GetIngestStatus:output_type -> logpb.IngestStatusResponse
-	29, // 46: logpb.LogService.GetContainerLastLogAt:output_type -> logpb.GetContainerLastLogAtResponse
-	31, // [31:47] is the sub-list for method output_type
-	15, // [15:31] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	43, // 12: logpb.ClientEvent.attrs:type_name -> logpb.ClientEvent.AttrsEntry
+	21, // 13: logpb.ClientEventBatch.events:type_name -> logpb.ClientEvent
+	25, // 14: logpb.SearchClientEventsResponse.rows:type_name -> logpb.ClientEventRow
+	44, // 15: logpb.SearchContainerLogsRequest.attrs:type_name -> logpb.SearchContainerLogsRequest.AttrsEntry
+	28, // 16: logpb.SearchContainerLogsResponse.rows:type_name -> logpb.ContainerLogRow
+	31, // 17: logpb.ListContainersResponse.containers:type_name -> logpb.Container
+	0,  // 18: logpb.LogService.SendEntry:input_type -> logpb.LogEntry
+	2,  // 19: logpb.LogService.SendBatch:input_type -> logpb.LogBatch
+	4,  // 20: logpb.LogService.SearchLogs:input_type -> logpb.SearchLogsRequest
+	7,  // 21: logpb.LogService.GetLog:input_type -> logpb.GetLogRequest
+	9,  // 22: logpb.LogService.GetLogStats:input_type -> logpb.GetLogStatsRequest
+	11, // 23: logpb.LogService.StreamLogs:input_type -> logpb.StreamLogsRequest
+	12, // 24: logpb.LogService.UpsertNote:input_type -> logpb.UpsertNoteRequest
+	13, // 25: logpb.LogService.ToggleStar:input_type -> logpb.ToggleStarRequest
+	14, // 26: logpb.LogService.GetEnrichmentStatus:input_type -> logpb.EnrichmentStatusRequest
+	15, // 27: logpb.LogService.GetLogRawJWT:input_type -> logpb.GetLogRawJWTRequest
+	20, // 28: logpb.LogService.SendContainerLogBatch:input_type -> logpb.ContainerLogBatch
+	22, // 29: logpb.LogService.SendClientEventBatch:input_type -> logpb.ClientEventBatch
+	23, // 30: logpb.LogService.SearchClientEvents:input_type -> logpb.SearchClientEventsRequest
+	26, // 31: logpb.LogService.SearchContainerLogs:input_type -> logpb.SearchContainerLogsRequest
+	29, // 32: logpb.LogService.ListContainers:input_type -> logpb.ListContainersRequest
+	32, // 33: logpb.LogService.GetContainerLogContext:input_type -> logpb.GetContainerLogContextRequest
+	35, // 34: logpb.LogService.GetIngestStatus:input_type -> logpb.IngestStatusRequest
+	33, // 35: logpb.LogService.GetContainerLastLogAt:input_type -> logpb.GetContainerLastLogAtRequest
+	3,  // 36: logpb.LogService.SendEntry:output_type -> logpb.Ack
+	3,  // 37: logpb.LogService.SendBatch:output_type -> logpb.Ack
+	5,  // 38: logpb.LogService.SearchLogs:output_type -> logpb.SearchLogsResponse
+	8,  // 39: logpb.LogService.GetLog:output_type -> logpb.LogDetail
+	10, // 40: logpb.LogService.GetLogStats:output_type -> logpb.LogStatsResponse
+	0,  // 41: logpb.LogService.StreamLogs:output_type -> logpb.LogEntry
+	3,  // 42: logpb.LogService.UpsertNote:output_type -> logpb.Ack
+	3,  // 43: logpb.LogService.ToggleStar:output_type -> logpb.Ack
+	17, // 44: logpb.LogService.GetEnrichmentStatus:output_type -> logpb.EnrichmentStatusResponse
+	16, // 45: logpb.LogService.GetLogRawJWT:output_type -> logpb.GetLogRawJWTResponse
+	3,  // 46: logpb.LogService.SendContainerLogBatch:output_type -> logpb.Ack
+	3,  // 47: logpb.LogService.SendClientEventBatch:output_type -> logpb.Ack
+	24, // 48: logpb.LogService.SearchClientEvents:output_type -> logpb.SearchClientEventsResponse
+	27, // 49: logpb.LogService.SearchContainerLogs:output_type -> logpb.SearchContainerLogsResponse
+	30, // 50: logpb.LogService.ListContainers:output_type -> logpb.ListContainersResponse
+	27, // 51: logpb.LogService.GetContainerLogContext:output_type -> logpb.SearchContainerLogsResponse
+	36, // 52: logpb.LogService.GetIngestStatus:output_type -> logpb.IngestStatusResponse
+	34, // 53: logpb.LogService.GetContainerLastLogAt:output_type -> logpb.GetContainerLastLogAtResponse
+	36, // [36:54] is the sub-list for method output_type
+	18, // [18:36] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_proto_logpb_log_proto_init() }
@@ -3093,7 +3749,7 @@ func file_proto_logpb_log_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_logpb_log_proto_rawDesc), len(file_proto_logpb_log_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   39,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

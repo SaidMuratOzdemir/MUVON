@@ -127,6 +127,7 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 		StoreRawJWT        bool      `json:"store_raw_jwt"`
 		TargetKind         string    `json:"target_kind"`
 		TargetAgentID      string    `json:"target_agent_id"`
+		RUMEnabled         bool      `json:"rum_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -175,7 +176,7 @@ func (s *Server) handleCreateHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	host, err := s.db.CreateHost(r.Context(), req.Domain, isActive, forceHTTPS, tlsMode, trustedProxies, jwt, target)
+	host, err := s.db.CreateHost(r.Context(), req.Domain, isActive, forceHTTPS, tlsMode, trustedProxies, jwt, target, req.RUMEnabled)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": domainError(err)})
 		return
@@ -229,6 +230,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		StoreRawJWT        *bool     `json:"store_raw_jwt"`
 		TargetKind         *string   `json:"target_kind"`
 		TargetAgentID      *string   `json:"target_agent_id"`
+		RUMEnabled         *bool     `json:"rum_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -325,6 +327,11 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rumEnabled := existing.RUMEnabled
+	if req.RUMEnabled != nil {
+		rumEnabled = *req.RUMEnabled
+	}
+
 	host, err := s.db.UpdateHost(r.Context(), id, domain, isActive, forceHTTPS, tlsMode, trustedProxies, db.HostJWT{
 		Enabled:    jwtEnabled,
 		Mode:       jwtMode,
@@ -332,7 +339,7 @@ func (s *Server) handleUpdateHost(w http.ResponseWriter, r *http.Request) {
 		Secret:     jwtSecret,
 		HeaderName: headerName,
 		StoreRaw:   storeRaw,
-	}, target)
+	}, target, rumEnabled)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": domainError(err)})
 		return

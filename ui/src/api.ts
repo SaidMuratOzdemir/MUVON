@@ -21,6 +21,8 @@ import type {
   ContainerLogRow,
   ContainerLogSearchParams,
   ContainerLogSearchResponse,
+  ClientEventSearchParams,
+  ClientEventSearchResponse,
   IngestStatus,
 } from "./types";
 
@@ -858,6 +860,22 @@ export async function searchContainerLogs(
 
 export async function getContainerLogContext(id: string, n = 50): Promise<{ data: ContainerLogRow[] }> {
   return request<{ data: ContainerLogRow[] }>("GET", `/api/container-logs/${encodeURIComponent(id)}/context?n=${n}`);
+}
+
+export async function searchClientEvents(
+  params: ClientEventSearchParams = {},
+): Promise<ClientEventSearchResponse> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "" && value !== false) {
+      qs.set(key, String(value));
+    }
+  }
+  const query = qs.toString();
+  return request<ClientEventSearchResponse>(
+    "GET",
+    `/api/client-events${query ? `?${query}` : ""}`,
+  );
 }
 
 export async function getIngestStatus(): Promise<IngestStatus> {

@@ -13,6 +13,7 @@ import RoutesPage from './pages/Routes'
 import Apps from './pages/Apps'
 import Alerts from './pages/Alerts'
 import ContainerLogs from './pages/ContainerLogs'
+import ClientEvents from './pages/ClientEvents'
 import { AuthProvider } from './context/AuthContext'
 import { useAuth } from './context/useAuth'
 
@@ -64,6 +65,7 @@ export default function App() {
             <Route path="apps" element={<Apps hostFilter="central" />} />
             <Route path="apps/edge" element={<Apps hostFilter="edge" />} />
             <Route path="container-logs" element={<ContainerLogs />} />
+            <Route path="client-events" element={<ClientEvents />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

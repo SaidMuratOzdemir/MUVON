@@ -87,6 +87,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reserved RUM ingest — intercepted before route matching so a tenant's
+	// own routes can't shadow it. Inert unless the host opted in.
+	if hc.Host.RUMEnabled && isRUMPath(r.URL.Path) {
+		h.serveRUM(w, r, hc)
+		return
+	}
+
 	route := matchRoute(hc.Routes, r.URL.Path)
 	if route == nil {
 		http.Error(w, "no matching route", http.StatusNotFound)

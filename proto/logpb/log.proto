@@ -46,6 +46,17 @@ service LogService {
   // Fire-and-forget — caller does not wait for write to PostgreSQL.
   rpc SendContainerLogBatch(ContainerLogBatch) returns (Ack);
 
+  // --- Client Events (browser RUM telemetry) ---
+  // SendClientEventBatch ingests a batch of browser-side events forwarded by
+  // the edge (central MUVON or an agent) after server-side enrichment. The
+  // edge has already replied 204 to the browser — fire-and-forget.
+  rpc SendClientEventBatch(ClientEventBatch) returns (Ack);
+
+  // SearchClientEvents queries persisted browser events for the admin UI,
+  // filtered by trace_id (cross-channel join), session, app, host, or event
+  // name. Cursor pagination over UUIDv7 ids, newest-first.
+  rpc SearchClientEvents(SearchClientEventsRequest) returns (SearchClientEventsResponse);
+
   // SearchContainerLogs queries persisted container logs with filters and
   // cursor-based pagination on UUIDv7 ids. Supports free-text ILIKE and
   // structured attrs (jsonb_path_ops) lookup.
@@ -292,6 +303,80 @@ message ContainerMeta {
 message ContainerLogBatch {
   ContainerMeta            meta    = 1;
   repeated ContainerLogEntry entries = 2;
+}
+
+// ===== Client Events (browser RUM telemetry) =====
+
+// ClientEvent is one browser-side occurrence (page_view, js_error,
+// web_vital, fetch, …). trace_id/span_id are read by the browser from the
+// proxy's Server-Timing header and let an event join http_logs.
+message ClientEvent {
+  string event_name = 1;
+  string client_ts  = 2;   // RFC3339Nano, browser clock — untrusted, debug only
+  string trace_id   = 3;   // lowercase hex; correlates with http_logs.trace_id
+  string span_id    = 4;
+  map<string, string> attrs = 5;
+}
+
+// ClientEventBatch carries one envelope (session/view dimension + edge-stamped
+// fields) and the events it groups. The browser supplies app/session/view;
+// host/host_id/client_ip/user_agent/received_at are stamped by the edge and
+// never trusted from the client.
+message ClientEventBatch {
+  string app         = 1;
+  string release     = 2;
+  string sdk         = 3;
+  string session_id  = 4;
+  string view_id     = 5;
+  string route       = 6;
+  string url_path    = 7;
+  string host        = 8;   // vhost the beacon hit
+  string host_id     = 9;   // "central" or agent UUID
+  string client_ip   = 10;
+  string user_agent  = 11;
+  string received_at = 12;  // RFC3339Nano, edge server-receive time
+  repeated ClientEvent events = 20;
+}
+
+// ===== Client Events: Search =====
+
+message SearchClientEventsRequest {
+  string trace_id   = 1;   // cross-channel join key
+  string session_id = 2;
+  string app        = 3;
+  string host_id    = 4;
+  string event_name = 5;
+  string from       = 6;   // RFC3339
+  string to         = 7;
+  int32  limit      = 8;
+  string before     = 9;   // cursor: row id, returns older rows
+}
+
+message SearchClientEventsResponse {
+  repeated ClientEventRow rows = 1;
+  string next_before_cursor = 2;
+}
+
+message ClientEventRow {
+  string id          = 1;   // UUIDv7
+  string time        = 2;   // RFC3339Nano, server-receive
+  string client_ts   = 3;   // RFC3339Nano, browser clock (may be empty)
+  string app         = 4;
+  string release     = 5;
+  string host_id     = 6;
+  string host        = 7;
+  string session_id  = 8;
+  string view_id     = 9;
+  string route       = 10;
+  string url_path    = 11;
+  string trace_id    = 12;
+  string span_id     = 13;
+  string event_name  = 14;
+  string client_ip   = 15;
+  string country     = 16;
+  string city        = 17;
+  string user_agent  = 18;
+  string attrs_json  = 19;  // raw JSONB, opaque on the wire
 }
 
 // ===== Container Logs: Search =====

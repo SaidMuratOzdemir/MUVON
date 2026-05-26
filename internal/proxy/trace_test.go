@@ -77,11 +77,11 @@ func TestTraceContext_EmptyTrustedListNeverHonours(t *testing.T) {
 
 func TestTraceContext_IgnoresMalformedAndZero(t *testing.T) {
 	cases := map[string]string{
-		"too short trace-id": "00-abc-00f067aa0ba902b7-01",
-		"non-hex":            "00-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-00f067aa0ba902b7-01",
+		"too short trace-id":  "00-abc-00f067aa0ba902b7-01",
+		"non-hex":             "00-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-00f067aa0ba902b7-01",
 		"unsupported version": "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-		"all-zero trace-id":  "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
-		"garbage":            "not-a-traceparent",
+		"all-zero trace-id":   "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+		"garbage":             "not-a-traceparent",
 	}
 	for name, tp := range cases {
 		t.Run(name, func(t *testing.T) {

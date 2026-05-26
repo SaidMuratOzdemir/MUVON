@@ -293,6 +293,52 @@ func (r *RemoteLogSink) SendContainerLogBatch(ctx context.Context, batch *pb.Con
 	return err
 }
 
+// SendClientEvents ships a batch of edge-enriched browser events to
+// dialog-siem. Fire-and-forget with a short timeout: the edge handler has
+// already replied 204 to the browser, so a failure here just drops the batch
+// (logged). The browser's own batching means no extra client-side buffering.
+func (r *RemoteLogSink) SendClientEvents(batch logger.ClientEventBatch) {
+	pbBatch := clientEventBatchToProto(batch)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := r.client.SendClientEventBatch(ctx, pbBatch); err != nil {
+		slog.Warn("client event ship failed", "error", err, "events", len(batch.Events))
+	}
+}
+
+func clientEventBatchToProto(b logger.ClientEventBatch) *pb.ClientEventBatch {
+	pbBatch := &pb.ClientEventBatch{
+		App:       b.App,
+		Release:   b.Release,
+		Sdk:       b.SDK,
+		SessionId: b.SessionID,
+		ViewId:    b.ViewID,
+		Route:     b.Route,
+		UrlPath:   b.URLPath,
+		Host:      b.Host,
+		HostId:    b.HostID,
+		ClientIp:  b.ClientIP,
+		UserAgent: b.UserAgent,
+		Events:    make([]*pb.ClientEvent, 0, len(b.Events)),
+	}
+	if !b.ReceivedAt.IsZero() {
+		pbBatch.ReceivedAt = b.ReceivedAt.UTC().Format(time.RFC3339Nano)
+	}
+	for _, ev := range b.Events {
+		pe := &pb.ClientEvent{
+			EventName: ev.EventName,
+			TraceId:   ev.TraceID,
+			SpanId:    ev.SpanID,
+			Attrs:     ev.Attrs,
+		}
+		if !ev.ClientTS.IsZero() {
+			pe.ClientTs = ev.ClientTS.UTC().Format(time.RFC3339Nano)
+		}
+		pbBatch.Events = append(pbBatch.Events, pe)
+	}
+	return pbBatch
+}
+
 // SearchContainerLogs runs a paginated container-log search. 30s timeout
 // matches the http log search ceiling — older chunks fall back to seq
 // scan once compressed.
@@ -300,6 +346,14 @@ func (r *RemoteLogSink) SearchContainerLogs(ctx context.Context, req *pb.SearchC
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	return r.client.SearchContainerLogs(ctx, req)
+}
+
+// SearchClientEvents runs a paginated client-event (RUM) search for the
+// admin UI. 30s timeout matches the other log searches.
+func (r *RemoteLogSink) SearchClientEvents(ctx context.Context, req *pb.SearchClientEventsRequest) (*pb.SearchClientEventsResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	return r.client.SearchClientEvents(ctx, req)
 }
 
 // ListContainersFromDialog lists dimension-table rows. Distinct method

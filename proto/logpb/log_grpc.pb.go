@@ -30,6 +30,8 @@ const (
 	LogService_GetEnrichmentStatus_FullMethodName    = "/logpb.LogService/GetEnrichmentStatus"
 	LogService_GetLogRawJWT_FullMethodName           = "/logpb.LogService/GetLogRawJWT"
 	LogService_SendContainerLogBatch_FullMethodName  = "/logpb.LogService/SendContainerLogBatch"
+	LogService_SendClientEventBatch_FullMethodName   = "/logpb.LogService/SendClientEventBatch"
+	LogService_SearchClientEvents_FullMethodName     = "/logpb.LogService/SearchClientEvents"
 	LogService_SearchContainerLogs_FullMethodName    = "/logpb.LogService/SearchContainerLogs"
 	LogService_ListContainers_FullMethodName         = "/logpb.LogService/ListContainers"
 	LogService_GetContainerLogContext_FullMethodName = "/logpb.LogService/GetContainerLogContext"
@@ -75,6 +77,15 @@ type LogServiceClient interface {
 	// muvon-deployer (central host) or the agent's dockerwatch (remote hosts).
 	// Fire-and-forget — caller does not wait for write to PostgreSQL.
 	SendContainerLogBatch(ctx context.Context, in *ContainerLogBatch, opts ...grpc.CallOption) (*Ack, error)
+	// --- Client Events (browser RUM telemetry) ---
+	// SendClientEventBatch ingests a batch of browser-side events forwarded by
+	// the edge (central MUVON or an agent) after server-side enrichment. The
+	// edge has already replied 204 to the browser — fire-and-forget.
+	SendClientEventBatch(ctx context.Context, in *ClientEventBatch, opts ...grpc.CallOption) (*Ack, error)
+	// SearchClientEvents queries persisted browser events for the admin UI,
+	// filtered by trace_id (cross-channel join), session, app, host, or event
+	// name. Cursor pagination over UUIDv7 ids, newest-first.
+	SearchClientEvents(ctx context.Context, in *SearchClientEventsRequest, opts ...grpc.CallOption) (*SearchClientEventsResponse, error)
 	// SearchContainerLogs queries persisted container logs with filters and
 	// cursor-based pagination on UUIDv7 ids. Supports free-text ILIKE and
 	// structured attrs (jsonb_path_ops) lookup.
@@ -225,6 +236,26 @@ func (c *logServiceClient) SendContainerLogBatch(ctx context.Context, in *Contai
 	return out, nil
 }
 
+func (c *logServiceClient) SendClientEventBatch(ctx context.Context, in *ClientEventBatch, opts ...grpc.CallOption) (*Ack, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Ack)
+	err := c.cc.Invoke(ctx, LogService_SendClientEventBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *logServiceClient) SearchClientEvents(ctx context.Context, in *SearchClientEventsRequest, opts ...grpc.CallOption) (*SearchClientEventsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SearchClientEventsResponse)
+	err := c.cc.Invoke(ctx, LogService_SearchClientEvents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *logServiceClient) SearchContainerLogs(ctx context.Context, in *SearchContainerLogsRequest, opts ...grpc.CallOption) (*SearchContainerLogsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SearchContainerLogsResponse)
@@ -313,6 +344,15 @@ type LogServiceServer interface {
 	// muvon-deployer (central host) or the agent's dockerwatch (remote hosts).
 	// Fire-and-forget — caller does not wait for write to PostgreSQL.
 	SendContainerLogBatch(context.Context, *ContainerLogBatch) (*Ack, error)
+	// --- Client Events (browser RUM telemetry) ---
+	// SendClientEventBatch ingests a batch of browser-side events forwarded by
+	// the edge (central MUVON or an agent) after server-side enrichment. The
+	// edge has already replied 204 to the browser — fire-and-forget.
+	SendClientEventBatch(context.Context, *ClientEventBatch) (*Ack, error)
+	// SearchClientEvents queries persisted browser events for the admin UI,
+	// filtered by trace_id (cross-channel join), session, app, host, or event
+	// name. Cursor pagination over UUIDv7 ids, newest-first.
+	SearchClientEvents(context.Context, *SearchClientEventsRequest) (*SearchClientEventsResponse, error)
 	// SearchContainerLogs queries persisted container logs with filters and
 	// cursor-based pagination on UUIDv7 ids. Supports free-text ILIKE and
 	// structured attrs (jsonb_path_ops) lookup.
@@ -376,6 +416,12 @@ func (UnimplementedLogServiceServer) GetLogRawJWT(context.Context, *GetLogRawJWT
 }
 func (UnimplementedLogServiceServer) SendContainerLogBatch(context.Context, *ContainerLogBatch) (*Ack, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendContainerLogBatch not implemented")
+}
+func (UnimplementedLogServiceServer) SendClientEventBatch(context.Context, *ClientEventBatch) (*Ack, error) {
+	return nil, status.Error(codes.Unimplemented, "method SendClientEventBatch not implemented")
+}
+func (UnimplementedLogServiceServer) SearchClientEvents(context.Context, *SearchClientEventsRequest) (*SearchClientEventsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SearchClientEvents not implemented")
 }
 func (UnimplementedLogServiceServer) SearchContainerLogs(context.Context, *SearchContainerLogsRequest) (*SearchContainerLogsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SearchContainerLogs not implemented")
@@ -604,6 +650,42 @@ func _LogService_SendContainerLogBatch_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LogService_SendClientEventBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClientEventBatch)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).SendClientEventBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_SendClientEventBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).SendClientEventBatch(ctx, req.(*ClientEventBatch))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LogService_SearchClientEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SearchClientEventsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LogServiceServer).SearchClientEvents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LogService_SearchClientEvents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LogServiceServer).SearchClientEvents(ctx, req.(*SearchClientEventsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _LogService_SearchContainerLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SearchContainerLogsRequest)
 	if err := dec(in); err != nil {
@@ -740,6 +822,14 @@ var LogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SendContainerLogBatch",
 			Handler:    _LogService_SendContainerLogBatch_Handler,
+		},
+		{
+			MethodName: "SendClientEventBatch",
+			Handler:    _LogService_SendClientEventBatch_Handler,
+		},
+		{
+			MethodName: "SearchClientEvents",
+			Handler:    _LogService_SearchClientEvents_Handler,
 		},
 		{
 			MethodName: "SearchContainerLogs",

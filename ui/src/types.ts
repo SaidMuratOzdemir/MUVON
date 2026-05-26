@@ -33,6 +33,9 @@ export interface Host {
   // Opt-in: persist the raw bearer token alongside each log row. UI shows
   // a stern warning when toggling on; the reveal flow audits every read.
   store_raw_jwt?: boolean;
+  // Opt-in: accept browser telemetry (RUM) beacons at the reserved
+  // /__muvon/rum path for this host. Off by default.
+  rum_enabled?: boolean;
   // Which MUVON instance terminates this host. "central" = the central
   // MUVON binary, "agent" = the edge agent identified by target_agent_id.
   // Operators see the corresponding public IP as their DNS A record
@@ -468,6 +471,47 @@ export interface ContainerLogSearchResponse {
   data: ContainerLogRow[];
   next_before_cursor?: string;
   next_after_cursor?: string;
+}
+
+// Browser RUM telemetry. trace_id is the cross-channel join key into
+// http_logs; session_id groups a single visit.
+export interface ClientEventRow {
+  id: string;
+  time: string;
+  client_ts?: string;
+  app?: string;
+  release?: string;
+  host_id?: string;
+  host?: string;
+  session_id?: string;
+  view_id?: string;
+  route?: string;
+  url_path?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_name: string;
+  client_ip?: string;
+  country?: string;
+  city?: string;
+  user_agent?: string;
+  attrs_json?: string;
+}
+
+export interface ClientEventSearchParams {
+  trace_id?: string;
+  session_id?: string;
+  app?: string;
+  host_id?: string;
+  event_name?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  before?: string;
+}
+
+export interface ClientEventSearchResponse {
+  data: ClientEventRow[];
+  next_before_cursor?: string;
 }
 
 export interface IngestStatus {
