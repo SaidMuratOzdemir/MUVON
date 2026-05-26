@@ -60,6 +60,11 @@ type GlobalConfig struct {
 	LetsEncryptStaging bool
 	LetsEncryptEmail   string
 
+	// Browser telemetry (RUM) — served to clients at /__muvon/rum/config so
+	// the edge controls overall sampling and beacon size centrally.
+	RUMSampleRate    float64 // 0..1, default 1 (send everything)
+	RUMMaxBatchBytes int     // client beacon cap, default 65536
+
 	// JWT Identity settings
 	JWTIdentityEnabled bool
 	JWTIdentityMode    string   // "verify" or "decode"
@@ -209,6 +214,9 @@ func loadGlobalConfig(ctx context.Context, database *db.DB, box *secret.Box) (Gl
 	g.EnableBodyCapture = getBoolSetting(settings, "enable_body_capture", g.EnableBodyCapture)
 	g.LetsEncryptStaging = getBoolSetting(settings, "letsencrypt_staging", g.LetsEncryptStaging)
 	g.LetsEncryptEmail = getStrSetting(settings, "letsencrypt_email", g.LetsEncryptEmail)
+
+	g.RUMSampleRate = getFloatSetting(settings, "rum_sample_rate", 1.0)
+	g.RUMMaxBatchBytes = getIntSetting(settings, "rum_max_batch_bytes", 65536)
 
 	// JWT Identity
 	g.JWTIdentityEnabled = getBoolSetting(settings, "jwt_identity_enabled", false)

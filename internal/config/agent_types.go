@@ -40,6 +40,9 @@ type AgentSettings struct {
 	EnableBodyCapture  bool   `json:"enable_body_capture"`
 	MaxBodyCaptureSize int    `json:"max_body_capture_size"`
 
+	RUMSampleRate    float64 `json:"rum_sample_rate"`
+	RUMMaxBatchBytes int     `json:"rum_max_batch_bytes"`
+
 	JWTIdentityEnabled bool     `json:"jwt_identity_enabled"`
 	JWTIdentityMode    string   `json:"jwt_identity_mode"`
 	JWTClaims          []string `json:"jwt_claims"`
@@ -158,6 +161,9 @@ func globalToAgentSettings(g GlobalConfig) AgentSettings {
 		EnableBodyCapture:  g.EnableBodyCapture,
 		MaxBodyCaptureSize: g.MaxBodyCaptureSize,
 
+		RUMSampleRate:    g.RUMSampleRate,
+		RUMMaxBatchBytes: g.RUMMaxBatchBytes,
+
 		JWTIdentityEnabled: g.JWTIdentityEnabled,
 		JWTIdentityMode:    g.JWTIdentityMode,
 		JWTClaims:          g.JWTClaims,
@@ -181,6 +187,9 @@ func agentSettingsToGlobal(s AgentSettings) GlobalConfig {
 		LetsEncryptStaging: s.LetsEncryptStaging,
 		EnableBodyCapture:  s.EnableBodyCapture,
 		MaxBodyCaptureSize: s.MaxBodyCaptureSize,
+
+		RUMSampleRate:    s.RUMSampleRate,
+		RUMMaxBatchBytes: s.RUMMaxBatchBytes,
 
 		JWTIdentityEnabled: s.JWTIdentityEnabled,
 		JWTIdentityMode:    s.JWTIdentityMode,

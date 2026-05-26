@@ -1138,4 +1138,16 @@ SELECT add_retention_policy('client_events', INTERVAL '30 days', if_not_exists =
 		name: "add_hosts_rum_enabled", product: "muvon",
 		sql: `ALTER TABLE hosts ADD COLUMN IF NOT EXISTS rum_enabled BOOLEAN NOT NULL DEFAULT false;`,
 	},
+	// RUM sampling knobs served to browser clients via /__muvon/rum/config.
+	// rum_sample_rate (0..1) is the overall send probability; max_batch_bytes
+	// caps beacon size. Scalars (not a per-event map) so they ride the typed
+	// config getters + agent settings push cleanly; the wire format still
+	// carries a sample_rates object for future per-event tuning.
+	{
+		name: "seed_rum_settings", product: "muvon",
+		sql: `INSERT INTO settings (key, value) VALUES
+			('rum_sample_rate', '1'),
+			('rum_max_batch_bytes', '65536')
+		ON CONFLICT (key) DO NOTHING;`,
+	},
 }

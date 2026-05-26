@@ -1,7 +1,8 @@
-.PHONY: build build-linux clean test test-race deps proto ui-install ui-dev ui-build
+.PHONY: build build-linux clean test test-race deps proto clientlib ui-install ui-dev ui-build
 
 BUILD_DIR    = ./build
 UI_DIR       = ./ui
+CLIENTLIB_DIR= ./clientlib
 FRONTEND_DIST= ./frontend/dist
 
 # Version + commit are injected into binaries via -ldflags so `muvon
@@ -15,7 +16,7 @@ SERVICES = muvon dialog-siem agent muvon-deployer
 
 # ── Build (native) ──────────────────────────────────────────
 
-build: ui-build
+build: clientlib ui-build
 	@mkdir -p $(BUILD_DIR)
 	@for svc in $(SERVICES); do \
 		echo "Building $$svc..."; \
@@ -25,7 +26,7 @@ build: ui-build
 
 # ── Build (minimal: muvon + agent only, no diaLOG) ─────
 
-build-minimal: ui-build
+build-minimal: clientlib ui-build
 	@mkdir -p $(BUILD_DIR)
 	@for svc in muvon agent; do \
 		echo "Building $$svc..."; \
@@ -33,7 +34,7 @@ build-minimal: ui-build
 	done
 	@echo "Done: $(BUILD_DIR)/"
 
-build-minimal-linux: ui-build
+build-minimal-linux: clientlib ui-build
 	@mkdir -p $(BUILD_DIR)
 	@for svc in muvon agent; do \
 		echo "Building $$svc (linux/amd64)..."; \
@@ -44,7 +45,7 @@ build-minimal-linux: ui-build
 
 # ── Build (Linux amd64 cross-compile) ──────────────────────
 
-build-linux: ui-build
+build-linux: clientlib ui-build
 	@mkdir -p $(BUILD_DIR)
 	@for svc in $(SERVICES); do \
 		echo "Building $$svc (linux/amd64)..."; \
@@ -104,6 +105,18 @@ ui-build:
 		cp -r $(UI_DIR)/dist/* $(FRONTEND_DIST)/; \
 	else \
 		echo "UI directory not found, skipping UI build"; \
+	fi
+
+# Builds the embedded RUM browser bundle (clientlib/dist/rum.js). The output is
+# committed (like the proto .pb.go), so a Node-less `go build` still works; this
+# target regenerates it when the TS source changes.
+clientlib:
+	@if [ -d "$(CLIENTLIB_DIR)" ] && [ -f "$(CLIENTLIB_DIR)/package.json" ]; then \
+		echo "Building client lib..."; \
+		npm --prefix $(CLIENTLIB_DIR) ci; \
+		npm --prefix $(CLIENTLIB_DIR) run build; \
+	else \
+		echo "clientlib directory not found, skipping"; \
 	fi
 
 # ── Deploy to VPS ───────────────────────────────────────────

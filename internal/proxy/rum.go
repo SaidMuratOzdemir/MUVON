@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"muvon/clientlib"
 	"muvon/internal/config"
 	"muvon/internal/logger"
 )
@@ -18,17 +19,13 @@ import (
 const (
 	rumIngestPath   = "/__muvon/rum"
 	rumConfigPath   = "/__muvon/rum/config"
+	rumScriptPath   = "/__muvon/rum.js"
 	rumMaxBodyBytes = 64 << 10 // 64 KiB — matches the client batch cap.
 	rumAttrMaxLen   = 1024     // per-attr value cap, keeps the JSONB index sane.
 )
 
-// defaultRUMConfig is what /__muvon/rum/config serves until admin-tunable
-// sampling lands. The browser client reads sample_rates to decide what to
-// send and max_batch_bytes to size beacons.
-const defaultRUMConfig = `{"sample_rates":{"default":1},"max_batch_bytes":65536}`
-
 func isRUMPath(p string) bool {
-	return p == rumIngestPath || p == rumConfigPath
+	return p == rumIngestPath || p == rumConfigPath || p == rumScriptPath
 }
 
 // rumPayload is the wire shape the browser POSTs: one envelope
@@ -68,15 +65,45 @@ func (h *Handler) serveRUM(w http.ResponseWriter, r *http.Request, hc *config.Ho
 		return
 	}
 	switch r.URL.Path {
+	case rumScriptPath:
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET, OPTIONS")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("ETag", clientlib.ETag)
+		if r.Header.Get("If-None-Match") == clientlib.ETag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = w.Write(clientlib.Bundle)
 	case rumConfigPath:
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", "GET, OPTIONS")
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
+		g := h.configHolder.Get().Global
+		rate := g.RUMSampleRate
+		if rate <= 0 || rate > 1 {
+			rate = 1
+		}
+		maxBytes := g.RUMMaxBatchBytes
+		if maxBytes <= 0 {
+			maxBytes = 65536
+		}
+		body, _ := json.Marshal(struct {
+			SampleRates   map[string]float64 `json:"sample_rates"`
+			MaxBatchBytes int                `json:"max_batch_bytes"`
+		}{
+			SampleRates:   map[string]float64{"default": rate},
+			MaxBatchBytes: maxBytes,
+		})
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "public, max-age=300")
-		_, _ = io.WriteString(w, defaultRUMConfig)
+		_, _ = w.Write(body)
 	case rumIngestPath:
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", "POST, OPTIONS")

@@ -1,0 +1,16 @@
+{
+  "name": "muvon-rum",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MUVON browser telemetry (RUM) client — ships to /__muvon/rum. Not an independent SDK; versioned with the muvon edge that serves it.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "esbuild src/index.ts --bundle --minify --format=iife --target=es2018 --outfile=dist/rum.js --legal-comments=none",
+    "check": "npm run typecheck && npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.1",
+    "typescript": "^5.6.3"
+  }
+}

@@ -13,6 +13,7 @@
 /frontend/dist/
 /ui/node_modules/
 /ui/dist/
+/clientlib/node_modules/
 
 # ── Dependencies ────────────────────────────────────────────
 /vendor/
