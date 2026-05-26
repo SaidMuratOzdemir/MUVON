@@ -27,6 +27,29 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.35] - 2026-05-27
+
+### BUGFIXES
+
+- **Managed deploy `recreate` + routable component reddediliyor**: recreate
+  stratejisi candidate'tan önce eski instance'ı durdurur; routable bir serviste
+  candidate health fail ederse sert kesinti olurdu. recreate yalnız
+  non-routable singleton'lar (celery-beat gibi) için — routable servisler
+  `blue_green` kullanmalı. Component create/update **merged input** üzerinde
+  doğrulanıyor (partial update'i bozmaz).
+
+### ENHANCEMENTS
+
+- **`health_mode=running` crash-loop tespiti sertleştirildi**: RestartCount
+  baseline'ı ilk inspect'te (state'ten bağımsız) alınıp herhangi bir artış
+  anında unhealthy sayılıyor — `unless-stopped` ile hızlı crash-restart eden
+  container artık grace penceresinden "healthy" sızamaz.
+- **`health_mode=exec` güncelleme doğrulaması**: `health_command` merged
+  input'tan kontrol ediliyor; yalnız mode'u `exec`'e çeviren (komutu yeniden
+  göndermeyen) update artık yanlışlıkla reddedilmiyor.
+
+---
+
 ## [0.1.34] - 2026-05-27
 
 ### FEATURES
