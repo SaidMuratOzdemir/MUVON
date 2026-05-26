@@ -427,6 +427,12 @@ func (s *Service) waitHealthyRunning(ctx context.Context, component db.DeployCom
 		timeout = graceWindow + 2*time.Second
 	}
 	deadline := time.Now().Add(timeout)
+	// baseRestart is captured on the FIRST successful inspect, whatever the
+	// state — so a container that crash-restarts before we ever see it
+	// "running" is still measured against its true starting count. Any
+	// increase thereafter is a crash-loop (restart policy is unless-stopped),
+	// which fails immediately rather than risking a "running" snapshot
+	// between two restarts slipping through the grace window.
 	baseRestart := -1
 	var runningSince time.Time
 	var lastErr error
@@ -435,23 +441,23 @@ func (s *Service) waitHealthyRunning(ctx context.Context, component db.DeployCom
 		if err != nil {
 			lastErr = err
 		} else {
+			if baseRestart < 0 {
+				baseRestart = st.RestartCount
+			}
+			if st.RestartCount > baseRestart {
+				return fmt.Errorf("container crash-looping (restarts=%d)", st.RestartCount)
+			}
 			switch st.State {
 			case "exited", "dead":
 				return fmt.Errorf("container exited (code %d) before becoming healthy", st.ExitCode)
 			case "running":
-				if baseRestart < 0 {
-					baseRestart = st.RestartCount
-				}
-				if st.RestartCount > baseRestart {
-					return fmt.Errorf("container crash-looping (restarts=%d)", st.RestartCount)
-				}
 				if runningSince.IsZero() {
 					runningSince = time.Now()
 				}
 				if time.Since(runningSince) >= graceWindow {
 					return nil
 				}
-			default: // created, restarting, paused — not yet stable
+			default: // created, restarting, paused — not yet stable; restart the clock
 				runningSince = time.Time{}
 				lastErr = fmt.Errorf("container state %q", st.State)
 			}

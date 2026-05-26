@@ -170,14 +170,10 @@ func validateComponentForCreate(req componentRequest) error {
 // create and update so an invalid mode can't slip in via either path.
 func validateComponentEnums(req componentRequest) error {
 	if req.HealthMode != nil {
-		mode := strings.TrimSpace(*req.HealthMode)
-		switch mode {
+		switch strings.TrimSpace(*req.HealthMode) {
 		case "", "http", "exec", "running":
 		default:
 			return errors.New("health_mode must be http, exec, or running")
-		}
-		if mode == "exec" && (req.HealthCommand == nil || len(*req.HealthCommand) == 0) {
-			return errors.New("health_command is required when health_mode is exec")
 		}
 	}
 	if req.DeployStrategy != nil {
@@ -186,6 +182,25 @@ func validateComponentEnums(req componentRequest) error {
 		default:
 			return errors.New("deploy_strategy must be blue_green or recreate")
 		}
+	}
+	return nil
+}
+
+// validateMergedComponent guards invariants that depend on the FINAL merged
+// state (base + request overrides), so a partial update can't violate them by
+// omitting a field. Call after buildComponentInput.
+func validateMergedComponent(in db.DeployComponentInput) error {
+	// exec health needs a probe command — checked on the merged input so an
+	// update that only flips health_mode (command already stored) still works.
+	if in.HealthMode == "exec" && len(in.HealthCommand) == 0 {
+		return errors.New("health_command is required when health_mode is exec")
+	}
+	// recreate stops the old instance before the candidate, so a routable
+	// service would take a hard outage if the candidate then failed health.
+	// recreate is for non-routable singletons (e.g. celery-beat); routable
+	// services must use blue_green for zero-downtime rollout.
+	if in.IsRoutable && in.DeployStrategy == "recreate" {
+		return errors.New("deploy_strategy=recreate is only allowed for non-routable components; routable services must use blue_green")
 	}
 	return nil
 }
@@ -407,6 +422,10 @@ func (s *Server) handleCreateDeployComponent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	in := buildComponentInput(req, componentDefaults(), project.ID)
+	if err := validateMergedComponent(in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	// AgentID is honoured only at create time. We apply it here instead of
 	// in buildComponentInput so update handlers stay safe — they share the
 	// builder, and CLAUDE.md forbids switching agent_id after creation.
@@ -469,6 +488,10 @@ func (s *Server) handleUpdateDeployComponent(w http.ResponseWriter, r *http.Requ
 	// Update never reassigns the slug — path is the source of truth.
 	req.Slug = existing.Slug
 	in := buildComponentInput(req, existing, existing.ProjectID)
+	if err := validateMergedComponent(in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 	// Preserve existing ciphertext when the UI submits the mask for a
 	// still-secret key. The user only re-enters secrets they want to rotate.
 	in.Env = mergeEnvForUpdate(existing.Env, in.Env, existing.EnvSecretKeys)
