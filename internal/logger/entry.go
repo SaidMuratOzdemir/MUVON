@@ -39,6 +39,12 @@ type Entry struct {
 	// GeoIP enrichment
 	Country         string
 	City            string
+
+	// W3C Trace Context — lowercase hex. TraceID is the 128-bit id (32 chars)
+	// derived from the request's UUIDv7; SpanID is the edge-assigned 64-bit
+	// span (16 chars). Join key across http_logs / container_logs / client_events.
+	TraceID         string
+	SpanID          string
 }
 
 // UserIdentity represents extracted JWT identity information.

@@ -31,6 +31,12 @@ func applyCORSHeaders(w http.ResponseWriter, r *http.Request, route db.Route) bo
 		h.Set("Access-Control-Allow-Credentials", "true")
 	}
 
+	// Expose Server-Timing so cross-origin browser JS can read the trace-id
+	// the proxy reflects (fetch response.headers); Timing-Allow-Origin unlocks
+	// the PerformanceServerTiming path for the same value.
+	h.Add("Access-Control-Expose-Headers", "Server-Timing")
+	h.Set("Timing-Allow-Origin", allowedOrigin)
+
 	// Preflight
 	if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 		h.Set("Access-Control-Allow-Methods", route.CORSMethods)

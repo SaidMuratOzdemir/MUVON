@@ -45,8 +45,12 @@ type LogEntry struct {
 	// Identity enrichment (JWT)
 	UserIdentity *UserIdentity `protobuf:"bytes,24,opt,name=user_identity,json=userIdentity,proto3" json:"user_identity,omitempty"`
 	// GeoIP enrichment
-	Country       string `protobuf:"bytes,25,opt,name=country,proto3" json:"country,omitempty"`
-	City          string `protobuf:"bytes,26,opt,name=city,proto3" json:"city,omitempty"`
+	Country string `protobuf:"bytes,25,opt,name=country,proto3" json:"country,omitempty"`
+	City    string `protobuf:"bytes,26,opt,name=city,proto3" json:"city,omitempty"`
+	// W3C Trace Context — lowercase hex, 32-char trace-id + 16-char span-id.
+	// Join key across http_logs / container_logs / client_events.
+	TraceId       string `protobuf:"bytes,27,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
+	SpanId        string `protobuf:"bytes,28,opt,name=span_id,json=spanId,proto3" json:"span_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -231,6 +235,20 @@ func (x *LogEntry) GetCountry() string {
 func (x *LogEntry) GetCity() string {
 	if x != nil {
 		return x.City
+	}
+	return ""
+}
+
+func (x *LogEntry) GetTraceId() string {
+	if x != nil {
+		return x.TraceId
+	}
+	return ""
+}
+
+func (x *LogEntry) GetSpanId() string {
+	if x != nil {
+		return x.SpanId
 	}
 	return ""
 }
@@ -2654,7 +2672,7 @@ var File_proto_logpb_log_proto protoreflect.FileDescriptor
 
 const file_proto_logpb_log_proto_rawDesc = "" +
 	"\n" +
-	"\x15proto/logpb/log.proto\x12\x05logpb\"\xd3\a\n" +
+	"\x15proto/logpb/log.proto\x12\x05logpb\"\x87\b\n" +
 	"\bLogEntry\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\tR\trequestId\x12\x1c\n" +
@@ -2680,7 +2698,9 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x15is_response_truncated\x18\x13 \x01(\bR\x13isResponseTruncated\x128\n" +
 	"\ruser_identity\x18\x18 \x01(\v2\x13.logpb.UserIdentityR\fuserIdentity\x12\x18\n" +
 	"\acountry\x18\x19 \x01(\tR\acountry\x12\x12\n" +
-	"\x04city\x18\x1a \x01(\tR\x04city\x1aA\n" +
+	"\x04city\x18\x1a \x01(\tR\x04city\x12\x19\n" +
+	"\btrace_id\x18\x1b \x01(\tR\atraceId\x12\x17\n" +
+	"\aspan_id\x18\x1c \x01(\tR\x06spanId\x1aA\n" +
 	"\x13RequestHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aB\n" +

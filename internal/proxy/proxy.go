@@ -2,6 +2,9 @@ package proxy
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -138,9 +142,31 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 		r = r.WithContext(ctx)
 	}
 
-	// Generate time-ordered UUID v7 for this request — flows to SIEM
-	reqID := uuid.Must(uuid.NewV7()).String()
+	// Time-ordered UUID v7 for this request. Its string form is the
+	// human-readable X-Request-ID (unchanged contract); its 128 bits double
+	// as the W3C trace-id so a single value correlates proxy, container and
+	// (later) client-side telemetry.
+	reqUUID := uuid.Must(uuid.NewV7())
+	reqID := reqUUID.String()
 	r.Header.Set("X-Request-ID", reqID)
+
+	// Trace context. Honour a syntactically valid inbound traceparent's
+	// trace-id (distributed continuation); otherwise derive it from the
+	// request UUID. A fresh span-id is minted for this hop, and traceparent
+	// is forwarded upstream. Malformed inbound headers are ignored, never
+	// rejected — fail-open.
+	traceID, spanID := traceContext(r, reqUUID, hc.Host.TrustedProxies)
+	traceparent := "00-" + traceID + "-" + spanID + "-01"
+	r.Header.Set("traceparent", traceparent)
+
+	// Reflect the id to the browser. Server-Timing is the only response
+	// header the Performance API / fetch can read for correlation; CORS
+	// routes additionally expose it (see applyCORSHeaders). Skipped for
+	// WebSocket upgrades, whose response headers are special.
+	if !isUpgrade {
+		w.Header().Set("Server-Timing", `traceparent;desc="`+traceparent+`"`)
+		w.Header().Set("X-Request-ID", reqID)
+	}
 
 	backend := pickBackend(route)
 	if backend.URL == "" {
@@ -256,6 +282,8 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 		RequestHeaders: reqHeaders,
 		ResponseTimeMs: int(elapsed.Milliseconds()),
 		UserAgent:      r.UserAgent(),
+		TraceID:        traceID,
+		SpanID:         spanID,
 	}
 
 	if reqCapture != nil {
@@ -387,16 +415,65 @@ func stripPort(host string) string {
 	return host
 }
 
-// clientIPFor returns the real client IP, trusting X-Forwarded-For only when
-// the direct connection (RemoteAddr) is in the trusted proxies list.
-// If trustedProxies is empty, falls back to RemoteAddr (conservative default).
-func clientIPFor(r *http.Request, trustedProxies []string) string {
+// traceparentRe matches a W3C Trace Context version-00 header:
+// "00-<32 hex trace-id>-<16 hex parent-id>-<2 hex flags>".
+var traceparentRe = regexp.MustCompile(`^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$`)
+
+const zeroTraceID = "00000000000000000000000000000000"
+
+// traceContext resolves the trace-id and mints a fresh span-id for this hop.
+// An inbound traceparent is honoured ONLY when the direct connection is a
+// trusted proxy (same gate as clientIPFor) and its trace-id is a valid,
+// non-zero W3C value — otherwise the trace-id is the lowercase hex of the
+// request UUID's 128 bits. On a public edge an untrusted client must not be
+// able to pin its own trace-id and collide with unrelated requests. Malformed
+// or untrusted headers are silently ignored — the proxy never rejects a
+// request over a trace header (fail-open).
+func traceContext(r *http.Request, reqUUID uuid.UUID, trustedProxies []string) (traceID, spanID string) {
+	if directProxyTrusted(r, trustedProxies) {
+		if tp := r.Header.Get("traceparent"); tp != "" {
+			if m := traceparentRe.FindStringSubmatch(strings.ToLower(tp)); m != nil && m[1] != zeroTraceID {
+				traceID = m[1]
+			}
+		}
+	}
+	if traceID == "" {
+		traceID = hex.EncodeToString(reqUUID[:])
+	}
+	return traceID, newSpanID()
+}
+
+// newSpanID returns a random 64-bit span-id as 16 lowercase hex chars. On the
+// (practically impossible) rand failure it falls back to nanosecond entropy —
+// a colliding span-id is harmless since the trace-id carries the join.
+func newSpanID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		binary.BigEndian.PutUint64(b[:], uint64(time.Now().UnixNano()))
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// directProxyTrusted reports whether the direct connection (RemoteAddr) is in
+// the trusted proxies list. It is the gate for honouring client-supplied
+// forwarding/trace headers (X-Forwarded-For, X-Real-IP, traceparent). Empty
+// list = trust nothing (conservative default).
+func directProxyTrusted(r *http.Request, trustedProxies []string) bool {
+	if len(trustedProxies) == 0 {
+		return false
+	}
 	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if remoteHost == "" {
 		remoteHost = r.RemoteAddr
 	}
+	return isTrustedProxy(remoteHost, trustedProxies)
+}
 
-	if len(trustedProxies) > 0 && isTrustedProxy(remoteHost, trustedProxies) {
+// clientIPFor returns the real client IP, trusting X-Forwarded-For only when
+// the direct connection (RemoteAddr) is in the trusted proxies list.
+// If trustedProxies is empty, falls back to RemoteAddr (conservative default).
+func clientIPFor(r *http.Request, trustedProxies []string) string {
+	if directProxyTrusted(r, trustedProxies) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			// Leftmost entry is the original client.
 			if i := strings.Index(xff, ","); i != -1 {
@@ -409,6 +486,10 @@ func clientIPFor(r *http.Request, trustedProxies []string) string {
 		}
 	}
 
+	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if remoteHost == "" {
+		remoteHost = r.RemoteAddr
+	}
 	return remoteHost
 }
 

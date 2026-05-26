@@ -115,6 +115,8 @@ func (w *worker) flush(batch []Entry) {
 			nilIfEmpty(e.Country),
 			nilIfEmpty(e.City),
 			nilIfEmpty(e.RawJWT),
+			nilIfEmpty(e.TraceID),
+			nilIfEmpty(e.SpanID),
 		})
 	}
 
@@ -123,7 +125,7 @@ func (w *worker) flush(batch []Entry) {
 		[]string{"id", "timestamp", "host", "client_ip", "method", "path", "query_string",
 			"request_headers", "response_status", "response_headers", "response_time_ms",
 			"request_size", "response_size", "user_agent", "error",
-			"user_identity", "country", "city", "raw_jwt"},
+			"user_identity", "country", "city", "raw_jwt", "trace_id", "span_id"},
 		pgx.CopyFromRows(logRows),
 	)
 	if err != nil {

@@ -382,6 +382,8 @@ func protoToEntry(p *pb.LogEntry) logger.Entry {
 		IsResponseTruncated: p.IsResponseTruncated,
 		Country:             p.Country,
 		City:                p.City,
+		TraceID:             p.TraceId,
+		SpanID:              p.SpanId,
 	}
 	if len(p.RequestHeaders) > 0 {
 		e.RequestHeaders = p.RequestHeaders
@@ -422,6 +424,8 @@ func entryToProto(e logger.Entry) *pb.LogEntry {
 		ResponseHeaders:     e.ResponseHeaders,
 		Country:             e.Country,
 		City:                e.City,
+		TraceId:             e.TraceID,
+		SpanId:              e.SpanID,
 	}
 	if e.UserIdentity != nil {
 		p.UserIdentity = &pb.UserIdentity{
@@ -468,6 +472,12 @@ func dbEntryToProto(l db.LogEntry, body db.LogBody) *pb.LogEntry {
 	}
 	if l.City != nil {
 		p.City = *l.City
+	}
+	if l.TraceID != nil {
+		p.TraceId = *l.TraceID
+	}
+	if l.SpanID != nil {
+		p.SpanId = *l.SpanID
 	}
 	if body.RequestBody != nil {
 		p.RequestBody = []byte(*body.RequestBody)

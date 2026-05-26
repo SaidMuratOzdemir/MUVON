@@ -102,6 +102,11 @@ message LogEntry {
   // GeoIP enrichment
   string country             = 25;
   string city                = 26;
+
+  // W3C Trace Context — lowercase hex, 32-char trace-id + 16-char span-id.
+  // Join key across http_logs / container_logs / client_events.
+  string trace_id            = 27;
+  string span_id             = 28;
 }
 
 message UserIdentity {

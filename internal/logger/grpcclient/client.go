@@ -368,6 +368,8 @@ func entryToProto(e logger.Entry) *pb.LogEntry {
 		ResponseHeaders:     e.ResponseHeaders,
 		Country:             e.Country,
 		City:                e.City,
+		TraceId:             e.TraceID,
+		SpanId:              e.SpanID,
 	}
 	if e.UserIdentity != nil {
 		p.UserIdentity = &pb.UserIdentity{

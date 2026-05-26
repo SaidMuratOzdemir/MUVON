@@ -769,6 +769,8 @@ type LogEntry struct {
 	Note            *string         `json:"note,omitempty"`
 	Country         *string         `json:"country,omitempty"`
 	City            *string         `json:"city,omitempty"`
+	TraceID         *string         `json:"trace_id,omitempty"`
+	SpanID          *string         `json:"span_id,omitempty"`
 	// JSONB column populated by the log pipeline's identity enricher.
 	// Kept as RawMessage so the admin panel receives the exact shape the
 	// enricher produced (claims, verified, source, exp_expired).
@@ -1001,7 +1003,8 @@ func (d *DB) GetLogDetail(ctx context.Context, id string) (LogEntry, LogBody, er
 		`SELECT l.id::text, l.timestamp, l.host, l.client_ip, l.method, l.path, l.query_string,
 		        l.request_headers, l.response_status, l.response_headers, l.response_time_ms,
 		        l.request_size, l.response_size, l.user_agent, l.error,
-		        l.is_starred, n.note, l.country, l.city, l.user_identity
+		        l.is_starred, n.note, l.country, l.city, l.user_identity,
+		        l.trace_id, l.span_id
 		 FROM http_logs l
 		 LEFT JOIN log_notes n ON n.log_id = l.id
 		 WHERE l.id = $1 AND l.timestamp BETWEEN $2 AND $3`, id, rangeStart, rangeEnd,
@@ -1009,7 +1012,7 @@ func (d *DB) GetLogDetail(ctx context.Context, id string) (LogEntry, LogBody, er
 		&e.QueryString, &e.RequestHeaders, &e.ResponseStatus, &e.ResponseHeaders,
 		&e.ResponseTimeMs, &e.RequestSize, &e.ResponseSize, &e.UserAgent, &e.Error,
 		&e.IsStarred, &e.Note, &e.Country, &e.City,
-		&e.UserIdentity)
+		&e.UserIdentity, &e.TraceID, &e.SpanID)
 	if err != nil {
 		return e, LogBody{}, fmt.Errorf("get log detail: %w", err)
 	}

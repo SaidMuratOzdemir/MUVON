@@ -1,4 +1,4 @@
-.PHONY: build build-linux clean test test-race deps ui-install ui-dev ui-build
+.PHONY: build build-linux clean test test-race deps proto ui-install ui-dev ui-build
 
 BUILD_DIR    = ./build
 UI_DIR       = ./ui
@@ -72,6 +72,20 @@ test-race:
 deps:
 	go mod tidy
 	go mod download
+
+# ── Protobuf codegen ────────────────────────────────────────
+# Pinned to match go.mod (protobuf) and the committed generated headers so
+# regen is reproducible and the plugin version never silently drifts.
+PROTOC_GEN_GO_VERSION      = v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION = v1.6.1
+
+proto:
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+	PATH="$(shell go env GOPATH)/bin:$$PATH" protoc -I . \
+		--go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+		proto/logpb/log.proto proto/deployerpb/deployer.proto
 
 # ── UI ──────────────────────────────────────────────────────
 

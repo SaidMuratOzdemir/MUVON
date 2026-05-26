@@ -1069,4 +1069,16 @@ CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_recent
 		name: "add_routes_redirect_preserve_path", product: "muvon",
 		sql: `ALTER TABLE routes ADD COLUMN IF NOT EXISTS redirect_preserve_path BOOLEAN NOT NULL DEFAULT false;`,
 	},
+	// W3C Trace Context join key. The proxy derives a 128-bit trace-id from
+	// the request UUIDv7 and stamps it on every log entry; storing it here
+	// lets http_logs join container_logs and (later) client_events on a
+	// single id. Nullable + partial index: pre-existing rows have no
+	// trace_id, and we never query for the NULL bucket.
+	{
+		name: "add_http_logs_trace_id", product: "dialog",
+		sql: `ALTER TABLE http_logs
+		      ADD COLUMN IF NOT EXISTS trace_id TEXT,
+		      ADD COLUMN IF NOT EXISTS span_id  TEXT;
+		      CREATE INDEX IF NOT EXISTS idx_http_logs_trace ON http_logs (trace_id) WHERE trace_id IS NOT NULL;`,
+	},
 }
