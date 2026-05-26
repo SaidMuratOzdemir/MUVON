@@ -27,6 +27,42 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.34] - 2026-05-27
+
+### FEATURES
+
+- **Managed deploy'da worker-process desteği**: Bir component artık image'ın
+  default CMD'sini ezen `command` ve HTTP dışı sağlık modları alıyor — böylece
+  tek backend image'ı `web` / `celery worker` / `celery-beat` olarak ayrı
+  component'ler halinde deploy edilebilir (CI/CD webhook → muvon-managed):
+
+  - `command TEXT[]` — long-running container'ın CMD'sini ezer (mevcut
+    `migration_command` desenini aynalar). Boş = image default.
+  - `health_mode` — `http` (varsayılan; GET `health_path`) | `exec`
+    (container içinde `health_command` çalışır, exit 0 = healthy — örn
+    `celery -A config inspect ping`, worker'ın gerçekten fonksiyonel olduğunu
+    doğrular) | `running` (container ayakta + crash-loop yok; `RestartCount`
+    izlenir — beat gibi probe'suz süreçler için).
+  - `health_command TEXT[]` — `exec` modunun probe'u.
+  - `deploy_strategy` — `blue_green` (varsayılan, sıfır kesinti) | `recreate`
+    (candidate başlamadan eski instance durdurulur — celery-beat gibi
+    singleton'lar deploy penceresinde asla iki kez koşmaz; karşılığında kısa
+    kesinti + rollback yok, k8s Recreate semantiği).
+  - `deploy_order INT` — rollout sırası (artan); migration taşıyan component
+    (örn web) worker'lardan önce gelsin diye, worker'lar göçmemiş şemaya
+    çarpmaz.
+
+  Tüm default'lar (`{}`, `http`, `blue_green`, `0`) mevcut deploy davranışını
+  **birebir** korur — tatilji/karacil gibi mevcut servisler etkilenmez. UI:
+  servis düzenleyici Advanced sekmesinde command + sağlık modu + strateji +
+  sıra alanları. Central ve edge agent deployer'ı aynı kodu paylaştığından her
+  iki host türünde de çalışır.
+
+  Migration `add_deploy_components_worker_fields`: beş kolon, hepsi
+  `NOT NULL DEFAULT`, forward-only.
+
+---
+
 ## [0.1.33] - 2026-05-26
 
 ### FEATURES

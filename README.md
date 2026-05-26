@@ -292,6 +292,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Rollback | `POST /api/deploy/projects/{slug}/rollback` redeploys the previous succeeded release verbatim |
 | Pause / resume | `paused` flag drains a service and blocks new enqueues until cleared |
 | Atomic promote | Old `active` → `draining`, candidate → `active` in one transaction; drain timeout configurable |
+| Worker processes | Per-component `command` (CMD override), `health_mode` (`http`/`exec`/`running`), `health_command`, `deploy_strategy` (`blue_green`/`recreate`), `deploy_order` — run web/celery/beat from one image, gate migration before workers, keep singletons from overlapping |
 
 ### diaLOG SIEM
 
