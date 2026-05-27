@@ -7,7 +7,7 @@
 // (sendBeacon, capped batches, drop-on-overflow). trace_id is read from the
 // edge's Server-Timing header so a browser event joins http_logs.
 
-const SDK = 'muvon-rum/0.1.0'
+const SDK = 'muvon-rum/0.2.0'
 const MAX_BATCH_EVENTS = 50
 const FLUSH_INTERVAL_MS = 5000
 const ATTR_MAX_LEN = 1024
@@ -40,6 +40,8 @@ let collector = ''
 let sessionId = ''
 let viewId = ''
 let route = ''
+let userId = '' // set via muvon.identify; attached to every envelope once known
+let userTraits: Record<string, string> = {}
 let maxBatchBytes = 65536
 let sampleRates: Record<string, number> = { default: 1 }
 let queue: MvEvent[] = []
@@ -143,12 +145,17 @@ function emit(eventName: string, attrs?: Record<string, unknown>, trace?: { trac
 }
 
 function buildBody(events: MvEvent[]): string {
-  return JSON.stringify({
+  const envelope: Record<string, unknown> = {
     resource: { app, release, sdk: SDK },
     session: { session_id: sessionId },
     view: { view_id: viewId, route, url_path: location.pathname },
     events,
-  })
+  }
+  // Identity, once muvon.identify has run. Forward-compatible: the edge
+  // ignores an unknown block today; a later release can join every event to
+  // a user without the client re-sending it per event.
+  if (userId) envelope.user = { id: userId, ...userTraits }
+  return JSON.stringify(envelope)
 }
 
 // flush ships the current queue. useBeacon=true on page hide (sendBeacon
@@ -440,6 +447,61 @@ function instrumentDataAttrs(): void {
   }, true)
 }
 
+// ---- public imperative API -------------------------------------------------
+
+// track records a structured custom event at the call site — the imperative
+// counterpart to data-mv-track. Mapped onto the existing 'custom' schema
+// ({name, ...attrs}) so it reuses sampling, envelope, batching and ingest.
+function track(name: string, attrs?: Record<string, unknown>): void {
+  quiet(() => {
+    if (!name) return
+    emit('custom', { name, ...(attrs || {}) })
+  })
+}
+
+// identify binds a stable id (+ optional traits) to this session: it emits an
+// 'identify' event (captured like any other) and attaches a user block to
+// every subsequent envelope. The consumer decides what is safe to send.
+function identify(id: string, traits?: Record<string, unknown>): void {
+  quiet(() => {
+    if (!id) return
+    userId = String(id)
+    userTraits = clampAttrs(traits) || {}
+    emit('identify', { user_id: userId, ...userTraits })
+  })
+}
+
+// dispatch routes a verb-first call (the GA-style stub form
+// muvon('track', name, attrs)) to the typed methods.
+function dispatch(verb: string, args: unknown[]): void {
+  if (verb === 'track') track(args[0] as string, args[1] as Record<string, unknown> | undefined)
+  else if (verb === 'identify') identify(args[0] as string, args[1] as Record<string, unknown> | undefined)
+}
+
+// installPublicApi swaps the async-safe stub (window.muvon = a queueing
+// function with a .q buffer) for the real API. The replacement is callable
+// (muvon('track', ...)) AND exposes methods (muvon.track(...)); any calls that
+// arrived before this bundle loaded are drained from the stub's queue.
+function installPublicApi(): void {
+  const w = window as unknown as { muvon?: { q?: ArrayLike<unknown>[] } }
+  const queued: ArrayLike<unknown>[] = (w.muvon && w.muvon.q) || []
+  const api = function (verb: unknown, ...rest: unknown[]): void {
+    dispatch(String(verb), rest)
+  } as ((...a: unknown[]) => void) & {
+    track: typeof track
+    identify: typeof identify
+    q: ArrayLike<unknown>[]
+  }
+  api.track = track
+  api.identify = identify
+  api.q = []
+  ;(w as unknown as { muvon: unknown }).muvon = api
+  for (const call of queued) {
+    const a = Array.from(call)
+    quiet(() => dispatch(String(a[0]), a.slice(1)))
+  }
+}
+
 // ---- bootstrap -------------------------------------------------------------
 
 async function loadConfig(): Promise<void> {
@@ -477,6 +539,10 @@ function start(): void {
     instrumentDataAttrs()
 
     emit('page_view', { referrer: document.referrer || '' })
+
+    // Expose the imperative API (muvon.track / muvon.identify) and replay any
+    // calls the page buffered through the async-safe stub before we loaded.
+    installPublicApi()
 
     // Remote sample config can downgrade what we send; fetch it in the
     // background so startup is never blocked on it.

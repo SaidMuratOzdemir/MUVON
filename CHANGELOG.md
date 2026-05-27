@@ -27,6 +27,24 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.37] - 2026-05-27
+
+### FEATURES
+
+- **RUM imperatif event API** — `window.muvon.track(name, attrs)` ve
+  `window.muvon.identify(id, traits)`. Uygulama kodu mantıksal bir anda
+  yapılandırılmış custom event basabiliyor; önceden yalnız otomatik sinyaller +
+  `data-mv-error`/`data-mv-track` deklaratif hook'ları vardı (tüketiciler bir JS
+  callback'inden olay basmak için gizli-DOM hack'ine zorlanıyordu). GA-stili
+  async-safe queue stub (`!function(w){...}(window)`) ile rum.js yüklenmeden
+  önceki `muvon('track', …)` çağrıları tamponlanıp init'te boşaltılır; sonrası
+  hem `muvon('track', …)` hem `muvon.track(…)` çalışır. `track` mevcut `custom`
+  şemasına, `identify` `identify` event'i + envelope `user` bloğuna maplenir —
+  **server tarafı değişmeden** generic event olarak saklanır (per-event user_id
+  kolonu ileride eklenebilir). Otomatik instrumentation + `data-mv-*` aynen.
+
+---
+
 ## [0.1.36] - 2026-05-27
 
 ### SECURITY
