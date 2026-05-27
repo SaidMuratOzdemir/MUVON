@@ -23,7 +23,14 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-— henüz birikme yok.
+### SECURITY
+
+- **Edge `X-Frame-Options`: `DENY` → `SAMEORIGIN`**: edge'in sunduğu
+  uygulamalar kendi aynı-origin içeriklerini gömebiliyor (ör. served `/media`
+  dosyalarının `<object>`/`<iframe>` ile PDF/resim önizlemesi). `DENY`
+  aynı-origin framing'i bile engelliyordu ve route bazında override
+  edilemiyordu; `SAMEORIGIN` cross-site clickjacking'i yine bloklar. Daha katı
+  framing gereken backend kendi header'ını set eder.
 
 ---
 
