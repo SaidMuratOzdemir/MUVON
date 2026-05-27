@@ -23,6 +23,12 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+— henüz birikme yok.
+
+---
+
+## [0.1.36] - 2026-05-27
+
 ### SECURITY
 
 - **Edge `X-Frame-Options`: `DENY` → `SAMEORIGIN`**: edge'in sunduğu
