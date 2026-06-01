@@ -27,6 +27,31 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.40] - 2026-06-01
+
+### FEATURES
+
+- **Native Cloudflare farkındalığı — gerçek client IP, sıfır config.** MUVON artık
+  bir zone'un proxy'si (turuncu bulut) açıkken `CF-Connecting-IP` header'ından
+  gerçek client'ı çözer; kapalıyken (gri / direkt) hiçbir şey değişmez. Operatör
+  hiçbir liste tutmaz, `TrustedProxies`'e Cloudflare aralığı eklemez: MUVON,
+  Cloudflare'in resmi IP aralıklarını (`cloudflare.com/ips-{v4,v6}`) açılışta ve
+  12 saatte bir **otomatik çeker** (fetch başarısızsa bundled seed korunur).
+  Grey↔orange istediğin an serbestçe çevrilir, config değişmeden doğru çalışır.
+
+### SECURITY
+
+- **`CF-Connecting-IP` yalnız peer gerçekten Cloudflare edge'iyse kabul edilir.**
+  `peer ∈ CF-aralığı` kapısı, origin IP'sini bilen birinin sahte
+  `CF-Connecting-IP` yollayıp client IP'sini spoof etmesini engeller (doğrudan
+  origin'e vuran saldırganın peer'ı CF aralığında olmadığı için header yok
+  sayılır, gerçek peer IP'si kullanılır). `CF-Connecting-IP` ayrıca XFF leftmost
+  gibi client-spoof'lanamaz. Cloudflare arkasında giden `X-Forwarded-For` da
+  yalnız çözülen gerçek client ile yazılır (CF'in spoof'lanabilir zinciri
+  taşınmaz). Davranış birim testlerle sabit (`cloudflare_test.go`).
+
+---
+
 ## [0.1.39] - 2026-06-01
 
 ### SECURITY

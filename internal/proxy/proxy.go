@@ -465,6 +465,15 @@ func newSpanID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// peerHost returns the direct TCP peer's IP (RemoteAddr without the port).
+func peerHost(r *http.Request) string {
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if host == "" {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 // directProxyTrusted reports whether the direct connection (RemoteAddr) is in
 // the trusted proxies list. It is the gate for honouring client-supplied
 // forwarding/trace headers (X-Forwarded-For, X-Real-IP, traceparent). Empty
@@ -473,17 +482,30 @@ func directProxyTrusted(r *http.Request, trustedProxies []string) bool {
 	if len(trustedProxies) == 0 {
 		return false
 	}
-	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if remoteHost == "" {
-		remoteHost = r.RemoteAddr
-	}
-	return isTrustedProxy(remoteHost, trustedProxies)
+	return isTrustedProxy(peerHost(r), trustedProxies)
 }
 
-// clientIPFor returns the real client IP, trusting X-Forwarded-For only when
-// the direct connection (RemoteAddr) is in the trusted proxies list.
-// If trustedProxies is empty, falls back to RemoteAddr (conservative default).
+// clientIPFor returns the real client IP.
+//
+//   - Behind Cloudflare: when the direct peer is a Cloudflare edge (peer ∈ the
+//     auto-synced CF range set) AND CF set its authoritative CF-Connecting-IP
+//     header, that value is the client. CF-Connecting-IP is not client-spoofable
+//     (unlike X-Forwarded-For's leftmost entry), and the peer∈CF-range gate stops
+//     anyone hitting the origin directly from forging it. This needs no per-host
+//     config and works whether the zone's proxy (orange cloud) is on or off — a
+//     direct client is never in a CF range, so the branch is simply skipped.
+//   - Operator-configured trusted proxy: trust X-Forwarded-For (leftmost) /
+//     X-Real-IP only when the peer is in Host.TrustedProxies.
+//   - Otherwise: the direct peer is the client (conservative default).
 func clientIPFor(r *http.Request, trustedProxies []string) string {
+	peer := peerHost(r)
+
+	if isCloudflareIP(peer) {
+		if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" {
+			return cf
+		}
+	}
+
 	if directProxyTrusted(r, trustedProxies) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			// Leftmost entry is the original client.
@@ -497,11 +519,7 @@ func clientIPFor(r *http.Request, trustedProxies []string) string {
 		}
 	}
 
-	remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if remoteHost == "" {
-		remoteHost = r.RemoteAddr
-	}
-	return remoteHost
+	return peer
 }
 
 // cidrEntry caches a parsed CIDR or nil if the entry was not a valid CIDR.

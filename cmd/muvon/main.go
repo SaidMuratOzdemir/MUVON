@@ -71,6 +71,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Keep the Cloudflare edge range set fresh so client-IP resolution stays
+	// correct if the operator flips a zone's proxy (orange cloud) on/off — no
+	// per-host config needed.
+	proxy.StartCloudflareSync(ctx, nil)
+
 	// Database — MUVON only needs hosts, routes, settings, TLS, admin_users tables
 	database, err := db.New(ctx, *dsn, "muvon")
 	if err != nil {

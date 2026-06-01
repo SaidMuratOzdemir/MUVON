@@ -105,6 +105,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Keep the Cloudflare edge range set fresh so client-IP resolution stays
+	// correct if a zone's proxy (orange cloud) is toggled — no per-host config.
+	proxy.StartCloudflareSync(ctx, nil)
+
 	// Compute host_id once — same value logship will stamp on every
 	// container_log row. Setting it on the agent source makes central
 	// see it on every auth'd call (X-Muvon-Host-Id), persist it on the
