@@ -28,7 +28,7 @@ func getRewriteRegexp(pattern string) (*regexp.Regexp, error) {
 	return v.(*regexp.Regexp), nil
 }
 
-func Director(target *url.URL, stripPrefix string, route db.Route, clientIP string) func(req *http.Request) {
+func Director(target *url.URL, stripPrefix string, route db.Route, clientIP string, trustedHop bool) func(req *http.Request) {
 	return func(req *http.Request) {
 		originalHost := req.Host // orijinal host (incoming)
 
@@ -67,10 +67,16 @@ func Director(target *url.URL, stripPrefix string, route db.Route, clientIP stri
 		// Gzip sıkıştırmasını biz middleware ile yapacağız
 		req.Header.Del("Accept-Encoding")
 
-		// X-Forwarded headers — clientIP zaten trusted proxy'ye göre çözüldü
+		// X-Forwarded headers — clientIP zaten trusted proxy'ye göre çözüldü.
+		// Direct peer trusted DEĞİLSE (normal dış client) inbound X-Forwarded-For'u
+		// taşıma: spoof'lanmış leftmost girdi backend'e ulaşmasın diye yalnız çözülen
+		// clientIP ile overwrite et. Inbound zinciri yalnız peer gerçek bir trusted
+		// upstream proxy ise (ör. önde Cloudflare) append et.
 		xff := clientIP
-		if prior, exists := req.Header["X-Forwarded-For"]; exists {
-			xff = strings.Join(prior, ", ") + ", " + clientIP
+		if trustedHop {
+			if prior, exists := req.Header["X-Forwarded-For"]; exists {
+				xff = strings.Join(prior, ", ") + ", " + clientIP
+			}
 		}
 		req.Header.Set("X-Forwarded-For", xff)
 		req.Header.Set("X-Real-IP", clientIP)

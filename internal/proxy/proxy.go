@@ -197,6 +197,10 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 
 	// Trusted-proxy-aware client IP (used for rate limiting, logging).
 	ip := clientIPFor(r, hc.Host.TrustedProxies)
+	// Whether the direct peer is a trusted upstream proxy — gates whether the
+	// inbound X-Forwarded-For chain is preserved (trusted) or dropped to prevent
+	// client spoofing (untrusted). Same gate as clientIPFor.
+	trustedHop := directProxyTrusted(r, hc.Host.TrustedProxies)
 
 	// Akıllı body yakalama:
 	// - GET/HEAD/OPTIONS/static route → body okuma (sadece header/path/IP gönder)
@@ -247,7 +251,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	hm := h.healthMgr
 	routeSnapshot := route.Route
 	rp := &httputil.ReverseProxy{
-		Director:      Director(target, stripPrefix, routeSnapshot, ip),
+		Director:      Director(target, stripPrefix, routeSnapshot, ip, trustedHop),
 		Transport:     h.transport,
 		FlushInterval: -1, // SSE desteği: anında flush
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {

@@ -27,6 +27,23 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.39] - 2026-06-01
+
+### SECURITY
+
+- **Untrusted client'tan gelen `X-Forwarded-For` artık backend'e taşınmıyor.**
+  Edge, doğrudan peer trusted bir proxy DEĞİLSE (yani normal dış client) inbound
+  `X-Forwarded-For` zincirini append ediyordu; bu, leftmost girdinin
+  client-spoof'lu olmasına ve `XFF[0]` okuyan downstream servislerin (ör.
+  django-axes gibi IP-bazlı kontroller) kandırılmasına izin veriyordu. Artık
+  untrusted peer'da inbound XFF düşürülüp yalnız çözülen client IP ile yazılıyor;
+  inbound zincir yalnız peer gerçek bir trusted upstream proxy ise (ör. önde CDN,
+  `Host.TrustedProxies`'te tanımlı) korunuyor. `X-Real-IP` zaten koşulsuz
+  overwrite ediliyordu (değişmedi) — bu yama `XFF[0]` okuyan servisleri de
+  airtight yapar. Davranış birim testlerle sabitlendi (`director_xff_test.go`).
+
+---
+
 ## [0.1.38] - 2026-06-01
 
 ### BUGFIXES
