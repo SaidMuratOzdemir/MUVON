@@ -27,15 +27,45 @@ func TestIsCloudflareIP(t *testing.T) {
 	}
 }
 
-// Behind Cloudflare: peer is a CF edge and CF set CF-Connecting-IP → that is the
-// client. TrustedProxies stays empty (no operator hardlist).
+// Behind Cloudflare WITH the operator's shared secret: peer is a CF edge, the
+// secret header matches, and CF set CF-Connecting-IP → that is the client.
 func TestClientIPFor_BehindCloudflare(t *testing.T) {
+	SetCloudflareTrust("", "topsecret")
+	t.Cleanup(func() { SetCloudflareTrust("", "") })
 	r := cfReq("104.16.5.5:443", map[string]string{
+		"X-Muvon-CF-Key":   "topsecret",
 		"CF-Connecting-IP": "203.0.113.7",
 		"X-Forwarded-For":  "1.2.3.4, 203.0.113.7", // CF appends; leftmost spoofable — must be ignored
 	})
 	if got := clientIPFor(r, nil); got != "203.0.113.7" {
 		t.Fatalf("behind CF: clientIPFor = %q, want %q (CF-Connecting-IP authoritative)", got, "203.0.113.7")
+	}
+}
+
+// Disabled by default: no operator secret configured → CF-Connecting-IP is NOT
+// trusted even from a real CF edge. This is the safe default and closes the
+// shared-egress spoof (attacker routing through their own CF zone).
+func TestClientIPFor_CloudflareDisabledByDefault(t *testing.T) {
+	SetCloudflareTrust("", "") // explicit: disabled
+	r := cfReq("104.16.5.5:443", map[string]string{
+		"CF-Connecting-IP": "203.0.113.7",
+	})
+	if got := clientIPFor(r, nil); got != "104.16.5.5" {
+		t.Fatalf("CF disabled: clientIPFor = %q, want %q (peer, CF-Connecting-IP untrusted)", got, "104.16.5.5")
+	}
+}
+
+// Wrong/missing secret from a CF-range peer → not trusted (attacker's own CF
+// zone hits the origin from a CF IP but cannot know the operator's secret).
+func TestClientIPFor_CloudflareWrongSecret(t *testing.T) {
+	SetCloudflareTrust("", "topsecret")
+	t.Cleanup(func() { SetCloudflareTrust("", "") })
+	r := cfReq("104.16.5.5:443", map[string]string{
+		"X-Muvon-CF-Key":   "WRONG",
+		"CF-Connecting-IP": "9.9.9.9",
+	})
+	if got := clientIPFor(r, nil); got != "104.16.5.5" {
+		t.Fatalf("wrong secret: clientIPFor = %q, want %q (peer)", got, "104.16.5.5")
 	}
 }
 
@@ -64,7 +94,10 @@ func TestClientIPFor_DirectClient(t *testing.T) {
 // X-Real-IP must both carry only the resolved real client (CF's spoofable XFF
 // chain dropped, since the CF peer is not in TrustedProxies → trustedHop=false).
 func TestDirector_BehindCloudflare_CleanForward(t *testing.T) {
+	SetCloudflareTrust("", "topsecret")
+	t.Cleanup(func() { SetCloudflareTrust("", "") })
 	r := cfReq("104.16.5.5:443", map[string]string{
+		"X-Muvon-CF-Key":   "topsecret",
 		"CF-Connecting-IP": "203.0.113.7",
 		"X-Forwarded-For":  "1.2.3.4, 203.0.113.7",
 	})

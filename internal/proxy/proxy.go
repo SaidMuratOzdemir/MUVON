@@ -488,19 +488,19 @@ func directProxyTrusted(r *http.Request, trustedProxies []string) bool {
 // clientIPFor returns the real client IP.
 //
 //   - Behind Cloudflare: when the direct peer is a Cloudflare edge (peer ∈ the
-//     auto-synced CF range set) AND CF set its authoritative CF-Connecting-IP
-//     header, that value is the client. CF-Connecting-IP is not client-spoofable
-//     (unlike X-Forwarded-For's leftmost entry), and the peer∈CF-range gate stops
-//     anyone hitting the origin directly from forging it. This needs no per-host
-//     config and works whether the zone's proxy (orange cloud) is on or off — a
-//     direct client is never in a CF range, so the branch is simply skipped.
+//     auto-synced CF range set) AND the request carries the operator's configured
+//     Cloudflare shared secret (SetCloudflareTrust — injected by a Transform Rule
+//     on the operator's own zone), the authoritative CF-Connecting-IP is the
+//     client. The secret is required because Cloudflare's egress IPs are shared
+//     across all CF accounts, so peer∈CF-range alone does not prove the request
+//     came through the operator's zone. Disabled by default (no secret set).
 //   - Operator-configured trusted proxy: trust X-Forwarded-For (leftmost) /
 //     X-Real-IP only when the peer is in Host.TrustedProxies.
 //   - Otherwise: the direct peer is the client (conservative default).
 func clientIPFor(r *http.Request, trustedProxies []string) string {
 	peer := peerHost(r)
 
-	if isCloudflareIP(peer) {
+	if isCloudflareIP(peer) && cloudflareTrustedRequest(r) {
 		if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" {
 			return cf
 		}

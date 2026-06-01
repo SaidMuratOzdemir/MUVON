@@ -72,9 +72,12 @@ func main() {
 	defer cancel()
 
 	// Keep the Cloudflare edge range set fresh so client-IP resolution stays
-	// correct if the operator flips a zone's proxy (orange cloud) on/off — no
-	// per-host config needed.
+	// correct if the operator flips a zone's proxy (orange cloud) on/off.
 	proxy.StartCloudflareSync(ctx, nil)
+	// Cloudflare client-IP trust is OPT-IN via a shared secret the operator
+	// injects with a CF Transform Rule (CF egress IPs are shared across all
+	// accounts, so peer-in-range alone is spoofable). Empty = disabled.
+	proxy.SetCloudflareTrust(os.Getenv("MUVON_CLOUDFLARE_IP_HEADER"), os.Getenv("MUVON_CLOUDFLARE_IP_SECRET"))
 
 	// Database — MUVON only needs hosts, routes, settings, TLS, admin_users tables
 	database, err := db.New(ctx, *dsn, "muvon")

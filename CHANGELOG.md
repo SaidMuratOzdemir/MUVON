@@ -27,6 +27,27 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.41] - 2026-06-01
+
+### SECURITY
+
+- **Cloudflare `CF-Connecting-IP` güveni artık paylaşımlı secret gerektiriyor
+  (v0.1.40 regresyon düzeltmesi).** v0.1.40, peer bir Cloudflare aralığındaysa
+  `CF-Connecting-IP`'ye güveniyordu; ancak Cloudflare egress IP'leri **tüm CF
+  hesapları arasında paylaşımlı** olduğundan, bir saldırgan kendi CF zone'unu
+  origin IP'sine yöneltip sahte `CF-Connecting-IP` enjekte ederek client IP'sini
+  spoof edebilirdi (rate-limit / django-axes / audit baypas) — grey modda bile,
+  origin IP'si public olduğu için. Artık `CF-Connecting-IP` yalnız **operatörün
+  kendi zone'unda bir Transform Rule ile enjekte ettiği gizli header**
+  (`MUVON_CLOUDFLARE_IP_SECRET` / `AGENT_CLOUDFLARE_IP_SECRET`, varsayılan header
+  `X-Muvon-CF-Key`) eşleştiğinde + peer ∈ CF-aralığı iken kabul edilir
+  (sabit-zamanlı karşılaştırma). Secret set değilse Cloudflare client-IP güveni
+  **kapalıdır** (güvenli varsayılan = v0.1.40 öncesi davranış). Auto-synced CF
+  aralıkları ve grey/orange toggle davranışı korunur. Davranış güvenlik
+  testleriyle sabit (`cloudflare_test.go`: default-kapalı + yanlış-secret).
+
+---
+
 ## [0.1.40] - 2026-06-01
 
 ### FEATURES

@@ -106,8 +106,12 @@ func main() {
 	defer cancel()
 
 	// Keep the Cloudflare edge range set fresh so client-IP resolution stays
-	// correct if a zone's proxy (orange cloud) is toggled — no per-host config.
+	// correct if a zone's proxy (orange cloud) is toggled.
 	proxy.StartCloudflareSync(ctx, nil)
+	// Cloudflare client-IP trust is OPT-IN via a shared secret injected by a CF
+	// Transform Rule (CF egress IPs are shared, so peer-in-range alone is
+	// spoofable). Empty = disabled (safe default).
+	proxy.SetCloudflareTrust(os.Getenv("AGENT_CLOUDFLARE_IP_HEADER"), os.Getenv("AGENT_CLOUDFLARE_IP_SECRET"))
 
 	// Compute host_id once — same value logship will stamp on every
 	// container_log row. Setting it on the agent source makes central
