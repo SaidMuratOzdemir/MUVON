@@ -27,6 +27,19 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.43] - 2026-06-01
+
+### ENHANCEMENTS
+
+- **Static route'lar artık per-route response header'larını uyguluyor.** Şimdiye
+  kadar `resp_headers_add` / `resp_headers_del` yalnız proxy route'larında
+  (ModifyResponse) çalışıyordu; static serve bunları yok sayıyordu. Artık static
+  serve de uyguluyor — ör. private medya tutan bir static root'a
+  `Cache-Control: private, no-store` eklenip paylaşımlı CDN'de cache'lenmesi
+  önlenebiliyor.
+
+---
+
 ## [0.1.42] - 2026-06-01
 
 ### BUGFIXES

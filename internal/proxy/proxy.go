@@ -341,6 +341,16 @@ func (h *Handler) serveStatic(w http.ResponseWriter, r *http.Request, route *con
 		return
 	}
 
+	// Per-route response headers apply to static serves too (proxy routes get
+	// these via ModifyResponse). Set before FileServer writes the response — lets
+	// e.g. Cache-Control: private protect a static root holding private media.
+	for _, hdr := range route.Route.RespHeadersDel {
+		w.Header().Del(hdr)
+	}
+	for k, v := range route.Route.RespHeadersAdd {
+		w.Header().Set(k, v)
+	}
+
 	if route.Route.StripPrefix {
 		p := strings.TrimPrefix(r.URL.Path, route.PathPrefix)
 		if p == "" {
