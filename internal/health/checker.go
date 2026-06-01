@@ -287,6 +287,10 @@ func (m *Manager) ping(rawURL, healthURL string) {
 	if err != nil {
 		return
 	}
+	// Managed backends are dialed by container name, but that name is never in
+	// the app's ALLOWED_HOSTS — send a stable, accepted Host instead so strict
+	// frameworks (Django et al.) don't reject the liveness probe.
+	req.Host = "localhost"
 	req.Header.Set("User-Agent", "dialog-healthcheck/1.0")
 
 	resp, err := m.client.Do(req)

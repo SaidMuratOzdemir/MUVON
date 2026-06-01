@@ -27,6 +27,22 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.38] - 2026-06-01
+
+### BUGFIXES
+
+- **Health probe artık geçerli `Host` header gönderiyor.** Managed backend'ler
+  container'ın dinamik iç adıyla (`muvon-<proje>-<sha>-<ts>`) dial ediliyor; bu
+  ad hiçbir zaman uygulamanın `ALLOWED_HOSTS`'unda olmadığı için Django gibi katı
+  framework'ler liveness probe'unu routing'den önce reddedip ~10 saniyede bir
+  `DisallowedHost` ERROR basıyordu (gerçek kullanıcı trafiği etkilenmiyordu —
+  sadece log/SIEM kirliliği). Hem runtime circuit-breaker probe'u
+  (`internal/health`) hem deploy-anı health check'i (`internal/deployer`) artık
+  `Host: localhost` gönderiyor; bağlantı yine container'a gidiyor, yalnız Host
+  header'ı `ALLOWED_HOSTS`'ta kabul gören bir değer oluyor.
+
+---
+
 ## [0.1.37] - 2026-05-27
 
 ### FEATURES

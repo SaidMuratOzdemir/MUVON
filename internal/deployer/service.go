@@ -352,6 +352,9 @@ func (s *Service) waitHealthyHTTP(ctx context.Context, component db.DeployCompon
 		if err != nil {
 			return err
 		}
+		// Same reason as the runtime health probe: the container-name Host is not
+		// in the app's ALLOWED_HOSTS, so send an accepted one.
+		req.Host = "localhost"
 		resp, err := s.healthClient.Do(req)
 		if err == nil {
 			ioErr := resp.Body.Close()
