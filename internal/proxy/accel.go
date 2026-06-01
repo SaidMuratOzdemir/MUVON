@@ -128,5 +128,12 @@ func serveAccelFile(w http.ResponseWriter, r *http.Request, accelRoot, accelPath
 		}
 	}
 
+	// Accel-served files are protected (auth-gated) media. Default to private so
+	// a shared CDN (Cloudflare) or browser never caches one user's document where
+	// another could receive it. Backend may override via its own Cache-Control.
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "private, no-store")
+	}
+
 	http.ServeContent(w, r, fi.Name(), fi.ModTime(), f)
 }

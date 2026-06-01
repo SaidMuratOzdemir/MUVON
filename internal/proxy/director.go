@@ -101,10 +101,21 @@ func Director(target *url.URL, stripPrefix string, route db.Route, clientIP stri
 func modifyResponse(route db.Route) func(*http.Response) error {
 	hasHeaders := len(route.RespHeadersDel) > 0 || len(route.RespHeadersAdd) > 0
 	hasErrorPages := route.ErrorPage4xx != nil || route.ErrorPage5xx != nil
-	if !hasHeaders && !hasErrorPages {
+	if !hasHeaders && !hasErrorPages && route.AccelRoot == nil {
 		return nil
 	}
 	return func(resp *http.Response) error {
+		// X-Accel-Redirect: the edge owns the body — it serves the local file
+		// itself (accelInterceptWriter). Discard the upstream body so the proxy
+		// never blocks waiting for a body the backend declared via Content-Length
+		// but did not actually send. A misbehaving backend must never hang the
+		// edge; this mirrors nginx, which ignores the upstream body on X-Accel.
+		if route.AccelRoot != nil && resp.Header.Get("X-Accel-Redirect") != "" {
+			_ = resp.Body.Close()
+			resp.Body = http.NoBody
+			resp.ContentLength = 0
+			resp.Header.Del("Content-Length")
+		}
 		for _, h := range route.RespHeadersDel {
 			resp.Header.Del(h)
 		}

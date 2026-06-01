@@ -27,6 +27,28 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.42] - 2026-06-01
+
+### BUGFIXES
+
+- **X-Accel-Redirect: edge artık backend'in "hayalet gövdesi" yüzünden askıya
+  alınmıyor.** Bir backend X-Accel yanıtına `Content-Length` yazıp gövdeyi boş
+  gönderirse, ReverseProxy var olmayan byte'ları beklerken her indirme
+  **~6 saniye** bloke olabiliyordu — dosya boyutundan bağımsız, sabit gecikme.
+  MUVON artık X-Accel-Redirect gördüğünde (nginx gibi)
+  upstream gövdesini **beklemeden atıyor**: dosyayı kendisi serve ediyor, sahte
+  `Content-Length`'i kaldırıyor, gövdeyi boşaltıyor. Kötü davranan bir backend
+  edge'i asla askıya alamaz. (Birim test: `accel_modifyresponse_test.go`.)
+
+### SECURITY
+
+- **Accel ile sunulan korumalı medya artık `Cache-Control: private, no-store`
+  taşıyor.** Auth-gated belgeler paylaşımlı bir CDN (Cloudflare) veya tarayıcıda
+  cache'lenip başka kullanıcıya servis edilemez. Backend kendi Cache-Control'ünü
+  set ederse o korunur.
+
+---
+
 ## [0.1.41] - 2026-06-01
 
 ### SECURITY
