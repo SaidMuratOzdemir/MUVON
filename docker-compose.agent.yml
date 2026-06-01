@@ -66,6 +66,13 @@ services:
       AGENT_DEPLOYER_ENABLED: ${AGENT_DEPLOYER_ENABLED:-false}
       AGENT_DEPLOYER_POLL_MS: ${AGENT_DEPLOYER_POLL_MS:-5000}
       AGENT_ENCRYPTION_KEY: ${AGENT_ENCRYPTION_KEY:-}
+      # Cloudflare client-IP trust (opt-in). When this zone is proxied (orange
+      # cloud), set this to a secret you ALSO inject via a CF Transform Rule on
+      # the zone (header AGENT_CLOUDFLARE_IP_HEADER, default X-Muvon-CF-Key).
+      # The agent then trusts CF-Connecting-IP only when that secret matches.
+      # Empty = Cloudflare client-IP trust disabled (safe default).
+      AGENT_CLOUDFLARE_IP_SECRET: ${AGENT_CLOUDFLARE_IP_SECRET:-}
+      AGENT_CLOUDFLARE_IP_HEADER: ${AGENT_CLOUDFLARE_IP_HEADER:-}
       # Bind inside the container — keep at 0.0.0.0:9100; the host-side
       # bind in `ports:` decides which interface is exposed externally.
       AGENT_DEPLOYER_TCP_LISTEN: ${AGENT_DEPLOYER_TCP_LISTEN:-0.0.0.0:9100}

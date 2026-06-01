@@ -93,6 +93,11 @@ services:
       MUVON_LOG_LEVEL: ${LOG_LEVEL:-info}
       MUVON_ADMIN_DOMAIN: ${MUVON_ADMIN_DOMAIN:?MUVON_ADMIN_DOMAIN is required}
       MUVON_LOG_SOCKET: /run/muvon/dialog.sock
+      # Cloudflare client-IP trust (opt-in). Set when central is proxied behind
+      # Cloudflare; must match a CF Transform Rule header (default X-Muvon-CF-Key).
+      # Empty = disabled (safe default).
+      MUVON_CLOUDFLARE_IP_SECRET: ${MUVON_CLOUDFLARE_IP_SECRET:-}
+      MUVON_CLOUDFLARE_IP_HEADER: ${MUVON_CLOUDFLARE_IP_HEADER:-}
     volumes:
       - tls_cache:/var/lib/app/tls
       - sockets:/run/muvon
