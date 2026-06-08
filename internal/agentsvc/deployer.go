@@ -3,6 +3,7 @@ package agentsvc
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"muvon/internal/db"
@@ -309,7 +310,101 @@ func (s *Service) HandleListPrunableImages(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string][]string{"image_refs": refs})
 }
 
+// ── Scheduled job runs ──────────────────────────────────────────────────
+
+// HandleJobClaim hands the edge deployer the next pending run it owns.
+// POST /api/v1/agent/deployer/job/claim
+func (s *Service) HandleJobClaim(w http.ResponseWriter, r *http.Request) {
+	agentID := agentDeployerCtx(r)
+	run, ok, err := s.db.ClaimNextJobRun(r.Context(), agentID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !ok {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
+// HandleJobLoad returns the run's job + bound component + image ref.
+// GET /api/v1/agent/deployer/job/{runID}
+func (s *Service) HandleJobLoad(w http.ResponseWriter, r *http.Request) {
+	runID, err := strconv.ParseInt(r.PathValue("runID"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid run id"})
+		return
+	}
+	if !s.agentOwnsJobRun(r, runID) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "run is not owned by this agent"})
+		return
+	}
+	plan, err := s.db.LoadJobRunPlan(r.Context(), runID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, plan)
+}
+
+// HandleJobFinish records a run's terminal state.
+// POST /api/v1/agent/deployer/job/finish
+func (s *Service) HandleJobFinish(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RunID    int64  `json:"run_id"`
+		Status   string `json:"status"`
+		ExitCode *int   `json:"exit_code"`
+		Error    string `json:"error"`
+		Output   string `json:"output"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if !s.agentOwnsJobRun(r, req.RunID) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "run is not owned by this agent"})
+		return
+	}
+	if err := s.db.FinishJobRun(r.Context(), req.RunID, req.Status, req.ExitCode, req.Error, req.Output); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleJobResetStale recovers this agent's crash-stuck runs.
+// POST /api/v1/agent/deployer/job/reset-stale  body: {older_than_seconds}
+func (s *Service) HandleJobResetStale(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OlderThanSeconds int `json:"older_than_seconds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if req.OlderThanSeconds < 60 {
+		req.OlderThanSeconds = 60
+	}
+	agentID := agentDeployerCtx(r)
+	n, err := s.db.ResetStaleRunningJobRuns(r.Context(), agentID, time.Duration(req.OlderThanSeconds)*time.Second)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"reset": n})
+}
+
 // ── Ownership checks ────────────────────────────────────────────────────
+
+func (s *Service) agentOwnsJobRun(r *http.Request, runID int64) bool {
+	agentID := agentDeployerCtx(r)
+	owner, err := s.db.GetJobRunAgentID(r.Context(), runID)
+	if err != nil {
+		return false
+	}
+	return owner == agentID
+}
 
 func (s *Service) agentOwnsDeployment(r *http.Request, deploymentID string) bool {
 	agentID := agentDeployerCtx(r)

@@ -28,7 +28,17 @@ type Service struct {
 	// uses this to keep the gRPC Health response fresh ("deployer is up
 	// but stuck" is otherwise invisible).
 	onTick func()
+	// jobSem bounds how many scheduled job runs execute concurrently.
+	// Scheduled jobs run in background goroutines (a job may legitimately
+	// run for up to its timeout_seconds, default 1h) so they never block the
+	// deployment/drain loop. Buffered to maxConcurrentJobs.
+	jobSem chan struct{}
 }
+
+// maxConcurrentJobs caps simultaneous scheduled-job containers per deployer
+// host. Keeps a burst of due jobs from exhausting host resources while
+// still letting independent jobs overlap.
+const maxConcurrentJobs = 4
 
 // SetOnTick registers a callback fired once per tick. Safe to call once
 // at startup; the callback fires inline so it should be cheap.
@@ -51,6 +61,7 @@ func NewService(state State, docker *DockerClient, secretBox *secret.Box, pollIn
 		pollInterval: pollInterval,
 		healthClient: defaultHTTPClient(),
 		secretBox:    secretBox,
+		jobSem:       make(chan struct{}, maxConcurrentJobs),
 	}
 }
 
@@ -61,6 +72,14 @@ func (s *Service) Run(ctx context.Context) error {
 		slog.Warn("failed to reset stale running deployments", "error", err)
 	} else if n > 0 {
 		slog.Info("reset stale running deployments to pending", "count", n)
+	}
+	// Same recovery for scheduled job runs orphaned by a crash. The window
+	// is wider than a deployment's because a job may legitimately run for up
+	// to its timeout_seconds (default 1h); 90m clears truly stuck runs.
+	if n, err := s.state.ResetStaleJobRuns(ctx, 90*time.Minute); err != nil {
+		slog.Warn("failed to reset stale job runs", "error", err)
+	} else if n > 0 {
+		slog.Info("reset stale job runs to pending", "count", n)
 	}
 
 	ticker := time.NewTicker(s.pollInterval)
@@ -93,6 +112,12 @@ func (s *Service) tick(ctx context.Context) error {
 	} else if n > 0 {
 		slog.Info("cleaned up stale warming instances", "count", n)
 	}
+
+	// Claim scheduled job runs into bounded background goroutines so a long
+	// job (up to timeout_seconds) never blocks deployments or drain. One
+	// claim per tick when a worker slot is free; SKIP LOCKED in the claim
+	// guarantees concurrent workers get distinct runs.
+	s.dispatchJobRun(ctx)
 
 	// State filters by owner: central deployer picks NULL agent_id rows;
 	// the embedded edge deployer in cmd/agent picks only its own.
@@ -256,45 +281,197 @@ func (s *Service) pruneImagesAfterPromote(ctx context.Context, plan db.Deploymen
 
 func (s *Service) runMigration(ctx context.Context, deploymentID string, plan db.DeploymentPlan, component db.DeployComponent, imageRef string, env map[string]string) error {
 	_ = s.state.AddEvent(ctx, deploymentID, "migration", "Running migration", map[string]any{"component": component.Slug, "command": component.MigrationCommand})
-	mounts, err := buildDockerMounts(component.Mounts)
-	if err != nil {
-		return fmt.Errorf("invalid mounts for %s migration: %w", component.Slug, err)
-	}
 	name := containerName(plan.Project.Slug, component.Slug+"-migration", plan.Release.ReleaseID)
-	req := containerCreateRequest{
-		Image: imageRef,
-		Cmd:   component.MigrationCommand,
-		Env:   envList(env),
-		Labels: map[string]string{
-			"muvon.project":    plan.Project.Slug,
-			"muvon.component":  component.Slug,
-			"muvon.release_id": plan.Release.ReleaseID,
-			"muvon.managed":    "true",
-			"muvon.job":        "migration",
-		},
-		HostConfig:       hostConfig{NetworkMode: firstNetwork(component.Networks), Mounts: mounts},
-		NetworkingConfig: networkConfig(component.Networks, component.Slug+"-migration"),
+	labels := map[string]string{
+		"muvon.project":    plan.Project.Slug,
+		"muvon.component":  component.Slug,
+		"muvon.release_id": plan.Release.ReleaseID,
+		"muvon.managed":    "true",
+		"muvon.job":        "migration",
 	}
-	containerID, err := s.docker.ContainerCreate(ctx, name, req)
+	exitCode, _, err := s.runOneOff(ctx, name, component.Slug+"-migration", component, imageRef, component.MigrationCommand, env, labels)
 	if err != nil {
-		return fmt.Errorf("create migration container: %w", err)
+		return fmt.Errorf("migration %s: %w", component.Slug, err)
 	}
-	defer s.docker.ContainerRemove(context.Background(), containerID, true)
-	if err := s.connectExtraNetworks(ctx, component.Networks, containerID, component.Slug+"-migration"); err != nil {
-		return fmt.Errorf("connect migration networks: %w", err)
-	}
-	if err := s.docker.ContainerStart(ctx, containerID); err != nil {
-		return fmt.Errorf("start migration container: %w", err)
-	}
-	status, err := s.docker.ContainerWait(ctx, containerID)
-	if err != nil {
-		return fmt.Errorf("wait migration container: %w", err)
-	}
-	if status != 0 {
-		return fmt.Errorf("migration failed for %s with exit code %d", component.Slug, status)
+	if exitCode != 0 {
+		return fmt.Errorf("migration failed for %s with exit code %d", component.Slug, exitCode)
 	}
 	_ = s.state.AddEvent(ctx, deploymentID, "migration_succeeded", "Migration succeeded", map[string]string{"component": component.Slug})
 	return nil
+}
+
+// runOneOff runs a single short-lived container to completion: create →
+// (connect extra networks) → start → wait for exit → capture log tail →
+// remove. Returns the exit code and captured output tail. err covers only
+// infrastructure failures (bad mounts, create/start, or a wait that errored
+// — e.g. ctx timeout), never a non-zero process exit. The image must
+// already be present locally; callers that can't guarantee that pull first.
+func (s *Service) runOneOff(ctx context.Context, name, alias string, component db.DeployComponent, imageRef string, cmd []string, env map[string]string, labels map[string]string) (int, string, error) {
+	mounts, err := buildDockerMounts(component.Mounts)
+	if err != nil {
+		return 0, "", fmt.Errorf("invalid mounts for %s: %w", component.Slug, err)
+	}
+	req := containerCreateRequest{
+		Image:            imageRef,
+		Cmd:              cmd,
+		Env:              envList(env),
+		Labels:           labels,
+		HostConfig:       hostConfig{NetworkMode: firstNetwork(component.Networks), Mounts: mounts},
+		NetworkingConfig: networkConfig(component.Networks, alias),
+	}
+	containerID, err := s.docker.ContainerCreate(ctx, name, req)
+	if err != nil {
+		return 0, "", fmt.Errorf("create container: %w", err)
+	}
+	defer s.docker.ContainerRemove(context.Background(), containerID, true)
+	if err := s.connectExtraNetworks(ctx, component.Networks, containerID, alias); err != nil {
+		return 0, "", fmt.Errorf("connect networks: %w", err)
+	}
+	if err := s.docker.ContainerStart(ctx, containerID); err != nil {
+		return 0, "", fmt.Errorf("start container: %w", err)
+	}
+	status, werr := s.docker.ContainerWait(ctx, containerID)
+	// Capture logs with a detached context — the run ctx may already be
+	// cancelled (timeout) but the carcass still holds its log tail.
+	out := s.captureContainerOutput(context.Background(), containerID)
+	if werr != nil {
+		return 0, out, fmt.Errorf("wait container: %w", werr)
+	}
+	return int(status), out, nil
+}
+
+// captureContainerOutput best-effort reads the tail of a container's
+// combined stdout+stderr and returns it capped to ~16 KiB. Gives a
+// scheduled-job run a readable result without depending on the async
+// container-log pipeline (which may miss a short-lived one-off).
+func (s *Service) captureContainerOutput(ctx context.Context, containerID string) string {
+	rc, err := s.docker.ContainerLogs(ctx, containerID, ContainerLogsOptions{Stdout: true, Stderr: true, Tail: "400"})
+	if err != nil {
+		return ""
+	}
+	defer rc.Close()
+	dem := NewLogDemuxer(rc, DemuxOptions{MaxLine: 1 << 16})
+	var b strings.Builder
+	for chunk := range dem.Out() {
+		b.WriteString(chunk.Line)
+		b.WriteByte('\n')
+	}
+	return truncateOutput(b.String())
+}
+
+func truncateOutput(s string) string {
+	const max = 16 << 10
+	if len(s) <= max {
+		return s
+	}
+	return "...(truncated)\n" + s[len(s)-max:]
+}
+
+// dispatchJobRun claims at most one pending run per tick (when a worker
+// slot is free) and runs it in a background goroutine. Skips silently when
+// all slots are busy — the next tick retries. processJobRun records each
+// run's own terminal state; the fallback Finish here covers a setup error
+// or a panic before that happens.
+func (s *Service) dispatchJobRun(ctx context.Context) {
+	select {
+	case s.jobSem <- struct{}{}:
+	default:
+		return // all job workers busy
+	}
+	run, ok, err := s.state.ClaimJobRun(ctx)
+	if err != nil {
+		<-s.jobSem
+		slog.Warn("job run claim failed", "error", err)
+		return
+	}
+	if !ok {
+		<-s.jobSem
+		return // queue empty
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("scheduled job run panicked", "run_id", run.ID, "panic", r)
+				ec := -1
+				_ = s.state.FinishJobRun(context.Background(), run.ID, "failed", &ec, fmt.Sprintf("panic: %v", r), "")
+			}
+			<-s.jobSem
+		}()
+		if err := s.processJobRun(ctx, run); err != nil {
+			slog.Error("scheduled job run failed", "run_id", run.ID, "error", err)
+			ec := -1
+			_ = s.state.FinishJobRun(context.Background(), run.ID, "failed", &ec, err.Error(), "")
+		}
+	}()
+}
+
+// processJobRun executes one claimed scheduled job run end-to-end and
+// records its terminal state via FinishJobRun. A non-zero process exit is
+// recorded as 'failed' but is NOT returned as a Go error (it's expected job
+// output). A returned error means the run could not be set up or finalised;
+// the tick loop turns that into a 'failed' run as a backstop.
+func (s *Service) processJobRun(ctx context.Context, run db.ScheduledJobRun) error {
+	plan, err := s.state.LoadJob(ctx, run.ID)
+	if err != nil {
+		return fmt.Errorf("load job: %w", err)
+	}
+	job := plan.Job
+	component := plan.Component
+
+	env, err := s.loadComponentEnv(component)
+	if err != nil {
+		return fmt.Errorf("load env: %w", err)
+	}
+
+	timeout := time.Duration(job.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = time.Hour
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// FinishJobRun must outlive a cancelled runCtx, so use a detached ctx.
+	fin := context.Background()
+
+	if job.ExecMode == "exec" {
+		if plan.ActiveContainerID == "" {
+			return s.state.FinishJobRun(fin, run.ID, "failed", nil, "no active container for component", "")
+		}
+		output, code, execErr := s.docker.ContainerExecCaptureCode(runCtx, plan.ActiveContainerID, job.Command)
+		if execErr != nil {
+			return s.state.FinishJobRun(fin, run.ID, "failed", nil, execErr.Error(), truncateOutput(string(output)))
+		}
+		status := "succeeded"
+		if code != 0 {
+			status = "failed"
+		}
+		return s.state.FinishJobRun(fin, run.ID, status, &code, "", truncateOutput(string(output)))
+	}
+
+	// Default "run" mode — fresh one-off container from the component image.
+	if plan.ImageRef == "" {
+		return s.state.FinishJobRun(fin, run.ID, "failed", nil, "component has no succeeded release image", "")
+	}
+	if err := s.docker.ImagePull(runCtx, plan.ImageRef); err != nil {
+		return s.state.FinishJobRun(fin, run.ID, "failed", nil, fmt.Sprintf("image pull: %v", err), "")
+	}
+	name := containerName(job.ProjectSlug, component.Slug+"-job-"+job.Slug, fmt.Sprintf("%d", run.ID))
+	labels := map[string]string{
+		"muvon.project":       job.ProjectSlug,
+		"muvon.component":     component.Slug,
+		"muvon.managed":       "true",
+		"muvon.job":           "scheduled",
+		"muvon.scheduled_job": job.Slug,
+	}
+	exitCode, output, err := s.runOneOff(runCtx, name, component.Slug+"-job", component, plan.ImageRef, job.Command, env, labels)
+	if err != nil {
+		return s.state.FinishJobRun(fin, run.ID, "failed", nil, err.Error(), truncateOutput(output))
+	}
+	status := "succeeded"
+	if exitCode != 0 {
+		status = "failed"
+	}
+	return s.state.FinishJobRun(fin, run.ID, status, &exitCode, "", truncateOutput(output))
 }
 
 func (s *Service) waitHealthyWithRestart(ctx context.Context, deploymentID string, component db.DeployComponent, containerID, backendURL string) error {

@@ -16,6 +16,8 @@ import type {
   DeployProjectSummary,
   Deployment,
   DeploymentEvent,
+  ScheduledJob,
+  ScheduledJobRun,
   ContainerSummary,
   ContainerLogChunk,
   ContainerLogRow,
@@ -604,6 +606,51 @@ export async function manualDeploy(
     project: projectSlug,
     ...data,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled jobs
+// ---------------------------------------------------------------------------
+
+export interface ScheduledJobInput {
+  component_slug?: string;
+  name?: string;
+  slug?: string;
+  schedule?: string;
+  timezone?: string;
+  command?: string[];
+  exec_mode?: string;
+  enabled?: boolean;
+  concurrency_policy?: string;
+  timeout_seconds?: number;
+}
+
+export async function listScheduledJobs(projectSlug: string): Promise<ScheduledJob[]> {
+  return request<ScheduledJob[]>("GET", `/api/deploy/projects/${projectSlug}/jobs`);
+}
+
+export async function createScheduledJob(projectSlug: string, data: ScheduledJobInput): Promise<ScheduledJob> {
+  return request<ScheduledJob>("POST", `/api/deploy/projects/${projectSlug}/jobs`, data);
+}
+
+export async function updateScheduledJob(projectSlug: string, jobSlug: string, data: ScheduledJobInput): Promise<ScheduledJob> {
+  return request<ScheduledJob>("PUT", `/api/deploy/projects/${projectSlug}/jobs/${jobSlug}`, data);
+}
+
+export async function deleteScheduledJob(projectSlug: string, jobSlug: string): Promise<void> {
+  await request("DELETE", `/api/deploy/projects/${projectSlug}/jobs/${jobSlug}`);
+}
+
+export async function setScheduledJobEnabled(projectSlug: string, jobSlug: string, enabled: boolean): Promise<ScheduledJob> {
+  return request<ScheduledJob>("POST", `/api/deploy/projects/${projectSlug}/jobs/${jobSlug}/enable`, { enabled });
+}
+
+export async function triggerJobRun(projectSlug: string, jobSlug: string): Promise<{ status: string }> {
+  return request<{ status: string }>("POST", `/api/deploy/projects/${projectSlug}/jobs/${jobSlug}/run`);
+}
+
+export async function listJobRuns(projectSlug: string, jobSlug: string, limit = 50): Promise<ScheduledJobRun[]> {
+  return request<ScheduledJobRun[]>("GET", `/api/deploy/projects/${projectSlug}/jobs/${jobSlug}/runs?limit=${limit}`);
 }
 
 // ---------------------------------------------------------------------------

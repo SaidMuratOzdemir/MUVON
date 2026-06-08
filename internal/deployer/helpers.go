@@ -100,12 +100,44 @@ func (c *DockerClient) RunHelperContainer(ctx context.Context, opts HelperContai
 }
 
 // ContainerExecCapture runs a command inside a running container and
-// returns its captured stdout. Stderr is folded into stdout (Docker's
-// multiplexed stream — we run with detach=false). Used by the upgrade
-// flow to invoke `pg_dump` inside the postgres container without
-// the deployer needing PG client tools of its own.
+// returns its captured stdout. Used by the upgrade flow to invoke
+// `pg_dump` inside the postgres container without the deployer needing PG
+// client tools of its own. A non-zero exit is reported as an error.
 func (c *DockerClient) ContainerExecCapture(ctx context.Context, containerID string, cmd []string) ([]byte, error) {
-	// 1) Create exec instance
+	buf, code, err := c.execAttached(ctx, containerID, cmd, false)
+	out := []byte(nil)
+	if buf != nil {
+		out = buf.Bytes()
+	}
+	if err != nil {
+		return out, err
+	}
+	if code != 0 {
+		return out, fmt.Errorf("exec exited with code %d", code)
+	}
+	return out, nil
+}
+
+// ContainerExecCaptureCode runs a command inside a running container and
+// returns its combined stdout+stderr (line-oriented, arrival order) plus
+// the exit code. Unlike ContainerExecCapture, a non-zero exit is NOT an
+// error — it is returned via exitCode so scheduled-job exec runs can record
+// it. err is reserved for transport/protocol failures.
+func (c *DockerClient) ContainerExecCaptureCode(ctx context.Context, containerID string, cmd []string) ([]byte, int, error) {
+	buf, code, err := c.execAttached(ctx, containerID, cmd, true)
+	out := []byte(nil)
+	if buf != nil {
+		out = buf.Bytes()
+	}
+	return out, code, err
+}
+
+// execAttached creates and runs an exec instance attached, collecting
+// output into a single buffer in arrival order, then reads the exit code.
+// includeStderr folds stderr in and re-adds line breaks (job logs are
+// line-oriented); when false only stdout is kept verbatim (binary-safe for
+// pg_dump). err is non-nil only on transport/protocol failure.
+func (c *DockerClient) execAttached(ctx context.Context, containerID string, cmd []string, includeStderr bool) (*bytes.Buffer, int, error) {
 	createBody, _ := json.Marshal(map[string]any{
 		"AttachStdout": true,
 		"AttachStderr": true,
@@ -115,21 +147,19 @@ func (c *DockerClient) ContainerExecCapture(ctx context.Context, containerID str
 	resp, err := c.do(ctx, http.MethodPost,
 		"/containers/"+url.PathEscape(containerID)+"/exec", createBody)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return nil, dockerError(resp)
+		return nil, 0, dockerError(resp)
 	}
 	var created struct {
 		ID string `json:"Id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	// 2) Start exec, streaming attached. tty=false → multiplexed stream
-	//    with 8-byte headers; reuse LogDemuxer on the receiving side.
 	startBody, _ := json.Marshal(map[string]any{
 		"Detach": false,
 		"Tty":    false,
@@ -137,42 +167,39 @@ func (c *DockerClient) ContainerExecCapture(ctx context.Context, containerID str
 	startResp, err := c.do(ctx, http.MethodPost,
 		"/exec/"+url.PathEscape(created.ID)+"/start", startBody)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer startResp.Body.Close()
 	if startResp.StatusCode >= 300 {
-		return nil, dockerError(startResp)
+		return nil, 0, dockerError(startResp)
 	}
-	// Both streams folded into a single buffer — pg_dump writes binary
-	// to stdout and progress to stderr; caller wants the binary.
-	stdout := &bytes.Buffer{}
+	buf := &bytes.Buffer{}
 	dem := NewLogDemuxer(startResp.Body, DemuxOptions{MaxLine: 1 << 20})
 	for chunk := range dem.Out() {
-		if chunk.Stream == "stdout" {
-			stdout.WriteString(chunk.Line)
+		if chunk.Stream == "stdout" || (includeStderr && chunk.Stream == "stderr") {
+			buf.WriteString(chunk.Line)
+			if includeStderr {
+				buf.WriteByte('\n')
+			}
 		}
 	}
 
-	// 3) Read exit code from inspect.
 	inspectResp, err := c.do(ctx, http.MethodGet, "/exec/"+url.PathEscape(created.ID)+"/json", nil)
 	if err != nil {
-		return stdout.Bytes(), err
+		return buf, 0, err
 	}
 	defer inspectResp.Body.Close()
 	if inspectResp.StatusCode >= 300 {
-		return stdout.Bytes(), dockerError(inspectResp)
+		return buf, 0, dockerError(inspectResp)
 	}
 	var inspect struct {
 		ExitCode int  `json:"ExitCode"`
 		Running  bool `json:"Running"`
 	}
 	if err := json.NewDecoder(inspectResp.Body).Decode(&inspect); err != nil {
-		return stdout.Bytes(), err
+		return buf, 0, err
 	}
-	if inspect.ExitCode != 0 {
-		return stdout.Bytes(), fmt.Errorf("exec exited with code %d", inspect.ExitCode)
-	}
-	return stdout.Bytes(), nil
+	return buf, inspect.ExitCode, nil
 }
 
 var _ = time.Time{}

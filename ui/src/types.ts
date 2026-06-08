@@ -372,6 +372,43 @@ export interface DeployProjectSummary {
   instances: DeployInstance[];
 }
 
+export interface ScheduledJob {
+  id: number;
+  project_id: number;
+  project_slug?: string;
+  component_id: number;
+  component_slug?: string;
+  agent_id: string;
+  name: string;
+  slug: string;
+  schedule: string;
+  timezone: string;
+  command: string[];
+  exec_mode: "run" | "exec";
+  enabled: boolean;
+  concurrency_policy: "forbid" | "allow";
+  timeout_seconds: number;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduledJobRun {
+  id: number;
+  job_id: number;
+  agent_id: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "skipped";
+  trigger: "schedule" | "manual";
+  exit_code?: number | null;
+  scheduled_for: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error: string;
+  output: string;
+  created_at: string;
+}
+
 export interface Deployment {
   id: string;
   project_id: number;

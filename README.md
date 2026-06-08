@@ -66,10 +66,10 @@ Each service is a standalone binary with its own database schema. They share a s
 
 | Service | What it does |
 |---------|-------------|
-| **MUVON** | Central server. Terminates TLS (auto Let's Encrypt or manual PEM), resolves virtual hosts, matches routes by path prefix, and proxies to upstreams. Serves the admin panel on `:443` for the configured `MUVON_ADMIN_DOMAIN` (falls back to `:9443` when no domain is set, for local dev). Enriches every log entry with **JWT identity** (verify + decode fallback) and **GeoIP** (country/city from local MaxMind DB). Provides config API and SSE watch endpoint for agents. |
+| **MUVON** | Central server. Terminates TLS (auto Let's Encrypt or manual PEM), resolves virtual hosts, matches routes by path prefix, and proxies to upstreams. Serves the admin panel on `:443` for the configured `MUVON_ADMIN_DOMAIN` (falls back to `:9443` when no domain is set, for local dev). Enriches every log entry with **JWT identity** (verify + decode fallback) and **GeoIP** (country/city from local MaxMind DB). Provides config API and SSE watch endpoint for agents. Also runs the **cron scheduler** that enqueues due scheduled-job runs for the deployer to execute. |
 | **agent** | Lightweight edge binary deployed on client servers. Pulls config from central MUVON on startup, watches for changes via SSE (hot reload). Proxies traffic using the central-managed host/route config. Sends logs to central diaLOG over TCP gRPC. No database, no admin panel — zero local state except ACME cert cache + an optional config snapshot for fail-soft cold-start (`AGENT_CONFIG_CACHE`). When `AGENT_DEPLOYER_ENABLED=true` it also runs the same managed-deploy lifecycle as `muvon-deployer` against its local Docker socket, with central reached via `/api/v1/agent/deployer/*` instead of a direct DB connection. |
 | **diaLOG** | Receives structured log entries from MUVON or remote agents via gRPC (Unix socket for local, TCP for agents), buffers them in a Go channel, and flushes in batches using PostgreSQL `COPY FROM` for throughput. Stores logs in TimescaleDB Hypertables with UUIDv7 primary keys. Provides BM25 full-text search (via pg_search/Tantivy) across path, host, user-agent, and IP fields. Exposes SSE live tail for real-time monitoring. Runs a **correlation engine** that detects attack patterns (brute force, scanning, error spikes) in real time and triggers **alerts** via Slack and email. |
-| **muvon-deployer** | A separate worker process that owns the Docker socket. Polls the database for pending deployment jobs and executes the full deploy lifecycle: image pull → one-off migration container → candidate container start → health check with restart retries → atomic promote (old active → draining, candidate → active) → graceful drain. Isolates host-level Docker access from the proxy and admin processes. |
+| **muvon-deployer** | A separate worker process that owns the Docker socket. Polls the database for pending deployment jobs and executes the full deploy lifecycle: image pull → one-off migration container → candidate container start → health check with restart retries → atomic promote (old active → draining, candidate → active) → graceful drain. The same loop also executes pending **scheduled job runs** (cron) in bounded background workers. Isolates host-level Docker access from the proxy and admin processes. |
 
 ---
 
@@ -249,7 +249,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 
 | Schema | Service | Tables |
 |--------|---------|--------|
-| `muvon` | MUVON | hosts (`tls_mode`, `rum_enabled`), routes, settings, tls_certificates, admin_users, admin_refresh_tokens, admin_audit_log, agents (`api_key_hash`), deploy_projects, deploy_components (`agent_id`, `paused`, `env`, `env_secret_keys`), deploy_releases, deploy_release_components, deploy_instances, deployments (`agent_id`), deployment_events |
+| `muvon` | MUVON | hosts (`tls_mode`, `rum_enabled`), routes, settings, tls_certificates, admin_users, admin_refresh_tokens, admin_audit_log, agents (`api_key_hash`), deploy_projects, deploy_components (`agent_id`, `paused`, `env`, `env_secret_keys`), deploy_releases, deploy_release_components, deploy_instances, deployments (`agent_id`), deployment_events, scheduled_jobs (`component_id`, `agent_id`, `schedule`, `exec_mode`), scheduled_job_runs |
 | `dialog` | diaLOG | http_logs (Hypertable, `trace_id`), http_log_bodies (Hypertable), log_notes, alerts, container_logs (Hypertable), containers, client_events (Hypertable) |
 
 ---
@@ -293,6 +293,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Pause / resume | `paused` flag drains a service and blocks new enqueues until cleared |
 | Atomic promote | Old `active` → `draining`, candidate → `active` in one transaction; drain timeout configurable |
 | Worker processes | Per-component `command` (CMD override), `health_mode` (`http`/`exec`/`running`), `health_command`, `deploy_strategy` (`blue_green`/`recreate`), `deploy_order` — run web/celery/beat from one image, gate migration before workers, keep singletons from overlapping |
+| Scheduled jobs (cron) | Component-bound periodic runs (scrape/cleanup/report/sync). Central scheduler enqueues on a cron expression (timezone-aware); the deployer executes in `run` (fresh one-off container) or `exec` (inside the active container) mode, bounded concurrency so a long job never blocks deploys. `concurrency_policy`, `timeout_seconds`, manual "run now", run history with exit code + output. `GET/POST/PUT/DELETE /api/deploy/projects/{slug}/jobs[/{job}]` + `/run`, `/runs`. Works on central and edge components |
 
 ### diaLOG SIEM
 

@@ -199,3 +199,47 @@ func (s *APIState) ListPrunableImageRefs(ctx context.Context, componentID, keepN
 	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/prunable-images", body, &resp)
 	return resp.ImageRefs, err
 }
+
+// ── Scheduled jobs ──────────────────────────────────────────────────────
+
+func (s *APIState) ClaimJobRun(ctx context.Context) (db.ScheduledJobRun, bool, error) {
+	var run db.ScheduledJobRun
+	status, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/job/claim", nil, &run)
+	if err != nil {
+		if status == http.StatusNoContent {
+			return db.ScheduledJobRun{}, false, nil
+		}
+		return db.ScheduledJobRun{}, false, err
+	}
+	if status == http.StatusNoContent {
+		return db.ScheduledJobRun{}, false, nil
+	}
+	return run, true, nil
+}
+
+func (s *APIState) LoadJob(ctx context.Context, runID int64) (db.JobRunPlan, error) {
+	var plan db.JobRunPlan
+	_, err := s.do(ctx, http.MethodGet, fmt.Sprintf("/api/v1/agent/deployer/job/%d", runID), nil, &plan)
+	return plan, err
+}
+
+func (s *APIState) FinishJobRun(ctx context.Context, runID int64, status string, exitCode *int, errMsg, output string) error {
+	body := map[string]any{
+		"run_id":    runID,
+		"status":    status,
+		"exit_code": exitCode,
+		"error":     errMsg,
+		"output":    output,
+	}
+	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/job/finish", body, nil)
+	return err
+}
+
+func (s *APIState) ResetStaleJobRuns(ctx context.Context, olderThan time.Duration) (int, error) {
+	body := map[string]int{"older_than_seconds": int(olderThan / time.Second)}
+	var resp struct {
+		Reset int `json:"reset"`
+	}
+	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/job/reset-stale", body, &resp)
+	return resp.Reset, err
+}

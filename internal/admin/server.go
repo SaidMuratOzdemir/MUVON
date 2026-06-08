@@ -212,6 +212,16 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/deploy/projects/{slug}/deploy", s.handleManualDeploy)
 	api.HandleFunc("POST /api/deploy/projects/{slug}/rollback", s.handleRollbackProject)
 
+	// Scheduled jobs — cron-driven, component-bound one-off runs.
+	api.HandleFunc("GET /api/deploy/projects/{slug}/jobs", s.handleListScheduledJobs)
+	api.HandleFunc("POST /api/deploy/projects/{slug}/jobs", s.handleCreateScheduledJob)
+	api.HandleFunc("GET /api/deploy/projects/{slug}/jobs/{job}", s.handleGetScheduledJob)
+	api.HandleFunc("PUT /api/deploy/projects/{slug}/jobs/{job}", s.handleUpdateScheduledJob)
+	api.HandleFunc("DELETE /api/deploy/projects/{slug}/jobs/{job}", s.handleDeleteScheduledJob)
+	api.HandleFunc("POST /api/deploy/projects/{slug}/jobs/{job}/enable", s.handleSetScheduledJobEnabled)
+	api.HandleFunc("POST /api/deploy/projects/{slug}/jobs/{job}/run", s.handleTriggerJobRun)
+	api.HandleFunc("GET /api/deploy/projects/{slug}/jobs/{job}/runs", s.handleListJobRuns)
+
 	mux.Handle("/api/", s.authMiddleware(csrfMW(api)))
 
 	// Agent API (X-Api-Key auth, no JWT)
@@ -243,6 +253,12 @@ func (s *Server) Handler() http.Handler {
 		agentMux.HandleFunc("GET /api/v1/agent/deployer/drainable", s.agentSvc.HandleListDrainable)
 		agentMux.HandleFunc("GET /api/v1/agent/deployer/live-containers", s.agentSvc.HandleListLiveContainers)
 		agentMux.HandleFunc("POST /api/v1/agent/deployer/prunable-images", s.agentSvc.HandleListPrunableImages)
+		// Scheduled job runs — edge deployer claims and reports runs the
+		// central scheduler produced for this agent's components.
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/job/claim", s.agentSvc.HandleJobClaim)
+		agentMux.HandleFunc("GET /api/v1/agent/deployer/job/{runID}", s.agentSvc.HandleJobLoad)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/job/finish", s.agentSvc.HandleJobFinish)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/job/reset-stale", s.agentSvc.HandleJobResetStale)
 		mux.Handle("/api/v1/agent/", s.agentSvc.AuthMiddleware(agentMux))
 	}
 

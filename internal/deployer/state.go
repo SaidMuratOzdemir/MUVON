@@ -79,6 +79,27 @@ type State interface {
 	// best-effort after each successful promote; errors are logged but
 	// don't fail the deployment.
 	ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]string, error)
+
+	// ── Scheduled jobs ──────────────────────────────────────────────────
+	// The scheduler (central muvon) produces pending scheduled_job_runs;
+	// these four methods let the same Service loop execute them on either
+	// topology, filtered by owner exactly like deployments.
+
+	// ClaimJobRun hands out the next pending run owned by the caller, or
+	// ok=false when none is queued.
+	ClaimJobRun(ctx context.Context) (run db.ScheduledJobRun, ok bool, err error)
+
+	// LoadJob returns the run's job, its bound component, and the image ref
+	// of the component's latest succeeded release.
+	LoadJob(ctx context.Context, runID int64) (db.JobRunPlan, error)
+
+	// FinishJobRun records a run's terminal state (succeeded|failed|skipped),
+	// exit code (nil when no process ran) and captured output tail.
+	FinishJobRun(ctx context.Context, runID int64, status string, exitCode *int, errMsg, output string) error
+
+	// ResetStaleJobRuns recovers runs stuck 'running' after a crash back to
+	// 'pending' for retry, scoped to the caller's owner.
+	ResetStaleJobRuns(ctx context.Context, olderThan time.Duration) (int, error)
 }
 
 // dbState wraps *db.DB so it satisfies State for the central deployer.
@@ -146,4 +167,20 @@ func (s *dbState) ListLiveManagedContainerIDs(ctx context.Context) (map[string]s
 
 func (s *dbState) ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]string, error) {
 	return s.db.ListPrunableImageRefsForAgent(ctx, s.agentID, componentID, keepN)
+}
+
+func (s *dbState) ClaimJobRun(ctx context.Context) (db.ScheduledJobRun, bool, error) {
+	return s.db.ClaimNextJobRun(ctx, s.agentID)
+}
+
+func (s *dbState) LoadJob(ctx context.Context, runID int64) (db.JobRunPlan, error) {
+	return s.db.LoadJobRunPlan(ctx, runID)
+}
+
+func (s *dbState) FinishJobRun(ctx context.Context, runID int64, status string, exitCode *int, errMsg, output string) error {
+	return s.db.FinishJobRun(ctx, runID, status, exitCode, errMsg, output)
+}
+
+func (s *dbState) ResetStaleJobRuns(ctx context.Context, olderThan time.Duration) (int, error) {
+	return s.db.ResetStaleRunningJobRuns(ctx, s.agentID, olderThan)
 }

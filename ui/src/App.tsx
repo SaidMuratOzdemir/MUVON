@@ -11,6 +11,7 @@ import AuditLog from './pages/AuditLog'
 import Agents from './pages/Agents'
 import RoutesPage from './pages/Routes'
 import Apps from './pages/Apps'
+import ScheduledJobs from './pages/ScheduledJobs'
 import Alerts from './pages/Alerts'
 import ContainerLogs from './pages/ContainerLogs'
 import ClientEvents from './pages/ClientEvents'
@@ -64,6 +65,7 @@ export default function App() {
             <Route path="agents" element={<Agents />} />
             <Route path="apps" element={<Apps hostFilter="central" />} />
             <Route path="apps/edge" element={<Apps hostFilter="edge" />} />
+            <Route path="jobs" element={<ScheduledJobs />} />
             <Route path="container-logs" element={<ContainerLogs />} />
             <Route path="client-events" element={<ClientEvents />} />
           </Route>

@@ -27,6 +27,47 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.44] - 2026-06-08
+
+### FEATURES
+
+- **Zamanlanmış işler (cron).** MUVON artık managed-deploy platformlarının
+  standart özelliği olan periyodik iş çalıştırmayı sunuyor (scrape / cleanup /
+  rapor / sync) — daha önce her uygulamanın kendi worker container'ıyla yamadığı
+  bir boşluk. Bir iş bir component'e bağlanır ve onun image / env / secret /
+  network / mount'larını miras alır; `command` image CMD'ini override eder.
+  - **Scheduler** (yalnız central `muvon`): cron ifadesine göre
+    `scheduled_job_runs` kuyruğuna `pending` iş bırakır ve `next_run_at`'i bir
+    sonraki cron sınırına ilerletir. Timezone destekli (statik binary'ye
+    `time/tzdata` gömülü). Crash sonrası tek "catch-up" çalıştırma — kaçan
+    tick'ler tek tek backfill edilmez.
+  - **Executor** (deployer): mevcut deploy döngüsünün yanında, sınırlı sayıda
+    (4) arka plan worker'ında çalıştırır — bir saate kadar sürebilen bir iş
+    deploy/drain döngüsünü bloklamaz. `run` modu yeni one-off container açar;
+    `exec` modu komutu component'in aktif container'ında çalıştırır. Exit code
+    + log kuyruğu (~16 KB) çalışma kaydına işlenir.
+  - **Hibrit topoloji**: hem central hem edge-agent component'leri için aynı
+    `State` arayüzü üzerinden çalışır (`/api/v1/agent/deployer/job/*`,
+    agent-sahiplik kontrollü). Operatör komut kanalına (`agent_commands`)
+    dokunulmaz — ayrı tablolar, ayrı concern.
+  - Admin UI'da **"Zamanlanmış İşler"** sayfası: iş tanımı, enable/disable,
+    manuel "şimdi çalıştır" ve çalışma geçmişi (durum + exit code + çıktı).
+  - `concurrency_policy=forbid` (varsayılan): önceki çalışma sürerken yeni tick
+    atlanır ve görünür bir `skipped` kaydı bırakılır.
+
+### Upgrade notları
+
+İki yeni migration (`scheduled_jobs`, `scheduled_job_runs`) ilk açılışta
+otomatik uygulanır — forward-only, manuel adım yok.
+
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.1.44
+
+# Agent:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.1.44
+
+---
+
 ## [0.1.43] - 2026-06-01
 
 ### ENHANCEMENTS

@@ -27,10 +27,16 @@ import (
 	logclient "muvon/internal/logger/grpcclient"
 	"muvon/internal/proxy"
 	"muvon/internal/router"
+	"muvon/internal/scheduler"
 	"muvon/internal/secret"
 	tlspkg "muvon/internal/tls"
 	"muvon/internal/version"
 	"fmt"
+
+	// Embed the IANA timezone database so the scheduler can LoadLocation
+	// arbitrary timezones in the CGO_ENABLED=0 static binary, where host
+	// tzdata may be absent (scratch/distroless images).
+	_ "time/tzdata"
 )
 
 func main() {
@@ -136,6 +142,16 @@ func main() {
 					slog.Info("agent commands expired", "count", n)
 				}
 			}
+		}
+	}()
+
+	// Scheduler — central-only goroutine that turns due scheduled_jobs into
+	// pending scheduled_job_runs. The deployer (central muvon-deployer or an
+	// edge agent) is the executor; this side only enqueues + advances cron.
+	sched := scheduler.New(database, 30*time.Second)
+	go func() {
+		if err := sched.Run(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("scheduler stopped", "error", err)
 		}
 	}()
 

@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Server, FileText, Settings, Shield,
   LogOut, Menu, X, Activity, ChevronRight, ClipboardList,
   Cpu, Route, Rocket, Satellite,
-  Bell, Terminal, MousePointerClick,
+  Bell, Terminal, MousePointerClick, Clock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -20,6 +20,7 @@ const mainNav = [
   { to: '/routes', label: 'Routes', icon: Route },
   { to: '/apps', label: 'Uygulamalar', icon: Rocket, end: true },
   { to: '/apps/edge', label: 'Uzak Uygulamalar', icon: Satellite },
+  { to: '/jobs', label: 'Zamanlanmış İşler', icon: Clock },
   { to: '/container-logs', label: 'Container Logs', icon: Terminal },
   { to: '/logs', label: 'SIEM / Logs', icon: FileText },
   { to: '/client-events', label: 'Client Events', icon: MousePointerClick },

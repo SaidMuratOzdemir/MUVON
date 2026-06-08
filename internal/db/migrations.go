@@ -1166,4 +1166,67 @@ SELECT add_retention_policy('client_events', INTERVAL '30 days', if_not_exists =
 		      ADD COLUMN IF NOT EXISTS deploy_strategy TEXT    NOT NULL DEFAULT 'blue_green',
 		      ADD COLUMN IF NOT EXISTS deploy_order    INTEGER NOT NULL DEFAULT 0;`,
 	},
+	// Scheduled jobs — periodic, component-bound one-off runs (cron-driven
+	// scrape / cleanup / report / sync). A job borrows its component's image,
+	// env, secrets, networks and mounts; command overrides the image CMD.
+	// agent_id mirrors the component's owner (NULL = central) so the central
+	// scheduler enqueues runs and the matching deployer (central or edge)
+	// claims them. Kept fully separate from agent_commands (operator HMAC
+	// lifecycle channel) — different concern, different table.
+	{
+		name: "create_scheduled_jobs", product: "muvon",
+		sql: `CREATE TABLE IF NOT EXISTS scheduled_jobs (
+		    id                 BIGSERIAL PRIMARY KEY,
+		    project_id         INTEGER NOT NULL REFERENCES deploy_projects(id) ON DELETE CASCADE,
+		    component_id       INTEGER NOT NULL REFERENCES deploy_components(id) ON DELETE CASCADE,
+		    agent_id           TEXT REFERENCES agents(id),
+		    name               TEXT NOT NULL,
+		    slug               TEXT NOT NULL,
+		    schedule           TEXT NOT NULL,
+		    timezone           TEXT NOT NULL DEFAULT 'UTC',
+		    command            TEXT[] NOT NULL DEFAULT '{}',
+		    exec_mode          TEXT NOT NULL DEFAULT 'run',
+		    enabled            BOOLEAN NOT NULL DEFAULT true,
+		    concurrency_policy TEXT NOT NULL DEFAULT 'forbid',
+		    timeout_seconds    INTEGER NOT NULL DEFAULT 3600,
+		    last_run_at        TIMESTAMPTZ,
+		    next_run_at        TIMESTAMPTZ,
+		    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+		    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+		    UNIQUE (project_id, slug)
+		);
+		CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_due
+		    ON scheduled_jobs (next_run_at) WHERE enabled = true;
+		CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_component
+		    ON scheduled_jobs (component_id);`,
+	},
+	// One row per execution. The scheduler inserts 'pending' rows; the
+	// deployer claims them (FOR UPDATE SKIP LOCKED, agent_id-scoped) exactly
+	// like deployments. scheduled_for carries the cron tick the run belongs
+	// to; the unique index over (job_id, scheduled_for) for trigger='schedule'
+	// makes enqueue idempotent so a scheduler restart never double-fires a
+	// tick. Manual runs skip that uniqueness (trigger='manual').
+	{
+		name: "create_scheduled_job_runs", product: "muvon",
+		sql: `CREATE TABLE IF NOT EXISTS scheduled_job_runs (
+		    id            BIGSERIAL PRIMARY KEY,
+		    job_id        BIGINT NOT NULL REFERENCES scheduled_jobs(id) ON DELETE CASCADE,
+		    agent_id      TEXT,
+		    status        TEXT NOT NULL DEFAULT 'pending',
+		    trigger       TEXT NOT NULL DEFAULT 'schedule',
+		    exit_code     INTEGER,
+		    scheduled_for TIMESTAMPTZ NOT NULL,
+		    started_at    TIMESTAMPTZ,
+		    finished_at   TIMESTAMPTZ,
+		    error         TEXT NOT NULL DEFAULT '',
+		    output        TEXT NOT NULL DEFAULT '',
+		    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+		);
+		CREATE INDEX IF NOT EXISTS idx_job_runs_pending
+		    ON scheduled_job_runs (created_at) WHERE status = 'pending';
+		CREATE INDEX IF NOT EXISTS idx_job_runs_job
+		    ON scheduled_job_runs (job_id, created_at DESC);
+		CREATE UNIQUE INDEX IF NOT EXISTS uq_job_runs_scheduled
+		    ON scheduled_job_runs (job_id, scheduled_for) WHERE trigger = 'schedule';`,
+	},
 }
