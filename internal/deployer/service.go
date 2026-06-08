@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"muvon/internal/db"
@@ -33,6 +34,15 @@ type Service struct {
 	// run for up to its timeout_seconds, default 1h) so they never block the
 	// deployment/drain loop. Buffered to maxConcurrentJobs.
 	jobSem chan struct{}
+	// inflightOneOff holds the container IDs of one-off runs (migration +
+	// scheduled job) currently managed by a live runOneOff call. The orphan
+	// reconciler must skip these: a scheduled job runs in a background
+	// goroutine, so without this guard a subsequent tick's
+	// reconcileOrphanContainers would see its still-running container (which
+	// is muvon.managed=true but not a deploy_instance) as an orphan and
+	// SIGKILL it (exit 137). After a crash the set starts empty, so genuine
+	// leftover one-off carcasses are still reaped.
+	inflightOneOff sync.Map // map[containerID]struct{}
 }
 
 // maxConcurrentJobs caps simultaneous scheduled-job containers per deployer
@@ -323,6 +333,12 @@ func (s *Service) runOneOff(ctx context.Context, name, alias string, component d
 	if err != nil {
 		return 0, "", fmt.Errorf("create container: %w", err)
 	}
+	// Mark this container in-flight before it starts so the orphan
+	// reconciler (which runs on the main tick loop while a scheduled job
+	// executes in a background goroutine) never reaps it as a stray
+	// muvon.managed container. Cleared once we're done with it.
+	s.inflightOneOff.Store(containerID, struct{}{})
+	defer s.inflightOneOff.Delete(containerID)
 	defer s.docker.ContainerRemove(context.Background(), containerID, true)
 	if err := s.connectExtraNetworks(ctx, component.Networks, containerID, alias); err != nil {
 		return 0, "", fmt.Errorf("connect networks: %w", err)
@@ -746,6 +762,13 @@ func (s *Service) reconcileOrphanContainers(ctx context.Context) error {
 	}
 	for _, c := range containers {
 		if _, alive := liveIDs[c.ID]; alive {
+			continue
+		}
+		// One-off runs (migration + scheduled job) in flight on this deployer
+		// own their own lifecycle via runOneOff. They carry muvon.managed=true
+		// but are not deploy_instances, so without this guard a scheduled job
+		// running in a background goroutine would be reaped mid-run (exit 137).
+		if _, busy := s.inflightOneOff.Load(c.ID); busy {
 			continue
 		}
 		// Helper containers (system upgrader, future short-lived jobs) own

@@ -27,6 +27,37 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.45] - 2026-06-08
+
+### BUGFIXES
+
+- **Scheduled job `run` modu container'ları artık çalışırken öldürülmüyor
+  (exit 137).** Orphan reconciler (`reconcileOrphanContainers`) her tick'te
+  `muvon.managed=true` taşıyan ama deploy-instance olmayan container'ları
+  öksüz sayıp `ContainerRemove(force=true)` ile siliyordu. Scheduled job'lar
+  deploy/drain döngüsünü bloklamamak için arka plan goroutine'inde koştuğundan,
+  bir sonraki tick'in reconciler'ı henüz **çalışan** job container'ını ~15-18
+  saniye içinde SIGKILL ediyordu — migration'lar tick içinde senkron koşup
+  hemen silindiği için etkilenmiyordu. Deployer artık in-flight one-off
+  container'ları (migration + scheduled job) bir sette takip edip reconciler'da
+  atlıyor; crash sonrası set boş başladığı için gerçek öksüz carcass'lar yine
+  temizlenir (regresyon yok).
+
+### Upgrade notları
+
+Deployer tarafı düzeltme — yeni migration yok. Scheduled job'ları `run` modunda
+çalıştıran host'taki deployer'ı yükseltin: central component'ler için
+`muvon-deployer`, edge component'ler için `agent`. (`exec` modu bu bug'tan
+etkilenmiyordu.)
+
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.1.45
+
+# Agent:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.1.45
+
+---
+
 ## [0.1.44] - 2026-06-08
 
 ### FEATURES
