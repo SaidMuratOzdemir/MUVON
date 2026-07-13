@@ -207,7 +207,20 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	// - POST/PUT/PATCH → body oku (enableCapture limiti SIEM için)
 	var reqCapture *CapturedBody
 	if enableCapture {
-		r, reqCapture = CaptureRequestBody(r, maxBodySize)
+		var capErr error
+		r, reqCapture, capErr = CaptureRequestBody(r, maxBodySize)
+		if capErr != nil {
+			// The body could not be fully read (client disconnect or a per-route
+			// size limit). Never forward a silently-truncated request to the
+			// backend — reject it instead.
+			var maxErr *http.MaxBytesError
+			if errors.As(capErr, &maxErr) {
+				http.Error(w, "413 Request Entity Too Large", http.StatusRequestEntityTooLarge)
+			} else {
+				http.Error(w, "400 Bad Request", http.StatusBadRequest)
+			}
+			return
+		}
 	}
 
 	// Per-route rate limiting
@@ -237,8 +250,15 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 		w = rc
 	}
 
-	// X-Accel-Redirect: wrap writer to intercept backend redirect and serve local file
-	if route.Route.AccelRoot != nil && !skipResponseCapture {
+	// X-Accel-Redirect: wrap writer to intercept backend redirect and serve local
+	// file. Installed whenever the route has an accel root, independent of the
+	// SIEM capture / SSE / upgrade gating: the interceptor is what strips the
+	// internal X-Accel-Redirect header and serves the file, so skipping it would
+	// leak the backend's internal path and return an empty body. A client must
+	// not be able to disable it by sending Accept: text/event-stream or an
+	// Upgrade header. The writer passes non-accel responses through untouched and
+	// delegates Hijack, so wrapping is safe even for a genuine upgrade.
+	if route.Route.AccelRoot != nil {
 		w = newAccelWriter(w, r, *route.Route.AccelRoot)
 	}
 
@@ -530,6 +550,15 @@ func clientIPFor(r *http.Request, trustedProxies []string) string {
 	}
 
 	return peer
+}
+
+// ClientIP resolves the real client IP for handlers outside the proxy pipeline
+// (e.g. the admin listener) using the same trust model as clientIPFor: Cloudflare
+// CF-Connecting-IP only when the peer is a CF edge and the operator's CF secret
+// matches; X-Forwarded-For/X-Real-IP only from a configured trusted proxy;
+// otherwise the direct peer. Client-supplied headers are never trusted by default.
+func ClientIP(r *http.Request, trustedProxies []string) string {
+	return clientIPFor(r, trustedProxies)
 }
 
 // cidrEntry caches a parsed CIDR or nil if the entry was not a valid CIDR.

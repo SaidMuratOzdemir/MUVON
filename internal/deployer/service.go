@@ -21,6 +21,9 @@ type Service struct {
 	docker       *DockerClient
 	pollInterval time.Duration
 	healthClient *http.Client
+	// lastStaleReset throttles the periodic crash-recovery sweep in tick.
+	// Only ever read/written from the single tick goroutine — no lock needed.
+	lastStaleReset time.Time
 	// secretBox decrypts the "enc:"-prefixed values in component env maps
 	// before they reach the container. Operates as passthrough when no
 	// MUVON_ENCRYPTION_KEY was configured (HasKey() == false).
@@ -76,21 +79,14 @@ func NewService(state State, docker *DockerClient, secretBox *secret.Box, pollIn
 }
 
 func (s *Service) Run(ctx context.Context) error {
-	// On startup, reset any deployments stuck in "running" state from a
-	// previous crash so they are retried on the next tick.
-	if n, err := s.state.ResetStaleRunning(ctx, 10*time.Minute); err != nil {
-		slog.Warn("failed to reset stale running deployments", "error", err)
-	} else if n > 0 {
-		slog.Info("reset stale running deployments to pending", "count", n)
-	}
-	// Same recovery for scheduled job runs orphaned by a crash. The window
-	// is wider than a deployment's because a job may legitimately run for up
-	// to its timeout_seconds (default 1h); 90m clears truly stuck runs.
-	if n, err := s.state.ResetStaleJobRuns(ctx, 90*time.Minute); err != nil {
-		slog.Warn("failed to reset stale job runs", "error", err)
-	} else if n > 0 {
-		slog.Info("reset stale job runs to pending", "count", n)
-	}
+	// Crash recovery. Also re-run periodically from tick (not just here): a
+	// fast crash+supervisor-restart leaves a stuck row's updated_at too fresh
+	// for the age threshold to catch at boot, which would wedge that
+	// deployment/job forever. A periodic sweep bounds recovery to the
+	// threshold window instead. Safe against live work: tick is single-
+	// threaded and blocks in processDeployment while a deployment is in
+	// flight, and the job threshold exceeds job timeout_seconds.
+	s.resetStale(ctx)
 
 	ticker := time.NewTicker(s.pollInterval)
 	defer ticker.Stop()
@@ -110,7 +106,31 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 }
 
+// staleResetInterval throttles the periodic crash-recovery sweep so it does
+// not issue its two UPDATEs on every 5s tick.
+const staleResetInterval = time.Minute
+
+// resetStale flips deployments/job-runs stuck in "running" past their age
+// threshold back to pending so a crashed process's work is retried. Age
+// thresholds distinguish a truly-dead process from active work.
+func (s *Service) resetStale(ctx context.Context) {
+	if n, err := s.state.ResetStaleRunning(ctx, 10*time.Minute); err != nil {
+		slog.Warn("failed to reset stale running deployments", "error", err)
+	} else if n > 0 {
+		slog.Info("reset stale running deployments to pending", "count", n)
+	}
+	if n, err := s.state.ResetStaleJobRuns(ctx, 90*time.Minute); err != nil {
+		slog.Warn("failed to reset stale job runs", "error", err)
+	} else if n > 0 {
+		slog.Info("reset stale job runs to pending", "count", n)
+	}
+	s.lastStaleReset = time.Now()
+}
+
 func (s *Service) tick(ctx context.Context) error {
+	if time.Since(s.lastStaleReset) >= staleResetInterval {
+		s.resetStale(ctx)
+	}
 	if err := s.cleanupDraining(ctx); err != nil {
 		slog.Warn("drain cleanup failed", "error", err)
 	}
@@ -670,14 +690,32 @@ func (s *Service) waitHealthyRunning(ctx context.Context, component db.DeployCom
 	return lastErr
 }
 
-// stopOldForRecreate stops the previous active container(s) of a recreate
-// component before its candidate starts, so a singleton never overlaps. Finds
-// them by managed labels (same project+component, a different release) — no DB
-// mutation here; the normal Promote → cleanupDraining flow reconciles the rows
-// afterward (ContainerStop on an already-stopped container is a no-op). A stop
-// error fails the deploy: better to abort than start a second singleton on top
-// of a still-running old one.
+// stopOldForRecreate stops the previous container(s) of a recreate component
+// before its candidate starts, so a singleton never overlaps. It first flips the
+// component's 'active' instances to 'draining' in the DB and stops their
+// containers: doing the state transition up front means a subsequently-failed
+// candidate never leaves a stopped container behind a still-'active' row (which
+// the proxy would keep routing to). cleanupDraining then removes the drained
+// containers on both the success and failure paths. A label sweep afterward
+// catches any other still-running container of a different release
+// (warming/draining leftovers) so the no-overlap guarantee holds. A stop error
+// fails the deploy: better to abort than start a second singleton on top of a
+// still-running old one.
 func (s *Service) stopOldForRecreate(ctx context.Context, deploymentID string, plan db.DeploymentPlan, component db.DeployComponent) error {
+	drained, err := s.state.DrainActiveForRecreate(ctx, component.ID)
+	if err != nil {
+		return fmt.Errorf("drain active for recreate %s: %w", component.Slug, err)
+	}
+	for _, inst := range drained {
+		if inst.ContainerID == "" {
+			continue
+		}
+		_ = s.state.AddEvent(ctx, deploymentID, "recreate_stop", "Stopping previous instance before recreate", map[string]string{"component": component.Slug, "container": inst.ContainerID})
+		if err := s.docker.ContainerStop(ctx, inst.ContainerID, 10); err != nil {
+			return fmt.Errorf("stop old container %s: %w", short(inst.ContainerID), err)
+		}
+	}
+
 	containers, err := s.docker.ContainerListAll(ctx, true)
 	if err != nil {
 		return err
@@ -691,9 +729,8 @@ func (s *Service) stopOldForRecreate(ctx context.Context, deploymentID string, p
 		if c.State == "exited" || c.State == "dead" {
 			continue // already down — cleanup/reconcile will remove it
 		}
-		_ = s.state.AddEvent(ctx, deploymentID, "recreate_stop", "Stopping previous instance before recreate", map[string]string{"component": component.Slug, "container": c.ID})
 		if err := s.docker.ContainerStop(ctx, c.ID, 10); err != nil {
-			return fmt.Errorf("stop old container %s: %w", c.ID, err)
+			return fmt.Errorf("stop old container %s: %w", short(c.ID), err)
 		}
 	}
 	return nil

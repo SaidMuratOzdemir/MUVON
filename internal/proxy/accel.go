@@ -1,10 +1,12 @@
 package proxy
 
 import (
+	"bufio"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -49,6 +51,15 @@ func (w *accelInterceptWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack delegates to the underlying writer so wrapping an accel route that
+// happens to carry a genuine connection upgrade still works.
+func (w *accelInterceptWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
 }
 
 // newAccelWriter wraps w only when the route has an accel_root configured.

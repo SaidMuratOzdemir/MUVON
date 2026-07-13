@@ -15,31 +15,33 @@ type CapturedBody struct {
 	Truncated bool
 }
 
-func CaptureRequestBody(r *http.Request, maxSize int) (*http.Request, *CapturedBody) {
+func CaptureRequestBody(r *http.Request, maxSize int) (*http.Request, *CapturedBody, error) {
 	if r.Body == nil || r.ContentLength == 0 {
-		return r, &CapturedBody{}
+		return r, &CapturedBody{}, nil
 	}
 
 	if shouldSkipCapture(r.Header.Get("Content-Type")) {
-		return r, &CapturedBody{Size: int(r.ContentLength)}
+		return r, &CapturedBody{Size: int(r.ContentLength)}, nil
 	}
 
-	var buf bytes.Buffer
-	limited := io.LimitReader(r.Body, int64(maxSize)+1)
-	tee := io.TeeReader(limited, &buf)
-
-	// Body'yi oku, ama proxy için de kullanılabilir olsun
-	captured, _ := io.ReadAll(tee)
-	remaining, _ := io.ReadAll(r.Body)
+	// Gövdeyi tümüyle oku: forward edilen kopya asla kısaltılmaz, yalnız
+	// SIEM kopyası maxSize'da kırpılır (Truncated bayrağı ile). Okuma hatası
+	// (client bağlantısı koptu ya da MaxBytesReader limiti aşıldı) durumunda
+	// kısmi gövdeyi "tam" gibi backend'e ASLA iletme — hatayı yukarı taşı,
+	// çağıran isteği reddetsin.
+	full, err := io.ReadAll(r.Body)
 	r.Body.Close()
-
-	truncated := len(captured) > maxSize
-	if truncated {
-		captured = captured[:maxSize]
+	if err != nil {
+		return r, nil, err
 	}
 
-	// Body'yi yeniden oluştur
-	full := append(captured, remaining...)
+	captured := full
+	truncated := false
+	if len(captured) > maxSize {
+		captured = captured[:maxSize]
+		truncated = true
+	}
+
 	r.Body = io.NopCloser(bytes.NewReader(full))
 	r.ContentLength = int64(len(full))
 
@@ -47,7 +49,7 @@ func CaptureRequestBody(r *http.Request, maxSize int) (*http.Request, *CapturedB
 		Data:      captured,
 		Size:      len(full),
 		Truncated: truncated,
-	}
+	}, nil
 }
 
 type ResponseCapture struct {
@@ -95,12 +97,14 @@ func (rc *ResponseCapture) Write(b []byte) (int, error) {
 	}
 	rc.totalSize += len(b)
 
-	if rc.maxSize > 0 && rc.buf.Len() < rc.maxSize {
-		remaining := rc.maxSize - rc.buf.Len()
-		if len(b) <= remaining {
+	if rc.maxSize > 0 {
+		room := rc.maxSize - rc.buf.Len()
+		if room >= len(b) {
 			rc.buf.Write(b)
 		} else {
-			rc.buf.Write(b[:remaining])
+			if room > 0 {
+				rc.buf.Write(b[:room])
+			}
 			rc.truncated = true
 		}
 	}

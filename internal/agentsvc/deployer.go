@@ -189,6 +189,29 @@ func (s *Service) HandleInstanceStopped(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// HandleDrainActiveForRecreate flips a component's active instances to draining
+// and returns them so the edge deployer can stop their containers.
+// POST /api/v1/agent/deployer/component/drain-active
+func (s *Service) HandleDrainActiveForRecreate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ComponentID int `json:"component_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if !s.agentOwnsComponent(r, req.ComponentID) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "component is not owned by this agent"})
+		return
+	}
+	instances, err := s.db.DrainActiveInstancesForComponent(r.Context(), req.ComponentID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, instances)
+}
+
 // HandlePromote runs the atomic promote transaction.
 // POST /api/v1/agent/deployer/promote
 func (s *Service) HandlePromote(w http.ResponseWriter, r *http.Request) {

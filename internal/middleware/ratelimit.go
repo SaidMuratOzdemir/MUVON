@@ -13,6 +13,15 @@ type RateLimiter struct {
 	rate     int
 	window   time.Duration
 	cleanup  time.Duration
+	keyFn    func(*http.Request) string
+}
+
+// SetKeyFunc overrides how the rate-limit key (client IP) is derived from a
+// request. Callers that sit behind the proxy's trust model inject a
+// trusted-proxy-aware resolver here so an untrusted client cannot spoof its key
+// via X-Forwarded-For. When unset, the raw peer/header heuristic is used.
+func (rl *RateLimiter) SetKeyFunc(fn func(*http.Request) string) {
+	rl.keyFn = fn
 }
 
 type visitor struct {
@@ -35,6 +44,9 @@ func NewRateLimiter(requestsPerWindow int, window time.Duration) *RateLimiter {
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := extractIP(r)
+		if rl.keyFn != nil {
+			ip = rl.keyFn(r)
+		}
 		if !rl.allow(ip) {
 			w.Header().Set("Retry-After", "60")
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)

@@ -173,16 +173,16 @@ type ManagedBackend struct {
 }
 
 type Deployment struct {
-	ID          string          `json:"id"`
-	ProjectID   int             `json:"project_id"`
-	ProjectSlug string          `json:"project_slug,omitempty"`
-	ReleaseUUID string          `json:"release_uuid"`
-	ReleaseID   string          `json:"release_id"`
-	Repo        string          `json:"repo,omitempty"`
-	Branch      string          `json:"branch,omitempty"`
-	CommitSHA   string          `json:"commit_sha,omitempty"`
-	Trigger     string          `json:"trigger"`
-	Status      string          `json:"status"`
+	ID          string `json:"id"`
+	ProjectID   int    `json:"project_id"`
+	ProjectSlug string `json:"project_slug,omitempty"`
+	ReleaseUUID string `json:"release_uuid"`
+	ReleaseID   string `json:"release_id"`
+	Repo        string `json:"repo,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	CommitSHA   string `json:"commit_sha,omitempty"`
+	Trigger     string `json:"trigger"`
+	Status      string `json:"status"`
 	// AgentID is copied from the target component at enqueue time so the
 	// claim loop can filter on a stable column even after the component
 	// row is edited. "" means central; non-empty must equal agents.id.
@@ -1268,6 +1268,35 @@ func (d *DB) MarkDeployInstanceStopped(ctx context.Context, instanceID string) e
 		return fmt.Errorf("mark deploy instance stopped: %w", err)
 	}
 	return nil
+}
+
+// DrainActiveInstancesForComponent flips a component's currently 'active'
+// instances to 'draining' and returns them (with container IDs) so the caller
+// can stop the containers. Used by the recreate strategy: the old instances
+// must leave the routable 'active' set before the candidate starts, so a failed
+// candidate never leaves a dead container behind a state='active' row. The
+// normal cleanupDraining pass removes the drained containers afterward, on both
+// the success and failure paths.
+func (d *DB) DrainActiveInstancesForComponent(ctx context.Context, componentID int) ([]DeployInstance, error) {
+	rows, err := d.Pool.Query(ctx,
+		`WITH drained AS (
+		     UPDATE deploy_instances
+		     SET state = 'draining', drain_started_at = now(), updated_at = now()
+		     WHERE state = 'active' AND component_id = $1
+		     RETURNING *
+		 )
+		 SELECT i.id::text, i.component_id, p.slug, c.slug, COALESCE(i.release_uuid::text, ''), COALESCE(r.release_id, ''),
+		        i.container_id, i.container_name, i.backend_url, i.state, i.health_status, i.in_flight,
+		        i.last_error, i.started_at, i.drain_started_at, i.stopped_at, i.created_at, i.updated_at
+		 FROM drained i
+		 JOIN deploy_components c ON c.id = i.component_id
+		 JOIN deploy_projects p ON p.id = c.project_id
+		 LEFT JOIN deploy_releases r ON r.id = i.release_uuid`, componentID)
+	if err != nil {
+		return nil, fmt.Errorf("drain active instances for component: %w", err)
+	}
+	defer rows.Close()
+	return scanDeployInstances(rows)
 }
 
 // ListLiveManagedContainerIDs returns the set of container IDs that Muvon

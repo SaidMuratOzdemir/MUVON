@@ -124,9 +124,18 @@ func (m *Manager) HandleAlert(ctx context.Context, alert correlation.Alert) {
 		return
 	}
 
-	if m.dispatch(ctx, alert) {
-		m.setCooldown(alert.Fingerprint)
-	}
+	// Dispatch notifications off the caller's goroutine. The correlation engine
+	// calls HandleAlert synchronously while holding its lock, so a slow or
+	// blackholed Slack/SMTP endpoint must never stall correlation (fail-open).
+	// A fresh background context bounds the send independently of the caller's
+	// lifecycle; cooldown gating keeps the goroutine count low.
+	go func() {
+		dctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if m.dispatch(dctx, alert) {
+			m.setCooldown(alert.Fingerprint)
+		}
+	}()
 }
 
 func (m *Manager) dispatch(ctx context.Context, alert correlation.Alert) bool {

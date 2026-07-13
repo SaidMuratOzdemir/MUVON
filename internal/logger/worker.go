@@ -63,7 +63,7 @@ func (w *worker) run() {
 				select {
 				case entry, ok := <-w.entries:
 					if !ok {
-						break
+						goto done
 					}
 					batch = append(batch, entry)
 				default:

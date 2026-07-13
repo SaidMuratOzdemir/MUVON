@@ -96,6 +96,10 @@ func (p *ClientEventPipeline) Send(e ClientEvent) {
 		}
 	}
 
+	// Strip NUL / invalid UTF-8 so a crafted beacon field can't fail the COPY
+	// batch (and take unrelated events down with it).
+	sanitizeClientEvent(&e)
+
 	select {
 	case p.ch <- e:
 		p.enqueued.Add(1)

@@ -153,13 +153,17 @@ func (s *APIState) Promote(ctx context.Context, deploymentID string, candidateID
 
 func (s *APIState) ResetStaleRunning(ctx context.Context, olderThan time.Duration) (int, error) {
 	body := map[string]int{"older_than_seconds": int(olderThan / time.Second)}
-	var resp struct{ Reset int `json:"reset"` }
+	var resp struct {
+		Reset int `json:"reset"`
+	}
 	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/reset-stale", body, &resp)
 	return resp.Reset, err
 }
 
 func (s *APIState) CleanupStaleWarming(ctx context.Context) (int, error) {
-	var resp struct{ Cleaned int `json:"cleaned"` }
+	var resp struct {
+		Cleaned int `json:"cleaned"`
+	}
 	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/cleanup-warming", nil, &resp)
 	return resp.Cleaned, err
 }
@@ -174,6 +178,13 @@ func (s *APIState) MarkInstanceStopped(ctx context.Context, instanceID string) e
 	body := map[string]string{"instance_id": instanceID}
 	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/instance/stopped", body, nil)
 	return err
+}
+
+func (s *APIState) DrainActiveForRecreate(ctx context.Context, componentID int) ([]db.DeployInstance, error) {
+	body := map[string]int{"component_id": componentID}
+	var out []db.DeployInstance
+	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/component/drain-active", body, &out)
+	return out, err
 }
 
 func (s *APIState) ListLiveManagedContainerIDs(ctx context.Context) (map[string]struct{}, error) {

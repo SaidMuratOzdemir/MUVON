@@ -143,6 +143,10 @@ func (p *Pipeline) Send(entry Entry) {
 	entry.RequestHeaders = SanitizeHeaders(entry.RequestHeaders)
 	entry.ResponseHeaders = SanitizeHeaders(entry.ResponseHeaders)
 
+	// Strip NUL / invalid UTF-8 from every DB-bound text field so one poisoned
+	// request (e.g. "%00" in the path) can't fail the whole COPY batch.
+	sanitizeEntryText(&entry)
+
 	select {
 	case p.ch <- entry:
 		p.enqueued.Add(1)

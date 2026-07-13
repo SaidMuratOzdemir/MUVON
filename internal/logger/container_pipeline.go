@@ -99,6 +99,10 @@ func (p *ContainerPipeline) Send(entry ContainerEntry) {
 		entry.Attrs = parseJSONLine(entry.Line)
 	}
 
+	// Strip NUL / invalid UTF-8 so a container emitting such a byte can't fail
+	// the COPY batch (and take unrelated containers' lines down with it).
+	sanitizeContainerEntry(&entry)
+
 	select {
 	case p.ch <- entry:
 		p.enqueued.Add(1)

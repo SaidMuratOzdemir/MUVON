@@ -22,6 +22,7 @@ import (
 	"muvon/internal/health"
 	logclient "muvon/internal/logger/grpcclient"
 	"muvon/internal/middleware"
+	"muvon/internal/proxy"
 	"muvon/internal/secret"
 	tlspkg "muvon/internal/tls"
 )
@@ -87,6 +88,7 @@ func NewServer(
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	rl := middleware.NewRateLimiter(100, time.Minute)
+	rl.SetKeyFunc(extractClientIP)
 
 	// Auth endpoints (rate limited, no JWT).
 	// CSRF is enforced by a single middleware instance shared with the
@@ -247,6 +249,7 @@ func (s *Server) Handler() http.Handler {
 		agentMux.HandleFunc("POST /api/v1/agent/deployer/instance", s.agentSvc.HandleCreateInstance)
 		agentMux.HandleFunc("POST /api/v1/agent/deployer/instance/unhealthy", s.agentSvc.HandleInstanceUnhealthy)
 		agentMux.HandleFunc("POST /api/v1/agent/deployer/instance/stopped", s.agentSvc.HandleInstanceStopped)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/component/drain-active", s.agentSvc.HandleDrainActiveForRecreate)
 		agentMux.HandleFunc("POST /api/v1/agent/deployer/promote", s.agentSvc.HandlePromote)
 		agentMux.HandleFunc("POST /api/v1/agent/deployer/reset-stale", s.agentSvc.HandleResetStaleRunning)
 		agentMux.HandleFunc("POST /api/v1/agent/deployer/cleanup-warming", s.agentSvc.HandleCleanupStaleWarming)
@@ -427,21 +430,14 @@ func (s *Server) auditLog(r *http.Request, action, targetType, targetID string, 
 	s.db.WriteAuditLog(r.Context(), user, action, targetType, targetID, ip, detail)
 }
 
+// extractClientIP resolves the client IP for rate-limiting and audit logging
+// using the proxy's trusted-proxy-aware model. Client-supplied X-Forwarded-For /
+// X-Real-IP are honoured only when the direct peer is a trusted proxy (Cloudflare
+// edge with the operator's secret, or a configured trusted proxy); otherwise the
+// direct peer address is used. This prevents a client from spoofing its source IP
+// to bypass the login rate limiter or forge audit entries.
 func extractClientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.Index(xff, ","); i != -1 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
-	ip := r.RemoteAddr
-	if i := strings.LastIndex(ip, ":"); i != -1 {
-		return ip[:i]
-	}
-	return ip
+	return proxy.ClientIP(r, nil)
 }
 
 func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {

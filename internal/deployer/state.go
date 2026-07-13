@@ -68,6 +68,12 @@ type State interface {
 	// confirms the container has been removed.
 	MarkInstanceStopped(ctx context.Context, instanceID string) error
 
+	// DrainActiveForRecreate flips a component's 'active' instances to
+	// 'draining' and returns them so the caller can stop their containers.
+	// Used by the recreate strategy so a failed candidate never leaves a
+	// dead container behind a still-'active' row.
+	DrainActiveForRecreate(ctx context.Context, componentID int) ([]db.DeployInstance, error)
+
 	// ListLiveManagedContainerIDs returns the union of every container
 	// the system still wants alive. Containers Docker shows that aren't
 	// in this set are orphans from a crashed deployment.
@@ -159,6 +165,10 @@ func (s *dbState) ListDrainable(ctx context.Context) ([]db.DeployInstance, error
 
 func (s *dbState) MarkInstanceStopped(ctx context.Context, instanceID string) error {
 	return s.db.MarkDeployInstanceStopped(ctx, instanceID)
+}
+
+func (s *dbState) DrainActiveForRecreate(ctx context.Context, componentID int) ([]db.DeployInstance, error) {
+	return s.db.DrainActiveInstancesForComponent(ctx, componentID)
 }
 
 func (s *dbState) ListLiveManagedContainerIDs(ctx context.Context) (map[string]struct{}, error) {

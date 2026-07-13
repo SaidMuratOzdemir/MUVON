@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+	"time"
 
 	"muvon/internal/correlation"
 )
@@ -60,40 +61,51 @@ func (e *EmailNotifier) Send(ctx context.Context, alert correlation.Alert) error
 		auth = smtp.PlainAuth("", cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPHost)
 	}
 
-	// Use STARTTLS if port is 587, direct TLS if 465, plain otherwise
-	if cfg.SMTPPort == 465 {
-		return sendTLS(addr, cfg.SMTPHost, auth, cfg.SMTPFrom, recipients, []byte(msg))
-	}
-
-	return smtp.SendMail(addr, auth, cfg.SMTPFrom, recipients, []byte(msg))
+	// Direct TLS on 465, STARTTLS (when advertised) otherwise. Every step is
+	// bounded by a dial timeout + connection deadline so an unreachable or slow
+	// SMTP host can never stall the caller (the alerting dispatch goroutine).
+	return sendSMTP(ctx, addr, cfg.SMTPHost, cfg.SMTPPort == 465, auth, cfg.SMTPFrom, recipients, []byte(msg))
 }
 
-// sendTLS handles implicit TLS (port 465).
-func sendTLS(addr, host string, auth smtp.Auth, from string, to []string, msg []byte) error {
-	tlsConfig := &tls.Config{ServerName: host}
-	conn, err := tls.Dial("tcp", addr, tlsConfig)
+// smtpTimeout bounds the whole SMTP exchange (connect + protocol). Without it,
+// net.Dial to a blackholed host blocks for the OS TCP connect timeout (minutes).
+const smtpTimeout = 15 * time.Second
+
+func sendSMTP(ctx context.Context, addr, host string, implicitTLS bool, auth smtp.Auth, from string, to []string, msg []byte) error {
+	dialer := &net.Dialer{Timeout: smtpTimeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
-		return fmt.Errorf("email tls dial: %w", err)
+		return fmt.Errorf("email dial: %w", err)
+	}
+	_ = conn.SetDeadline(time.Now().Add(smtpTimeout))
+	if implicitTLS {
+		tconn := tls.Client(conn, &tls.Config{ServerName: host})
+		if err := tconn.HandshakeContext(ctx); err != nil {
+			conn.Close()
+			return fmt.Errorf("email tls handshake: %w", err)
+		}
+		conn = tconn
 	}
 
-	hostname, _, _ := net.SplitHostPort(addr)
-	if hostname == "" {
-		hostname = host
-	}
-
-	client, err := smtp.NewClient(conn, hostname)
+	client, err := smtp.NewClient(conn, host)
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("email smtp client: %w", err)
 	}
 	defer client.Close()
 
+	if !implicitTLS {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+				return fmt.Errorf("email starttls: %w", err)
+			}
+		}
+	}
 	if auth != nil {
 		if err := client.Auth(auth); err != nil {
 			return fmt.Errorf("email auth: %w", err)
 		}
 	}
-
 	if err := client.Mail(from); err != nil {
 		return fmt.Errorf("email mail: %w", err)
 	}
@@ -102,7 +114,6 @@ func sendTLS(addr, host string, auth smtp.Auth, from string, to []string, msg []
 			return fmt.Errorf("email rcpt: %w", err)
 		}
 	}
-
 	w, err := client.Data()
 	if err != nil {
 		return fmt.Errorf("email data: %w", err)
@@ -113,6 +124,5 @@ func sendTLS(addr, host string, auth smtp.Auth, from string, to []string, msg []
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("email close data: %w", err)
 	}
-
 	return client.Quit()
 }

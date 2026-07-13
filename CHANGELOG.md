@@ -27,6 +27,83 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.46] - 2026-07-13
+
+Kod-inceleme turunda bulunan doğruluk ve güvenlik kusurlarının toplu
+düzeltmesi. Şema migration'ı yok; sadece image güncellemesi gerekir.
+
+### SECURITY
+
+- **Admin login rate-limit'i artık istemci `X-Forwarded-For` / `X-Real-IP`
+  başlığıyla atlatılamıyor.** Admin `extractClientIP` bu başlıkları güven
+  kontrolü olmadan kabul ediyordu; saldırgan her denemede başlığı değiştirerek
+  `/api/auth/login` limitini (100/dk) tamamen bypass edip sınırsız brute-force
+  yapabiliyor, audit ve refresh-token kayıtlarındaki kaynak IP'sini de
+  sahteleyebiliyordu. Admin artık proxy'nin trusted-proxy-aware IP çözümünü
+  (`proxy.ClientIP`) kullanıyor: XFF/X-Real-IP yalnız doğrudan peer güvenilir
+  bir proxy'yken (CF secret'lı Cloudflare edge veya yapılandırılmış trusted
+  proxy) onurlanıyor, aksi halde gerçek peer adresi esas alınıyor.
+- **X-Accel-Redirect korumalı dosya serve'i istemci başlığıyla devre dışı
+  bırakılamıyor.** İstemci `Accept: text/event-stream` (veya `Upgrade`)
+  göndererek accel intercept writer'ının kurulmasını engelleyip backend'in
+  internal dosya yolunu (`X-Accel-Redirect` değeri) sızdırabiliyor, indirmeyi
+  de boş döndürüyordu. Writer artık accel route'larda SIEM/SSE/upgrade
+  gate'inden bağımsız, koşulsuz kuruluyor (hijack-safe): başlık her zaman
+  strip ediliyor ve dosya doğru serve ediliyor.
+
+### BUGFIXES
+
+- **64 KiB (65536 bayt) üstü istek gövdelerinden tam 1 bayt kaybı.**
+  `CaptureRequestBody`, truncation'ı tespit için `maxSize+1` bayt okuyup
+  fazladan baytı `captured[:maxSize]` ile atıyor ama bu bayt `remaining`'de
+  olmadığından forward edilen gövde offset 65536'da 1 bayt eksiliyordu (POST/
+  PUT/PATCH, skip listesinde olmayan Content-Type). Base64/JSON gövdelerinde
+  bozuk payload veya "geçersiz base64" 400'lerine yol açıyordu. Gövde artık
+  tümüyle okunuyor, yalnız SIEM kopyası kırpılıyor; forward edilen gövde hiçbir
+  boyutta değişmiyor. Okuma hatasında (client disconnect / boyut limiti) kısmi
+  gövde backend'e iletilmiyor, istek 400/413 ile reddediliyor.
+- **diaLOG http_logs worker'ı graceful shutdown'da kilitlenmiyor.** Drain
+  döngüsündeki `break`, iç `select`'ten çıkıp `for {}`'da kalıyor; kanal
+  kapandığında sonsuz spin ile shutdown'ı kilitliyor, son batch'i ve diğer
+  pipeline'ların Stop'unu bloke edip SIGKILL'e kadar CPU yakıyordu.
+- **Deploy crash + hızlı restart artık deployment/scheduled-job'u kalıcı
+  kilitlemiyor.** Stale-reset yalnız açılışta çalıştığından, hızlı restart'ta
+  taze `updated_at` eşiği geçemiyor ve satır süresiz `running` kalıyordu. Reset
+  artık tick döngüsünde periyodik (throttled) çalışıp recovery'yi eşik
+  penceresiyle sınırlıyor.
+- **`recreate` stratejisi başarısız candidate'ta ölü container'a işaret eden
+  `active` instance bırakmıyor.** Eski container candidate sağlıklı olmadan
+  durduruluyordu ama DB satırı `active` kalıyordu (proxy 502'ye route eder).
+  Eski instance'lar artık candidate başlamadan `draining`'e geçiriliyor;
+  cleanupDraining hem başarı hem başarısızlık yolunda temizliyor.
+- **Correlation engine SMTP/Slack gönderiminde bloke olmuyor (fail-open).**
+  `smtp.SendMail`/`tls.Dial` timeout'suzdu; erişilemez SMTP host'u tek
+  correlation goroutine'ini dakikalarca bloke edip sonraki logları
+  korelasyondan düşürüyordu. SMTP artık timeout'lu, ctx-aware; alert dispatch
+  ise ayrı goroutine'de (bağımsız 30s bütçe) çalışıyor.
+- **Tek bozuk satır artık tüm COPY FROM batch'ini düşürmüyor.** URL path'indeki
+  `%00` (NUL) veya geçersiz UTF-8 gibi PostgreSQL'in reddettiği baytlar tüm
+  batch'i (ilgisiz geçerli kayıtlar dahil) düşürüyordu. http_logs, container ve
+  client-event pipeline'ları artık text/jsonb/body alanlarını persistence
+  sınırında temizliyor (NUL strip + geçerli UTF-8).
+- **Response body capture, buffer tam dolunca `truncated` bayrağını doğru
+  set ediyor.** Buffer `maxSize`'a tam dolduğunda sonraki write'lar sessizce
+  düşüyor ama `IsResponseTruncated` `false` kalıyordu (SIEM'e yanlış "tam
+  kayıt" metadata'sı). İstemciye giden gövde etkilenmiyordu.
+- **Agent komut kanalı: imzasız komut artık dispatch edilmiyor.** Komut önce
+  boş imzayla insert edilip imza ayrı UPDATE'te yazıldığından, araya giren bir
+  claim boş-imzalı komutu alıp kalıcı "signature verification failed" ile
+  başarısız kılabiliyordu. Claim sorgusu artık imza dolu olmayan satırı
+  atlıyor.
+
+### Upgrade
+
+- Yeni image'ları çekip servisleri yeniden başlatın; edge agent'lar
+  `agent.self_upgrade` ile güncellenir. 64 KiB üstü gövde düzeltmesi hem
+  central proxy'de hem edge agent'ların proxy'sinde bu sürümle etkinleşir.
+
+---
+
 ## [0.1.45] - 2026-06-08
 
 ### BUGFIXES

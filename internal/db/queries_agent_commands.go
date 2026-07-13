@@ -101,6 +101,7 @@ func (d *DB) ClaimNextAgentCommand(ctx context.Context, agentID string) (AgentCo
 		 WHERE id = (
 		     SELECT id FROM agent_commands
 		     WHERE agent_id = $1 AND state = 'pending' AND expires_at > now()
+		       AND octet_length(signature) > 0
 		     ORDER BY id
 		     LIMIT 1
 		     FOR UPDATE SKIP LOCKED
