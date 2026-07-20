@@ -23,6 +23,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+Henüz birikme yok.
+
+---
+
+## [0.1.48] - 2026-07-20
+
+v0.1.47'de gelen `${MUVON_EDGE_IP}` özelliğinin kusurlarının düzeltmesi. Şema
+migration'ı yok; sadece image güncellemesi gerekir.
+
 ### BUGFIXES
 
 - **`${MUVON_EDGE_IP}` component'in yalnız ilk ağına bakıyordu, bu yüzden çözülemiyordu.**
@@ -37,6 +46,13 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   daha kötü hale getiriyordu. Artık deployment container yaratılmadan **önce**, üstelik migration
   çalışmadan ve `recreate` stratejisi eski container'ı durdurmadan önce, net bir mesajla durduruluyor.
   Blue-green sayesinde önceki instance hizmet vermeye devam ediyor.
+
+### Upgrade
+
+- v0.1.47'yi kurup `${MUVON_EDGE_IP}` kullanmayı denediyseniz, o deploy'lar başarısız olmuş
+  olabilir. Bu sürüme geçtikten sonra component'i yeniden deploy etmek yeterli.
+- Token'ı ilk kez kullanacaksanız, önce bu sürüme yükseltin. Yükseltme yapılmadan token
+  çözülemez ve deployment (artık net bir hatayla) durur.
 
 ---
 
