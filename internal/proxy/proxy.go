@@ -198,9 +198,10 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	// Trusted-proxy-aware client IP (used for rate limiting, logging).
 	ip := clientIPFor(r, hc.Host.TrustedProxies)
 	// Whether the direct peer is a trusted upstream proxy — gates whether the
-	// inbound X-Forwarded-For chain is preserved (trusted) or dropped to prevent
-	// client spoofing (untrusted). Same gate as clientIPFor.
-	trustedHop := directProxyTrusted(r, hc.Host.TrustedProxies)
+	// inbound X-Forwarded-For chain and scheme claim are preserved (trusted) or
+	// dropped to prevent client spoofing (untrusted). Same gate as clientIPFor,
+	// so a validated CDN edge counts as trusted here too.
+	trustedUpstream := upstreamTrusted(r, hc.Host.TrustedProxies)
 
 	// Akıllı body yakalama:
 	// - GET/HEAD/OPTIONS/static route → body okuma (sadece header/path/IP gönder)
@@ -271,7 +272,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	hm := h.healthMgr
 	routeSnapshot := route.Route
 	rp := &httputil.ReverseProxy{
-		Director:      Director(target, stripPrefix, routeSnapshot, ip, trustedHop),
+		Rewrite:       Rewrite(target, stripPrefix, routeSnapshot, ip, trustedUpstream),
 		Transport:     h.transport,
 		FlushInterval: -1, // SSE desteği: anında flush
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -508,6 +509,18 @@ func peerHost(r *http.Request) string {
 // the trusted proxies list. It is the gate for honouring client-supplied
 // forwarding/trace headers (X-Forwarded-For, X-Real-IP, traceparent). Empty
 // list = trust nothing (conservative default).
+// upstreamTrusted reports whether the direct peer is an upstream whose
+// forwarding headers we accept: an operator-configured trusted proxy, or a
+// Cloudflare edge presenting the operator's shared secret. This is the same gate
+// clientIPFor applies, so the forwarded chain and the resolved client IP can
+// never disagree about which hop was trusted.
+func upstreamTrusted(r *http.Request, trustedProxies []string) bool {
+	if directProxyTrusted(r, trustedProxies) {
+		return true
+	}
+	return isCloudflareIP(peerHost(r)) && cloudflareTrustedRequest(r)
+}
+
 func directProxyTrusted(r *http.Request, trustedProxies []string) bool {
 	if len(trustedProxies) == 0 {
 		return false
@@ -595,9 +608,17 @@ func isTrustedProxy(ip string, trusted []string) bool {
 	return false
 }
 
+// captureHeaders snapshots request headers for the log pipeline. The Cloudflare
+// shared secret is dropped rather than recorded: it is a credential, and storing
+// it would let anyone with read access to the log store forge CF-Connecting-IP
+// and dictate the client IP attributed to a request.
 func captureHeaders(h http.Header) map[string]string {
+	secretHeader := cfTrustHeaderName()
 	out := make(map[string]string, len(h))
 	for k, v := range h {
+		if strings.EqualFold(k, secretHeader) {
+			continue
+		}
 		out[k] = strings.Join(v, ", ")
 	}
 	return out

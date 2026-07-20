@@ -18,6 +18,21 @@ var (
 	cfTrustHeader atomic.Pointer[string]
 )
 
+// defaultCFTrustHeader is the header a Cloudflare Transform Rule injects when
+// the operator has not named one explicitly.
+const defaultCFTrustHeader = "X-Muvon-CF-Key"
+
+// cfTrustHeaderName returns the header carrying the Cloudflare shared secret.
+// Exposed so the request logger can keep that value out of stored logs: it is a
+// credential, and anyone who reads it back out of the log store could forge
+// CF-Connecting-IP.
+func cfTrustHeaderName() string {
+	if hp := cfTrustHeader.Load(); hp != nil && *hp != "" {
+		return *hp
+	}
+	return defaultCFTrustHeader
+}
+
 // SetCloudflareTrust configures the shared-secret gate for honouring
 // CF-Connecting-IP. Cloudflare's egress IPs are SHARED across every Cloudflare
 // account, so peer∈CF-range alone does NOT prove a request came through the

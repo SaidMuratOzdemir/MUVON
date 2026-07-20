@@ -27,6 +27,54 @@ Henüz birikme yok.
 
 ---
 
+## [0.1.49] - 2026-07-20
+
+Forwarding başlıklarının sektörel standarda oturtulması. Şema migration'ı yok.
+
+### SECURITY
+
+- **Cloudflare paylaşılan secret'ı artık log'lara yazılmıyor.** İstek başlıkları
+  SIEM'e kaydedilirken, CDN güvenini kanıtlayan secret başlık da (varsayılan
+  `X-Muvon-CF-Key`, operatör adlandırdıysa o ad) diğerleriyle birlikte düz metin
+  saklanıyordu. Log okuma yetkisi olan biri bu değeri alıp `CF-Connecting-IP`
+  uydurarak bir isteğin hangi IP'ye atfedileceğini belirleyebilirdi. Başlık artık
+  yakalama anında düşürülüyor.
+- **Güvenilmeyen bir peer'in şema iddiası artık dikkate alınmıyor.** Düz HTTP ile
+  bağlanan bir istemci `X-Forwarded-Proto: https` göndererek arkadaki uygulamaya
+  isteğin güvenli olduğunu söyletebiliyordu. Bu iddia yalnız güvenilir bir
+  upstream'den kabul ediliyor; TLS burada sonlandıysa o zaten otoriter.
+
+### BUGFIXES
+
+- **`X-Forwarded-For` zinciri doğru üretiliyor.** Proxy `Director` yerine
+  `Rewrite` hook'una geçti. `Director` kullanılırken net/http/httputil, hook
+  döndükten *sonra* TCP peer'ini zincire kendisi ekliyordu; hook bunu ne
+  görebiliyor ne engelleyebiliyordu. Sonuçları: doğrudan bağlanan istemcilerde
+  aynı adres iki kez yazılıyordu (`"1.2.3.4, 1.2.3.4"`), CDN arkasında ise
+  zincirin son hop'u CDN edge'i olarak kalıyordu. Zinciri sağdan sola okuyan
+  backend'ler (uvicorn, Rails, ASP.NET bu şekilde çalışır) bu yüzden CDN'i
+  istemci sanabiliyordu.
+
+  Yeni davranış, büyük proxy'lerin tamamının uyguladığı append semantiğidir:
+  güvenilir bir upstream'in bildirdiği zincir korunur, isteğin geldiği hop bir
+  kez eklenir, güvenilmeyen bir peer'in sunduğu zincir düşürülür.
+
+- **Cloudflare artık güvenilir upstream sayılıyor.** Zincir ve şema kararları
+  yalnız `trusted_proxies` listesine bakıyordu; paylaşılan secret'ı doğrulanmış
+  bir CDN edge'i bu listede olmadığı için güvenilmez sayılıyor ve raporladığı
+  zincir düşürülüyordu. Artık istemci IP'sini çözen mantıkla aynı kapı
+  kullanılıyor, dolayısıyla ikisi kimin güvenilir olduğu konusunda ayrışamaz.
+
+### Sözleşme
+
+Arkadaki uygulamalar için: `X-Forwarded-For` **zinciri** taşır (denetim ve hop
+sayan backend'ler için), `X-Real-IP` ise MUVON'un otoriter olarak çözdüğü **tek
+istemci adresidir**. Zincirin hangi ucunun istemci olduğu araya CDN girip
+girmediğine göre değişir; uygulamaların bunu bilmesi gerekmez, `X-Real-IP`
+okumaları yeterlidir. Güven kapısı olarak `${MUVON_EDGE_IP}` kullanılmalıdır.
+
+---
+
 ## [0.1.48] - 2026-07-20
 
 v0.1.47'de gelen `${MUVON_EDGE_IP}` özelliğinin kusurlarının düzeltmesi. Şema

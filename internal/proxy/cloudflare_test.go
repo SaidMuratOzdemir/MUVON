@@ -90,24 +90,93 @@ func TestClientIPFor_DirectClient(t *testing.T) {
 	}
 }
 
-// End to end with the Director: behind CF, the outbound X-Forwarded-For and
-// X-Real-IP must both carry only the resolved real client (CF's spoofable XFF
-// chain dropped, since the CF peer is not in TrustedProxies → trustedHop=false).
-func TestDirector_BehindCloudflare_CleanForward(t *testing.T) {
+// A validated Cloudflare edge counts as a trusted upstream even when it is not
+// listed in TrustedProxies: the shared secret is what proves the hop.
+func TestUpstreamTrusted_ValidatedCloudflareEdge(t *testing.T) {
 	SetCloudflareTrust("", "topsecret")
 	t.Cleanup(func() { SetCloudflareTrust("", "") })
+
+	valid := cfReq("104.16.5.5:443", map[string]string{"X-Muvon-CF-Key": "topsecret"})
+	if !upstreamTrusted(valid, nil) {
+		t.Error("CF edge with the shared secret must count as a trusted upstream")
+	}
+	// CF address range alone proves nothing: those IPs are shared across all
+	// Cloudflare accounts, so without the secret the hop stays untrusted.
+	noSecret := cfReq("104.16.5.5:443", nil)
+	if upstreamTrusted(noSecret, nil) {
+		t.Error("CF edge without the shared secret must not be trusted")
+	}
+}
+
+// End to end behind Cloudflare. The chain is preserved and our hop appended, so
+// the audit trail stays intact; the authoritative client address rides on
+// X-Real-IP.
+//
+// Note the leftmost chain entry here is attacker-controlled: Cloudflare appends
+// the real client to whatever X-Forwarded-For the client supplied. That is
+// inherent to the header and precisely why applications behind MUVON are told to
+// read X-Real-IP instead of picking an end of the chain.
+func TestForwarding_BehindCloudflare(t *testing.T) {
+	SetCloudflareTrust("", "topsecret")
+	t.Cleanup(func() { SetCloudflareTrust("", "") })
+
 	r := cfReq("104.16.5.5:443", map[string]string{
 		"X-Muvon-CF-Key":   "topsecret",
 		"CF-Connecting-IP": "203.0.113.7",
 		"X-Forwarded-For":  "1.2.3.4, 203.0.113.7",
 	})
 	ip := clientIPFor(r, nil)
-	trustedHop := directProxyTrusted(r, nil) // false: CF peer not in (empty) TrustedProxies
-	out := runDirector(ip, trustedHop, r.Header.Get("X-Forwarded-For"), r.Header.Get("CF-Connecting-IP"))
-	if got := out.Header.Get("X-Forwarded-For"); got != "203.0.113.7" {
-		t.Fatalf("behind CF outbound XFF = %q, want %q", got, "203.0.113.7")
+	if ip != "203.0.113.7" {
+		t.Fatalf("clientIPFor = %q, want the CF-Connecting-IP value", ip)
 	}
-	if got := out.Header.Get("X-Real-IP"); got != "203.0.113.7" {
-		t.Fatalf("behind CF outbound X-Real-IP = %q, want %q", got, "203.0.113.7")
+
+	got := proxyThrough(t, r.RemoteAddr, ip, upstreamTrusted(r, nil), map[string]string{
+		"X-Forwarded-For": r.Header.Get("X-Forwarded-For"),
+	})
+
+	const wantChain = "1.2.3.4, 203.0.113.7, 104.16.5.5"
+	if xff := got.Get("X-Forwarded-For"); xff != wantChain {
+		t.Errorf("X-Forwarded-For = %q, want %q", xff, wantChain)
+	}
+	if xri := got.Get("X-Real-IP"); xri != "203.0.113.7" {
+		t.Errorf("X-Real-IP = %q, want %q", xri, "203.0.113.7")
+	}
+}
+
+// The Cloudflare shared secret must never reach the log store: it is a
+// credential, and reading it back would let someone forge CF-Connecting-IP.
+func TestCaptureHeaders_DropsCloudflareSecret(t *testing.T) {
+	SetCloudflareTrust("X-Custom-CF-Key", "topsecret")
+	t.Cleanup(func() { SetCloudflareTrust("", "") })
+
+	h := http.Header{}
+	h.Set("X-Custom-CF-Key", "topsecret")
+	h.Set("CF-Connecting-IP", "203.0.113.7")
+	h.Set("User-Agent", "curl/8")
+
+	got := captureHeaders(h)
+	for k, v := range got {
+		if v == "topsecret" {
+			t.Fatalf("header %q leaked the shared secret into the captured set", k)
+		}
+	}
+	if _, ok := got["X-Custom-CF-Key"]; ok {
+		t.Error("configured CF secret header must be dropped")
+	}
+	if got["User-Agent"] != "curl/8" {
+		t.Error("unrelated headers must still be captured")
+	}
+}
+
+// The default header name is dropped too when the operator never named one.
+func TestCaptureHeaders_DropsDefaultCloudflareSecretHeader(t *testing.T) {
+	SetCloudflareTrust("", "topsecret")
+	t.Cleanup(func() { SetCloudflareTrust("", "") })
+
+	h := http.Header{}
+	h.Set("X-Muvon-CF-Key", "topsecret")
+
+	if _, ok := captureHeaders(h)["X-Muvon-CF-Key"]; ok {
+		t.Error("default CF secret header must be dropped")
 	}
 }
