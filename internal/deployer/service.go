@@ -198,6 +198,12 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 		if err != nil {
 			return fmt.Errorf("load env for %s: %w", component.Slug, err)
 		}
+		// Bail out before anything is touched: no migration run, no old
+		// container stopped for a deployment that cannot succeed.
+		cmd := applyEdgeIPToArgs(component.Command, env[edgeIPVar])
+		if err := checkEdgeIPResolved(env, cmd); err != nil {
+			return fmt.Errorf("component %s: %w", component.Slug, err)
+		}
 		if err := s.ensureNetworks(ctx, component.Networks); err != nil {
 			return fmt.Errorf("ensure networks for %s: %w", component.Slug, err)
 		}
@@ -224,7 +230,7 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 		containerName := containerName(plan.Project.Slug, component.Slug, plan.Release.ReleaseID)
 		createReq := containerCreateRequest{
 			Image: imageRef,
-			Cmd:   applyEdgeIPToArgs(component.Command, env[edgeIPVar]),
+			Cmd:   cmd,
 			Env:   envList(env),
 			Labels: map[string]string{
 				"muvon.project":    plan.Project.Slug,
@@ -872,13 +878,13 @@ const (
 //
 // Deliberately uncached: a stale value here is exactly the failure this exists to
 // prevent, and it is read at most once per component per deployment.
-func (s *Service) edgeIPFor(ctx context.Context, network string) string {
-	if network == "" {
+func (s *Service) edgeIPFor(ctx context.Context, networks []string) string {
+	if len(networks) == 0 {
 		return ""
 	}
 	if host, err := os.Hostname(); err == nil && host != "" {
 		if self, err := s.docker.ContainerInspect(ctx, host); err == nil {
-			if ip := self.Networks[network]; ip != "" {
+			if ip := pickNetworkIP(self.Networks, networks); ip != "" {
 				return ip
 			}
 		}
@@ -892,11 +898,49 @@ func (s *Service) edgeIPFor(ctx context.Context, network string) string {
 		if err != nil {
 			continue
 		}
-		if ip := info.Networks[network]; ip != "" {
+		if ip := pickNetworkIP(info.Networks, networks); ip != "" {
 			return ip
 		}
 	}
 	return ""
+}
+
+// pickNetworkIP returns the proxy's address on the first of the component's
+// networks it is actually attached to. A component is normally on more than one:
+// an isolated database network plus the shared routing network. The proxy joins
+// only the routing one, and that is not necessarily listed first, so every
+// network has to be tried rather than just networks[0].
+func pickNetworkIP(have map[string]string, want []string) string {
+	for _, n := range want {
+		if ip := have[n]; ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+// errUnresolvedEdgeIP reports a component that asks for ${MUVON_EDGE_IP} when the
+// address could not be determined. The deployment is failed before the container
+// is created: passing the literal token through would hand the app an invalid
+// address and crash-loop it at startup, which is a far worse failure than a
+// deployment that stops with a clear reason while the previous instance keeps
+// serving.
+func errUnresolvedEdgeIP(where string) error {
+	return fmt.Errorf("%s in %s could not be resolved: the edge proxy is not attached to any of this component's networks", edgeIPPlaceholder, where)
+}
+
+func checkEdgeIPResolved(env map[string]string, cmd []string) error {
+	for k, v := range env {
+		if strings.Contains(v, edgeIPPlaceholder) {
+			return errUnresolvedEdgeIP("env " + k)
+		}
+	}
+	for _, a := range cmd {
+		if strings.Contains(a, edgeIPPlaceholder) {
+			return errUnresolvedEdgeIP("command")
+		}
+	}
+	return nil
 }
 
 // applyEdgeIP publishes the resolved edge address as MUVON_EDGE_IP and resolves
@@ -956,7 +1000,7 @@ func (s *Service) loadComponentEnv(ctx context.Context, component db.DeployCompo
 		}
 	}
 
-	applyEdgeIP(env, s.edgeIPFor(ctx, firstNetwork(component.Networks)))
+	applyEdgeIP(env, s.edgeIPFor(ctx, component.Networks))
 	return env, nil
 }
 

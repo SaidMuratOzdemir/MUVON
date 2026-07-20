@@ -90,3 +90,36 @@ func TestApplyEdgeIPToArgs_UnresolvedLeavesArgsAlone(t *testing.T) {
 		t.Errorf("args[2]=%q, want placeholder untouched", got[2])
 	}
 }
+
+// A component is normally attached to an isolated database network plus the
+// shared routing network, and the proxy joins only the routing one. Looking at
+// networks[0] alone missed it and left the token unresolved.
+func TestPickNetworkIP_FindsSharedNetworkNotListedFirst(t *testing.T) {
+	proxy := map[string]string{"muvon-agent_default": "172.19.0.2"}
+	component := []string{"app-db", "muvon-agent_default"}
+
+	if got := pickNetworkIP(proxy, component); got != "172.19.0.2" {
+		t.Errorf("pickNetworkIP=%q, want 172.19.0.2 from the second network", got)
+	}
+}
+
+func TestPickNetworkIP_NoSharedNetwork(t *testing.T) {
+	proxy := map[string]string{"muvon-agent_default": "172.19.0.2"}
+	if got := pickNetworkIP(proxy, []string{"app-db"}); got != "" {
+		t.Errorf("pickNetworkIP=%q, want empty when the proxy shares no network", got)
+	}
+}
+
+// An unresolved token must fail the deployment, not reach the container. Passing
+// the literal through hands the app an invalid address and crash-loops it.
+func TestCheckEdgeIPResolved(t *testing.T) {
+	if err := checkEdgeIPResolved(map[string]string{"FORWARDED_ALLOW_IPS": "172.19.0.2"}, []string{"gunicorn"}); err != nil {
+		t.Errorf("resolved config rejected: %v", err)
+	}
+	if err := checkEdgeIPResolved(map[string]string{"FORWARDED_ALLOW_IPS": "${MUVON_EDGE_IP}"}, nil); err == nil {
+		t.Error("unresolved env token accepted, want error")
+	}
+	if err := checkEdgeIPResolved(nil, []string{"gunicorn", "--forwarded-allow-ips", "${MUVON_EDGE_IP}"}); err == nil {
+		t.Error("unresolved command token accepted, want error")
+	}
+}

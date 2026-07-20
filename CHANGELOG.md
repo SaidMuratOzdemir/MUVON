@@ -23,7 +23,20 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-— henüz birikme yok.
+### BUGFIXES
+
+- **`${MUVON_EDGE_IP}` component'in yalnız ilk ağına bakıyordu, bu yüzden çözülemiyordu.**
+  (v0.1.47'de gelen özelliğin kusuru.) Bir component tipik olarak iki ağda bulunur: izole DB ağı
+  ve paylaşımlı yönlendirme ağı. Edge proxy yalnız ikincisine bağlıdır ve bu ağ listede ilk sırada
+  olmak zorunda değildir; pratikte DB ağı ilk sırada oluyor. Arama artık component'in **tüm**
+  ağlarını deniyor ve proxy'nin gerçekten bağlı olduğu ilk ağdaki adresi kullanıyor.
+
+- **Çözülemeyen token artık container'a literal olarak geçmiyor, deployment hata veriyor.**
+  Önceki davranış token'ı olduğu gibi bırakmaktı ("hata görünür kalsın" gerekçesiyle). Pratikte bu,
+  uygulamaya geçersiz bir adres veriyor ve açılışta crash loop üretiyor, yani hatayı görünür değil
+  daha kötü hale getiriyordu. Artık deployment container yaratılmadan **önce**, üstelik migration
+  çalışmadan ve `recreate` stratejisi eski container'ı durdurmadan önce, net bir mesajla durduruluyor.
+  Blue-green sayesinde önceki instance hizmet vermeye devam ediyor.
 
 ---
 
