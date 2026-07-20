@@ -274,6 +274,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Static File Serving | `static_root` with optional SPA fallback |
 | Redirect Routes | 301 redirects with optional target rewrite |
 | Header Manipulation | Per-route add/del on request and response |
+| Client IP Forwarding | `X-Real-IP` carries the resolved client address, `X-Forwarded-For` the hop chain; apps gate on the injected `MUVON_EDGE_IP`. See [docs/client-ip.md](docs/client-ip.md) |
 | Health-Aware Backends | Circuit breaker on consecutive failures |
 | Multi-Backend Load Balance | Round-robin across `backend_urls[]` |
 | Custom Error Pages | Per-route HTML for 4xx/5xx |

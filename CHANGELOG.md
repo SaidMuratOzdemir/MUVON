@@ -23,7 +23,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-Henüz birikme yok.
+### ENHANCEMENTS
+
+- **Gerçek istemci IP'si için entegrasyon dokümanı**: `docs/client-ip.md`. MUVON'un
+  gönderdiği iki başlığın (`X-Real-IP` otoriter tek değer, `X-Forwarded-For` hop
+  zinciri) anlamını, uygulamaların `MUVON_EDGE_IP` ile nasıl kapı kurması
+  gerektiğini, FastAPI/ASGI ile Django için hazır middleware örneklerini, sık
+  yapılan hataları (sunucunun kendi proxy-header katmanını açık bırakmak,
+  `--forwarded-allow-ips=*`, container adresini sabit yazmak) ve doğrulama
+  adımlarını içeriyor. Dokümandaki iki kod örneği de davranış testinden geçirildi.
 
 ---
 
