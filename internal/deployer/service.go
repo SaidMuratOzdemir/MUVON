@@ -194,7 +194,7 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 			return fmt.Errorf("pull %s: %w", imageRef, err)
 		}
 
-		env, err := s.loadComponentEnv(component)
+		env, err := s.loadComponentEnv(ctx, component)
 		if err != nil {
 			return fmt.Errorf("load env for %s: %w", component.Slug, err)
 		}
@@ -224,7 +224,7 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 		containerName := containerName(plan.Project.Slug, component.Slug, plan.Release.ReleaseID)
 		createReq := containerCreateRequest{
 			Image: imageRef,
-			Cmd:   component.Command,
+			Cmd:   applyEdgeIPToArgs(component.Command, env[edgeIPVar]),
 			Env:   envList(env),
 			Labels: map[string]string{
 				"muvon.project":    plan.Project.Slug,
@@ -454,7 +454,7 @@ func (s *Service) processJobRun(ctx context.Context, run db.ScheduledJobRun) err
 	job := plan.Job
 	component := plan.Component
 
-	env, err := s.loadComponentEnv(component)
+	env, err := s.loadComponentEnv(ctx, component)
 	if err != nil {
 		return fmt.Errorf("load env: %w", err)
 	}
@@ -847,7 +847,90 @@ func (s *Service) connectExtraNetworks(ctx context.Context, networks []string, c
 	return nil
 }
 
-func (s *Service) loadComponentEnv(component db.DeployComponent) (map[string]string, error) {
+// The edge proxy's address on a component's network is assigned by Docker at
+// attach time and reused when containers churn, so it must never be written into
+// configuration by hand. The deployer resolves it live and exposes it two ways:
+// as MUVON_EDGE_IP in the container env, and by substituting the literal
+// ${MUVON_EDGE_IP} token in any component env value. That lets an operator write
+// FORWARDED_ALLOW_IPS=${MUVON_EDGE_IP} (or the equivalent for their server) once
+// and have it stay correct across restarts, redeploys and reinstalls.
+//
+// Substitution is a literal token replace, not shell-style expansion, so secret
+// values that happen to contain "$" are never mangled.
+const (
+	edgeIPVar         = "MUVON_EDGE_IP"
+	edgeIPPlaceholder = "${MUVON_EDGE_IP}"
+	edgeRoleLabel     = "muvon.role=edge"
+)
+
+// edgeIPFor resolves the address the edge proxy reaches this component from.
+// On an edge host the deployer runs inside the agent, which is itself the proxy,
+// so its own container answers. On central the proxy is a separate container,
+// located by the muvon.role=edge label. Returns "" when it cannot be determined;
+// callers then leave the placeholder untouched so a miss stays visible instead of
+// silently collapsing into an empty allow-list.
+//
+// Deliberately uncached: a stale value here is exactly the failure this exists to
+// prevent, and it is read at most once per component per deployment.
+func (s *Service) edgeIPFor(ctx context.Context, network string) string {
+	if network == "" {
+		return ""
+	}
+	if host, err := os.Hostname(); err == nil && host != "" {
+		if self, err := s.docker.ContainerInspect(ctx, host); err == nil {
+			if ip := self.Networks[network]; ip != "" {
+				return ip
+			}
+		}
+	}
+	containers, err := s.docker.ContainerList(ctx, edgeRoleLabel)
+	if err != nil {
+		return ""
+	}
+	for _, c := range containers {
+		info, err := s.docker.ContainerInspect(ctx, c.ID)
+		if err != nil {
+			continue
+		}
+		if ip := info.Networks[network]; ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+// applyEdgeIP publishes the resolved edge address as MUVON_EDGE_IP and resolves
+// ${MUVON_EDGE_IP} references in the remaining values. No-op when ip is empty, so
+// an unresolved placeholder stays visible instead of turning into an empty
+// allow-list that silently disables proxy trust.
+// applyEdgeIPToArgs resolves ${MUVON_EDGE_IP} inside a container command. App
+// servers often carry the trusted-proxy address as a command-line flag
+// (gunicorn's --forwarded-allow-ips), and there it overrides the environment
+// variable, so the token has to work in both places or the fix is incomplete.
+func applyEdgeIPToArgs(args []string, ip string) []string {
+	if ip == "" || len(args) == 0 {
+		return args
+	}
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = strings.ReplaceAll(a, edgeIPPlaceholder, ip)
+	}
+	return out
+}
+
+func applyEdgeIP(env map[string]string, ip string) {
+	if ip == "" {
+		return
+	}
+	env[edgeIPVar] = ip
+	for k, v := range env {
+		if k != edgeIPVar && strings.Contains(v, edgeIPPlaceholder) {
+			env[k] = strings.ReplaceAll(v, edgeIPPlaceholder, ip)
+		}
+	}
+}
+
+func (s *Service) loadComponentEnv(ctx context.Context, component db.DeployComponent) (map[string]string, error) {
 	env := map[string]string{}
 	if component.EnvFilePath != "" {
 		fileEnv, err := parseEnvFile(component.EnvFilePath)
@@ -872,6 +955,8 @@ func (s *Service) loadComponentEnv(component db.DeployComponent) (map[string]str
 			env[k] = v
 		}
 	}
+
+	applyEdgeIP(env, s.edgeIPFor(ctx, firstNetwork(component.Networks)))
 	return env, nil
 }
 

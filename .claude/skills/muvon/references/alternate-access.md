@@ -23,7 +23,10 @@ ssh <alias> "docker exec muvon-postgres psql -U muvon -d muvon -tAc \"<SELECT>\"
 ### Şemalar
 
 - **`muvon.*`** — admin/edge state:
-  - `hosts` (`tls_mode`: off/redirect/auto/manual, `force_https`, JWT identity per-host)
+  - `hosts` (`tls_mode`: off/redirect/auto/manual, `force_https`, `trusted_proxies`, JWT identity per-host).
+    **`target_kind`** (`central` | `agent`) + **`target_agent_id`** → domain'in kendisi de bir agent'a
+    bağlanır, sadece component'ler değil. Bir kurulumda tüm host'lar edge'de olabilir ve central'da
+    hiç trafik olmayabilir; "hangi domain nerede" sorusunu bu iki kolon cevaplar.
   - `routes` (`managed_component_id` ile bir component'e bağlanabilir)
   - `agents` (`api_key_hash` BYTEA; eski `api_key` plaintext geçişte hâlâ var)
   - `tls_certificates` (issuer: `manual` / `letsencrypt` / `letsencrypt:agent:<id>`)
@@ -33,7 +36,10 @@ ssh <alias> "docker exec muvon-postgres psql -U muvon -d muvon -tAc \"<SELECT>\"
   - `deployments` (`agent_id` nullable — null = central, set = edge agent)
   - `deployment_events`
   - `agent_commands` (UUIDv7 PK, `agent_id`, `kind`, `payload` JSONB, `signature` BYTEA, `nonce` BYTEA, `state`, `result` JSONB, `expires_at`, `dispatched_at`, `finished_at`)
-- **`dialog.*`** — SIEM: `http_logs`, `http_bodies`, `alerts`, `container_logs`, `containers`.
+  - `scheduled_jobs`, `scheduled_job_runs` (component'e bağlı periyodik işler; cron `next_run_at`,
+    `concurrency_policy`, run geçmişi + exit code + çıktı kuyruğu)
+- **`dialog.*`** (SIEM): `http_logs`, `http_log_bodies`, `alerts`, `container_logs`, `containers`,
+  `client_events` (RUM / tarayıcı telemetrisi; `trace_id` + `session_id` ile http_logs'a join edilir).
 
 ### Pratik sorgular
 
@@ -45,6 +51,21 @@ SELECT p.slug AS project, c.slug AS component,
 FROM muvon.deploy_components c
 JOIN muvon.deploy_projects p ON p.id = c.project_id
 LEFT JOIN muvon.agents a ON a.id = c.agent_id;
+
+-- Hangi domain nerede servis ediliyor (host'lar da agent'a bağlanır)?
+SELECT COALESCE(a.name, '(central)') AS yer, h.target_kind, count(*) AS host_sayisi
+FROM muvon.hosts h
+LEFT JOIN muvon.agents a ON a.id = h.target_agent_id
+GROUP BY 1, 2 ORDER BY 3 DESC;
+
+-- Filo envanteri: agent'lar, en son ne zaman görüldü, central'a nereden bağlandı
+SELECT name, is_active, last_seen_at, last_remote_addr, config_version
+FROM muvon.agents ORDER BY name;
+
+-- İstemci IP sağlığı: private/tek adres baskınlığı trust ayarının eksik olduğunu gösterir
+SELECT client_ip, count(*) FROM dialog.http_logs
+WHERE timestamp > now() - interval '1 hour'
+GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
 
 -- Son 1 saat 5xx top path
 SELECT host, path, count(*)
@@ -124,11 +145,31 @@ ssh <alias> "docker compose -f /opt/muvon/docker-compose.yml logs --tail=200 muv
 - `MUVON_ENCRYPTION_KEY` — secret (kayıp = encrypted settings VE component secret env'leri okunamaz; deployer ve edge agent ile aynı olmalı)
 - `MUVON_ADMIN_DOMAIN`, `LOG_LEVEL` — public
 
-Edge agent host'larında (`/opt/agent/.env` benzeri):
+Edge agent host'larında kurulum dizini genelde **`/opt/muvon-agent/`**: `docker-compose.agent.yml`
++ `.env`. Agent systemd servisi değildir, compose ile çalışır (container adı `muvon-agent-agent-1`):
+```bash
+ssh <agent-host> "docker compose -f /opt/muvon-agent/docker-compose.agent.yml ps"
+ssh <agent-host> "docker logs muvon-agent-agent-1 --tail 200"
+```
+
+`.env` içinde tipik anahtarlar:
 - `AGENT_API_KEY` — secret
 - `AGENT_ENCRYPTION_KEY` — secret (central'ın `MUVON_ENCRYPTION_KEY`'i ile aynı olmak zorunda)
-- `AGENT_DEPLOYER_ENABLED`, `AGENT_DOCKER_SOCKET` — public
-- `AGENT_CONFIG_CACHE` — public path (fail-soft startup cache'i)
+- `AGENT_CLOUDFLARE_IP_SECRET` / `AGENT_CLOUDFLARE_IP_HEADER`: secret + public. CDN arkasındaki
+  gerçek istemci IP güveni bunlarla açılır, boşsa CDN başlıklarına güvenilmez
+- `AGENT_CENTRAL_URL`, `AGENT_LOG_ADDR`: public. Central'a ve diaLOG'a nereden gidileceği
+- `AGENT_DEPLOYER_ENABLED`, `AGENT_DEPLOYER_POLL_MS`, `AGENT_DEPLOYER_TCP_BIND`: public.
+  `TCP_BIND` boşsa 9100 tüm arayüzlerde dinler, iç ağ adresine bind etmek tercih edilir
+- `AGENT_DOCKERWATCH_ENABLED`, `AGENT_DOCKERWATCH_MANAGED_ONLY`: public
+- `AGENT_PUBLIC_IP`, `AGENT_HOST_ID`, `AGENT_EXTRA_MOUNTS`, `MUVON_AGENT_DIR`: public
+
+Agent container'ının bind mount'ları: docker socket (rw, embedded deployer için), registry auth
+dosyası (ro), operatör env dosyaları dizini (ro, genelde `/opt/envfiles`), artı `tls_cache` /
+`logship` / `config_cache` named volume'ları.
+
+Component'lerin env'i iki kaynaktan gelir ve **component env map, env dosyasını ezer**:
+`env_file_path` ile gösterilen dosya (agent'a ro mount edilmiş dizinde) + `deploy_components.env`
+JSONB. Bir değerin nereden geldiğini ararken ikisine de bak.
 
 **Stdout'a secret yansıtma** — sadece "set/empty" kontrol et:
 ```bash

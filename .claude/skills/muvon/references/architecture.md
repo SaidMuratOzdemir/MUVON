@@ -55,9 +55,17 @@ Lifecycle aynı, host iki yerden biri:
 
 Proxy **sadece** `active` instance'lara yönlendirir. Drain sırasında eski instance hala in-flight request'lere cevap verir.
 
-**Topoloji ayrımı `agent_id` ile:**
-- `deploy_components.agent_id IS NULL` → central `muvon-deployer` (DB'ye direkt erişim) işler.
-- `deploy_components.agent_id = '<id>'` → o agent'ın embedded deployer'ı (`AGENT_DEPLOYER_ENABLED=true`) işler. Aynı lifecycle kodu, ama state'i HTTP üzerinden central'a yazar (`/api/v1/agent/deployer/*`).
+**Topoloji ayrımı iki yerde, ikisi de ayrı:**
+
+1. **Trafik nerede sonlanıyor** → `hosts.target_kind` (`central` | `agent`) + `hosts.target_agent_id`.
+   Yani domain'in kendisi bir agent'a bağlanır; o domain'in TLS'ini ve proxy'sini o agent yapar.
+2. **Container'ı kim çalıştırıyor** → `deploy_components.agent_id`.
+   - `NULL` → central `muvon-deployer` (DB'ye direkt erişim) işler.
+   - `'<id>'` → o agent'ın embedded deployer'ı (`AGENT_DEPLOYER_ENABLED=true`) işler. Aynı lifecycle
+     kodu, ama state'i HTTP üzerinden central'a yazar (`/api/v1/agent/deployer/*`).
+
+Bir kurulumda **tüm** host'lar ve component'ler edge'de olabilir; o zaman central hiç müşteri trafiği
+görmez, saf kontrol düzlemi + SIEM olur. "Her şey central'da" varsayma, önce bu iki kolona bak.
 
 Kod paylaşımı `internal/deployer/State` interface'i ile:
 - `NewDBState(*db.DB, agentID)` — central + edge (DB-direkt). Central `agentID=""` ile filterler.
@@ -68,6 +76,35 @@ Kod paylaşımı `internal/deployer/State` interface'i ile:
 **Secret env vars:** `deploy_components.env_secret_keys` listesindeki key'lerin value'ları `enc:` prefix'li ciphertext (AES-256-GCM). Deployer container başlatırken decrypt eder. `MUVON_ENCRYPTION_KEY` central ↔ deployer ↔ `AGENT_ENCRYPTION_KEY` edge'de **aynı olmak zorunda**, yoksa container başlatılamaz.
 
 **Cleanup + image prune.** Her tick'in başında üç bakım adımı: (1) `cleanupDraining` — draining instance'ları `ContainerStop` + `ContainerRemove(force=true)`, başarısız remove tekrar denenir (DB state `draining` kalır); (2) `reconcileOrphanContainers` — `muvon.managed=true` label'lı container'ları `ContainerListAll(all=1)` ile listele, DB'de live olmayanları sil (exited carcass'lar dahil); (3) `CleanupStaleWarming` — deployment terminated ama warming'de kalmış instance'ları `unhealthy` işaretle. Başarılı promote sonrası `pruneImagesAfterPromote` çalışır: her component için `keep_releases` (default 3, SQL CHECK ≥ 1) dışındaki ve canlı bir instance'a bağlı olmayan image_ref'ler `docker rmi` ile yerelden silinir. Docker'ın kendi refcount'u + SQL-side `in_use` filter çift güvence; 409 (in-use) ve 404 (already gone) sessizce yutulur.
+
+### Edge agent host'unun anatomisi
+
+Tipik bir agent host'u şuna benzer (isimler kuruluma göre değişir):
+
+```
+/opt/muvon-agent/          docker-compose.agent.yml + .env  → container: muvon-agent-agent-1
+/opt/envfiles/             component env dosyaları, agent'a ro mount (env_file_path bunları gösterir)
+/opt/<proje>/              opsiyonel: uygulamanın DB compose'u, upload/medya bind mount'ları
+```
+
+Ağ deseni iki katmanlıdır:
+- **Paylaşımlı proxy ağı** (`muvon-agent_default`): agent + o host'taki tüm uygulama container'ları.
+  Agent backend'lere container adıyla ulaşır; bu yüzden route'lardaki backend URL'leri
+  `http://<component-slug>:<port>` şeklindedir.
+- **Proje başına izole DB ağı**: her projenin Postgres'i ayrı bir ağda, yalnız kendi API'siyle.
+  Böylece aynı host'ta duran iki müşteri projesi birbirinin veritabanına ağ seviyesinde erişemez.
+  Çok projeli host'larda tercih edilen desen budur.
+
+Uygulama **kaynak kodu host'ta bulunmaz**: managed deploy image'ı registry'den çeker. Host'ta yalnız
+env dosyaları, DB compose'u ve kalıcı bind mount'lar (upload/medya) durur.
+
+Agent 80/443'ü yayımlar; embedded deployer açıksa canlı container log tail için bir TCP portu daha
+dinler. O port HKDF türetilmiş bearer token ile korunur, ama yine de mümkünse iç ağ arayüzüne bind
+edilmeli (tüm arayüzlerde dinlemesi varsayılan davranıştır).
+
+**Gerçek istemci IP zinciri** burada kritik: edge doğru IP'yi bulup `X-Forwarded-For` ile geçer, ama
+arkadaki uygulama sunucusu ona güvenecek şekilde ayarlanmadıysa kendi kaydına edge'in container
+IP'sini yazar ve bu sessizce yanlış olur. Ayrıntı ve sunucu bazlı ayarlar için `pitfalls.md` #37.
 
 ### Central → agent komut kanalı
 

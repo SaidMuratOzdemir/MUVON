@@ -51,20 +51,37 @@ Kullanıcı "şu sorun var" dediğinde nereden başlayacağını bilesin.
 
 ## 3) "Edge agent disconnected / kayboldu"
 
+Agent bir **systemd servisi değil**, docker compose ile çalışır. Kurulum dizini genelde
+`/opt/muvon-agent/` (`docker-compose.agent.yml` + `.env`), container adı `muvon-agent-agent-1`.
+
 ```
-1. GET /api/agents → last_seen kolonu. Hangileri stale?
-2. SSH ile agent host'a bağlan: systemctl status muvon-agent
-3. Agent log: journalctl -u muvon-agent -n 200 --no-pager
-4. Connection test: agent → central muvon HTTPS reach edebiliyor mu?
-   ssh <agent-host> "curl -sf https://<central>/api/v1/agent/config -H 'Authorization: Bearer <agent-token>'"
-5. Agent token revoke edildi mi? muvon.agent_tokens tablosu DB'de.
+1. GET /api/agents → last_seen_at ve last_remote_addr. Hangileri stale?
+2. SSH ile agent host'a bağlan:
+   ssh <agent-host> "docker compose -f /opt/muvon-agent/docker-compose.agent.yml ps"
+3. Agent log:
+   ssh <agent-host> "docker logs muvon-agent-agent-1 --tail 200"
+4. Connection test (agent auth başlığı X-Api-Key, Bearer DEĞİL):
+   ssh <agent-host> "curl -sf -o /dev/null -w '%{http_code} %{remote_ip}\n' \
+     https://<central-domain>/api/v1/agent/config -H 'X-Api-Key: <agent-api-key>'"
+   → remote_ip beklediğin yola (private/public) çıkıyor mu?
+5. Agent devre dışı bırakılmış mı? Tablo muvon.agents:
+   SELECT name, is_active, last_seen_at, last_remote_addr FROM muvon.agents;
 ```
 
 **Tipik bulgular**:
-- Agent binary çökmüş → restart.
-- Agent token revoke → yeniden enroll.
+- Container çökmüş veya hiç başlamamış → `docker ps -a` ile `Created`/`Exited` durumunu gör.
+- `agents.is_active=false` (revoke edilmiş) → yeniden enroll gerekir; agent auth alamaz ve çıkar.
 - Network → firewall, DNS, TLS cert problemi.
-- Agent eski sürüm → `agent --version` ile kontrol, manuel upgrade.
+- Agent eski sürüm → pitfalls #40, filo tek tip olmayabilir.
+
+**`last_remote_addr` beklenmedik bir adres gösteriyorsa**: agent central'a hangi yoldan gittiğine bak.
+Yaygın kurulum, central domain'ini `/etc/hosts` ile iç ağ adresine çözmektir; o satır yoksa trafik
+public DNS üzerinden dış arayüzden çıkar ve central kaynak olarak dış adresi görür. Bu bir arıza
+değildir, sadece yol farkıdır, ama host'lar arasında tutarsızlık yaratır:
+```bash
+ssh <agent-host> "grep <central-domain> /etc/hosts || echo 'private override yok'"
+ssh <agent-host> "getent hosts <central-domain>"
+```
 
 ## 4) "TLS cert problemi"
 
@@ -220,6 +237,41 @@ manuel install.sh ile geçmek bu race'leri kapatır.
 - Helper container `docker compose pull` aşamasında auth fail → `/root/.docker/config.json` mount eksik (compose'da `muvon-deployer` servisine mount edilmiş olmalı).
 - Yeni image migration'ı fail → eski binary durmuş, yeni binary migration'da çıkıyor. `/api/system/health` 503; SSH ile postgres'e bağlan, son migration'ı incele.
 - 503 alıyorsan: encryption key boş → command channel yok ama system upgrade ayrı endpoint, normalde çalışmalı. Versiyon endpoint'i 503 dönüyorsa deployer down (`docker compose ps`).
+
+## 13) "Loglarda istemci IP'si yanlış / hep aynı private adres"
+
+Belirti: `dialog.http_logs.client_ip` (veya uygulamanın kendi audit kaydı) gerçek ziyaretçi yerine
+tek bir private adres gösteriyor. Genelde bu adres **edge container'ının IP'si**dir. Sessiz bir
+bozulmadır: trafik akar, sadece kayıt yanlıştır, o yüzden uzun süre fark edilmez.
+
+İki ayrı katman var, ikisini karıştırma:
+
+```
+1. Edge (MUVON) katmanı: SIEM'e ne yazılıyor?
+   SELECT client_ip, count(*) FROM dialog.http_logs
+   WHERE timestamp > now() - interval '1 hour' GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
+   - Tek bir private adres baskınsa → edge'in kendi trust ayarına bak:
+     host'un trusted_proxies listesi (GET /api/hosts) ve Cloudflare güveni
+     (MUVON_CLOUDFLARE_IP_SECRET / AGENT_CLOUDFLARE_IP_SECRET set mi).
+   - CDN arkasındaysan ve secret set değilse edge CDN'in IP'sini istemci sanar.
+
+2. Uygulama katmanı: backend ne görüyor?
+   Edge doğru IP'yi X-Forwarded-For ile geçse bile uygulama sunucusu ona güvenmiyorsa
+   kendi kaydına edge'in IP'sini yazar. Bkz. pitfalls #37 (sunucu bazlı ayar tablosu).
+   ssh <agent-host> "docker exec <app-container> env | grep -iE 'forwarded|trusted|real_ip'"
+   ssh <agent-host> "docker inspect <app-container> --format '{{json .Config.Cmd}}'"
+   → gunicorn'da CLI argümanı env'i ezer, ikisini de kontrol et.
+```
+
+**Tipik bulgular**:
+- Uygulamada hiç trust ayarı yok → sunucu varsayılanı edge'e güvenmiyor, tüm IP'ler edge'in adresi.
+- Trust ayarı var ama **eski bir adrese** işaret ediyor (edge container'ı yeniden yaratılınca IP
+  değişmiş olabilir, bkz. pitfalls #36) → yine sessizce güvenilmiyor.
+- CIDR yazılmış ama sunucu CIDR desteklemiyor (gunicorn) → hiçbir adrese uymaz.
+- SSR/ISR yapan bir frontend kendi public domain'ine server-side fetch atıyor → o istekler edge'e
+  geri döner ve arkalarında gerçek kullanıcı olmadığı için SIEM'i NAT adresleriyle kirletir.
+  Çözüm: server-side fetch'i container-to-container internal adrese çevir
+  (ör. `SERVER_API_URL=http://<component-slug>:<port>`), client tarafı public URL'de kalsın.
 
 ## Genel ipuçları
 

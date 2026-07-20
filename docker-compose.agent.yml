@@ -9,6 +9,12 @@ services:
   agent:
     image: ghcr.io/saidmuratozdemir/muvon/agent:latest
     restart: unless-stopped
+    # Bu container aynı zamanda edge proxy. Deployer, backend container'larına
+    # MUVON_EDGE_IP olarak enjekte edeceği adresi bu etiketten bulur; uygulama
+    # env'inde FORWARDED_ALLOW_IPS=${MUVON_EDGE_IP} yazmak yeterli olur ve
+    # Docker adresi değiştirdiğinde ayar bozulmaz.
+    labels:
+      muvon.role: edge
     ports:
       - "80:80"
       - "443:443"

@@ -449,6 +449,10 @@ type ContainerInspectResult struct {
 	// (restart policy). A rising count between health polls signals a
 	// crash-loop — a "running" snapshot alone would miss it.
 	RestartCount int
+	// Networks maps network name to this container's IPv4 address on it.
+	// Docker assigns these at attach time and reuses freed addresses, so they
+	// are only meaningful when read live.
+	Networks map[string]string
 }
 
 func (c *DockerClient) ContainerInspect(ctx context.Context, id string) (ContainerInspectResult, error) {
@@ -477,9 +481,20 @@ func (c *DockerClient) ContainerInspect(ctx context.Context, id string) (Contain
 			Image  string            `json:"Image"`
 			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
+		NetworkSettings struct {
+			Networks map[string]struct {
+				IPAddress string `json:"IPAddress"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return out, err
+	}
+	if len(raw.NetworkSettings.Networks) > 0 {
+		out.Networks = make(map[string]string, len(raw.NetworkSettings.Networks))
+		for name, n := range raw.NetworkSettings.Networks {
+			out.Networks[name] = n.IPAddress
+		}
 	}
 	out.ID = raw.ID
 	out.Name = strings.TrimPrefix(raw.Name, "/")

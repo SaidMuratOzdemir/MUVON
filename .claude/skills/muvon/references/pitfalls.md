@@ -216,3 +216,115 @@ Eskiden `ContainerList` (running-only) kullanılıyordu, bu yüzden exited orpha
 3. Supervisor agent'ı yeniden başlatmaya çalışırsa central auth'u reddeder (`is_active=false`), agent immediately çıkar — crashloop'a girer gibi görünür, ama bu beklenen davranış.
 
 Geri alma: yeni agent enroll (`POST /api/agents`); eski kayıt sırasıyla silinir (`DELETE /api/agents/{id}`). Plaintext API key bir kez döner — kaybedersen tekrar enroll.
+
+## 36) Docker subnet'i ve agent container IP'si kurulumdan kuruluma DEĞİŞİR
+
+Agent host'unda tipik olarak iki ağ olur: agent'ın paylaşımlı proxy ağı (`muvon-agent_default`) ve
+uygulamanın DB ağı. Docker bunlara subnet'i **yaratılma sırasına** göre dağıtır. Uygulamanın DB
+compose'u önce ayağa kalktıysa `172.18.0.0/16`'yı o kapar ve agent ağı `172.19.0.0/16` olur; sıra
+tersse tam tersi. Aynı ürünün iki kurulumunda bu iki farklı çıkabilir.
+
+Sonuçları:
+- Bir install şablonuna, doküman örneğine veya uygulama env'ine **sabit subnet ya da sabit agent IP
+  yazma**. Bir host'ta doğru olan diğerinde sessizce yanlış olur.
+- `ipv4_address` ile pin atmak istiyorsan compose'da ağı açık `ipam.config.subnet` ile de tanımlaman
+  gerekir; bu da o subnet'in her host'ta boş olduğu varsayımını yapar (başka bir ağ kapmışsa ağ
+  oluşturma çakışır).
+- Agent'ın son okteti pratikte `.2` çıkma eğiliminde (compose'da ilk yaratılan container), ama bu bir
+  garanti değil: agent silinip yeniden yaratılırken araya bir deploy girerse yeni uygulama
+  container'ı boşalan adresi kapar.
+
+Doğru yaklaşım: adresi **çalışma anında** öğren (`docker network inspect <ağ>`), konfigürasyona gömme.
+
+## 37) Gerçek istemci IP'si: uygulama tarafı ayarlanmazsa SESSİZCE yanlış olur
+
+MUVON edge'i `X-Forwarded-For` gönderir, ama arkadaki uygulama sunucusu bu header'a **varsayılan
+olarak güvenmez**. Güvenmediğinde istemci IP'si diye kaydettiği şey **edge container'ının IP'si**
+olur. Hiçbir şey patlamaz: site açılır, istekler çalışır, sadece log/audit/rate-limit kayıtlarındaki
+IP yanlıştır. Bu yüzden aylarca fark edilmeden kalabilir.
+
+Sunucuya göre ayar:
+
+| Sunucu | Ayar | Varsayılan |
+|---|---|---|
+| gunicorn | `FORWARDED_ALLOW_IPS` env veya `--forwarded-allow-ips` | `127.0.0.1` (edge'e güvenmez) |
+| uvicorn | `--proxy-headers --forwarded-allow-ips` | proxy header'ları kapalı |
+| Django | `SECURE_PROXY_SSL_HEADER` (yalnız şema için), IP'yi WSGI sunucusu belirler | yok |
+| nginx (SPA/statik) | `set_real_ip_from` + `real_ip_header` | yok |
+
+İki tuzak:
+- **gunicorn'da CLI argümanı env'i ezer.** `FORWARDED_ALLOW_IPS` env'ini düzeltip komut satırında
+  eski değer kalırsa hiçbir şey değişmez. Her ikisini de kontrol et:
+  `docker inspect <container> --format '{{json .Config.Cmd}}'` ve `docker exec <container> env | grep -i forwarded`.
+- **gunicorn CIDR desteklemez.** `gunicorn/http/message.py` içinde eşleştirme
+  `peer_addr[0] in cfg.forwarded_allow_ips`, yani düz liste üyeliği. `172.18.0.0/16` yazarsan hiçbir
+  adrese uymaz ve sessizce "güvenme" moduna düşer. Seçenekler: tam IP ya da `*`.
+
+**Doğru ayar: adresi elle yazma, `${MUVON_EDGE_IP}` kullan.** Deployer container'ı yaratırken
+edge proxy'nin o component'in ağındaki güncel adresini bulur, `MUVON_EDGE_IP` olarak env'e koyar ve
+component env değerlerindeki `${MUVON_EDGE_IP}` token'ını onunla değiştirir. Yani:
+
+```
+FORWARDED_ALLOW_IPS=${MUVON_EDGE_IP}
+```
+
+Bu değer her deploy'da yeniden çözülür, dolayısıyla Docker adresi değiştirdiğinde (bkz. #36) ayar
+kendiliğinden doğru kalır. Değişim **birebir token değişimidir**, kabuk tarzı genişletme değil, o
+yüzden içinde `$` geçen secret değerler bozulmaz.
+
+Edge adresi çözülemezse token **olduğu gibi bırakılır**: boş bir allow-list yazıp güveni sessizce
+kapatmaktansa görünür bir hata bırakmak tercih edilir. Central'da proxy ile deployer ayrı
+container'lar olduğu için proxy `muvon.role=edge` etiketinden bulunur; agent host'unda deployer zaten
+proxy'nin içinde çalıştığı için kendi container'ına bakar.
+
+Teşhis: `dialog.http_logs`'ta `client_ip` dağılımına bak. Tek bir private adres baskınsa
+(özellikle edge'in container IP'si) trust ayarı yok demektir:
+```sql
+SELECT client_ip, count(*) FROM dialog.http_logs
+WHERE timestamp > now() - interval '1 hour'
+GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
+```
+
+## 38) Host firewall'ı gerçek maruziyeti göstermez
+
+`ufw inactive` ve `iptables INPUT ACCEPT` görmek "bu port dünyaya açık" demek DEĞİLDİR. Sağlayıcı
+seviyesinde (cloud firewall, security group, VPC ACL) bir katman olabilir ve host'un içinden
+görünmez. Tersi de doğru: ufw açık olsa bile provider katmanı beklenmedik bir portu açabilir.
+
+`ss -tlnp`'nin `0.0.0.0` göstermesi yalnız **process'in** tüm arayüzleri dinlediğini söyler, o
+paketin dışarıdan gelebildiğini değil.
+
+Hüküm vermeden önce **dışarıdan ölç**:
+```bash
+nc -z -G 4 -w 4 <public-ip> <port> && echo acik || echo kapali/filtreli
+```
+Kontrol için bilinen açık bir portu (443) da test et; ikisi de kapalı çıkıyorsa ölçüm yolun bozuktur.
+
+## 39) Self-upgrade helper container'ları ve eski image'lar birikir
+
+`agent.self_upgrade` ve sistem upgrade akışı kısa ömürlü bir `docker:*-cli` helper container'ı
+başlatır. Bu container `--rm` ile silinmez, `Exited(0)` olarak kalır. Uzun süredir ayakta olan
+kurulumlarda onlarca birikir. Aynı şekilde eski sürüm image'ları da temizlenmez;
+`pruneImagesAfterPromote` yalnız **managed component** image'larını kapsar, MUVON'un kendi
+image'larını değil.
+
+İşlevsel zarar yok ama `docker ps -a` okunmaz hale gelir ve disk şişer. Kontrol:
+```bash
+docker ps -a --filter "status=exited" --filter "ancestor=docker:27-cli"
+docker system df
+```
+Temizlik yıkıcı bir işlemdir, operatör onayıyla yapılır (bkz. `destructive-ops.md`).
+
+## 40) Agent'lar `:latest` kullanır, filo tek tip DEĞİLDİR
+
+Agent compose'u genelde `VERSION=latest` ile gelir ve her host kendi upgrade'ini kendi zamanında
+alır. Bir host'ta düzeltilmiş bir bug diğerinde hâlâ canlı olabilir. "Sürümü yükselttik" demek
+**tüm** agent'ların yükseldiği anlamına gelmez.
+
+Filo genelinde sürümü doğrula:
+```bash
+# her agent host'unda
+docker inspect <agent-container> --format '{{index .Config.Labels "org.opencontainers.image.version"}}'
+```
+`:latest` tag'i yalnız yeni bir sürüm tag'i yayınlandığında hareket eder; agent'ın onu alması için
+ayrıca `agent.self_upgrade` komutu (veya compose pull) gerekir.

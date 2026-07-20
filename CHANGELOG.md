@@ -27,6 +27,53 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ---
 
+## [0.1.47] - 2026-07-20
+
+### FEATURES
+
+- **`${MUVON_EDGE_IP}`: edge proxy adresi artık component env'ine otomatik enjekte ediliyor.**
+  Bir uygulamanın gerçek istemci IP'sini görebilmesi için proxy'ye güvenmesi gerekir
+  (gunicorn `FORWARDED_ALLOW_IPS`, uvicorn `--forwarded-allow-ips`, nginx `set_real_ip_from`).
+  O ayara şimdiye kadar container IP'si elle yazılıyordu; Docker adresleri yeniden dağıttığında
+  ayar sessizce yanlış oluyor ve uygulama edge'in IP'sini son kullanıcı IP'si sanmaya başlıyordu.
+  Hiçbir şey patlamadığı için de aylarca fark edilmeyebiliyordu.
+
+  Deployer artık container'ı yaratırken edge proxy'nin o component'in ağındaki güncel adresini
+  çözüyor, `MUVON_EDGE_IP` olarak env'e ekliyor ve component env değerlerindeki `${MUVON_EDGE_IP}`
+  token'ını onunla değiştiriyor. Operatör `FORWARDED_ALLOW_IPS=${MUVON_EDGE_IP}` yazıp bırakıyor.
+
+  Ayrıntılar:
+  - Token hem component env değerlerinde hem **component command'ında** çözülür. gunicorn gibi
+    sunucularda `--forwarded-allow-ips` komut satırı argümanı env değişkenini ezdiği için, yalnız
+    env'i desteklemek düzeltmeyi eksik bırakırdı.
+  - Değişim birebir token değişimi, kabuk genişletmesi değil; içinde `$` geçen secret'lar bozulmaz.
+  - Adres çözülemezse token olduğu gibi bırakılır. Boş allow-list yazıp güveni sessizce kapatmak
+    yerine görünür bir hata bırakmak tercih edildi.
+  - Agent host'unda deployer zaten proxy'nin içinde çalışır, kendi container'ına bakar. Central'da
+    proxy ayrı bir container olduğundan `muvon.role=edge` etiketiyle bulunur; etiket iki compose
+    şablonuna da eklendi.
+  - Değer her deploy'da yeniden çözülür, önbelleğe alınmaz.
+
+### ENHANCEMENTS
+
+- Operatör skill referansları (`.claude/skills/muvon/`) canlı kurulum incelemesiyle güncellendi:
+  agent'ın systemd değil docker compose ile çalıştığı, agent auth başlığının `X-Api-Key` olduğu,
+  `hosts.target_kind`/`target_agent_id` ile domain'lerin de bir agent'a bağlandığı düzeltildi;
+  Docker subnet'inin kurulumdan kuruluma değişmesi, host firewall'unun gerçek maruziyeti
+  göstermemesi, `:latest` yüzünden filo sürüm sürüklenmesi ve gerçek istemci IP zinciri yeni
+  tuzak maddeleri olarak eklendi.
+
+### Upgrade
+
+- Enjeksiyon, container'ı yaratan deployer'da çalışır: central component'leri için `muvon-deployer`,
+  edge component'leri için ilgili agent bu sürüme yükseldikten sonra etkin olur.
+- Yükseltme sonrası uygulamanın trust ayarını token'a çevirin, örneğin
+  `FORWARDED_ALLOW_IPS=${MUVON_EDGE_IP}`. Aynı token component command'ında da çalışır; sunucu
+  bayrağını komut satırında geçiyorsanız orayı da güncelleyin, çünkü CLI env'i ezer.
+- Değişiklik component yeniden yaratılınca (bir sonraki deploy) geçerli olur.
+
+---
+
 ## [0.1.46] - 2026-07-13
 
 Kod-inceleme turunda bulunan doğruluk ve güvenlik kusurlarının toplu
