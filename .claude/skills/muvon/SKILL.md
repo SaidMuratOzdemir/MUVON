@@ -34,7 +34,7 @@ Bu dosyaları **gerektiğinde** `Read` ile aç. Hepsini başta yükleme — toke
 - `POST /api/deploy/projects/{slug}/rollback` — yeni bir deployment kuyruğa eklenir, önceki başarılı release'i tekrar yayar.
 - `POST /api/tls/certificates` — cert override.
 - `PUT /api/settings/{key}` — özellikle `muvon_jwt_secret`, `muvon_encryption_key`, SMTP credentials.
-- `PUT /api/deploy/projects/{slug}/components/{component}` ile `paused: true` — servis drain'e geçer, yeni deploy bloklanır.
+- `PUT /api/deploy/projects/{slug}/components/{component}` ile `paused: true`: servisin çalışan instance'ları drain'e geçer, yeni deploy bloklanır.
 - `POST /api/alerting/test/slack` / `POST /api/alerting/test/smtp` — gerçek Slack/email mesajı gider.
 - `POST /api/system/upgrade` — tüm stack `docker compose pull && up -d` ile yeniden yaratılır; admin paneli ve proxy kısaca düşer.
 - `POST /api/agents/{id}/commands` özellikle `kind` = `agent.restart` / `agent.revoke` / `agent.drain` / `agent.self_upgrade` — uzak edge'i durdurur, drain eder, kalıcı revoke eder veya image değiştirir.

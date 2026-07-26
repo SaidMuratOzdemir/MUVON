@@ -77,9 +77,10 @@ type DeployComponent struct {
 	// own server handles it. A non-empty ID means an edge agent is the
 	// owner; only that agent picks up deployments for this component.
 	AgentID string `json:"agent_id"`
-	// Paused stops the deployer from spawning new instances and drains
-	// existing ones. Config stays intact so the operator can resume by
-	// clearing the flag — no rebuild needed.
+	// Paused rejects new deployments for this component and, when set via the
+	// update handler, drains its running instances. The config stays intact,
+	// so clearing the flag re-enables deployments; a deploy (or rollback)
+	// brings instances back.
 	Paused bool `json:"paused"`
 	// KeepReleases caps how many recent succeeded releases stay pullable
 	// on the host. After every successful promote, image refs older than

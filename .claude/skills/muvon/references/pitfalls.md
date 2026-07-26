@@ -145,9 +145,17 @@ Servis create'te `agent_id` belirlenir (NULL = central, value = o agent edge). S
 
 Bir uygulamanın iki servisi farklı `agent_id`'lerdeyse, deploy enqueue zamanı `enqueue deployment: components straddle hosts` ile reddedilir. Tüm servisleri aynı host'ta tut (hepsi central, ya da hepsi aynı agent).
 
-## 25) `paused` servisler enqueue reddeder
+## 25) `paused` = durdur (deploy engelle + çalışan instance'ları drain et)
 
-`deploy_components.paused=true` ise yeni deploy denemesi (webhook / manual / rollback) `component X is paused; resume it before deploying` ile reddedilir. Önce `PUT .../components/<x>` ile `paused: false` yap.
+`PUT .../components/<x>` body'sinde `{"paused": true}`:
+- Yeni deploy denemeleri (webhook / manual / rollback) `component X is paused; resume it before deploying` ile **reddedilir**.
+- Component'in **çalışan active instance'ları draining'e alınır**; sahibi deployer (central veya edge agent) bir sonraki tick'te container'ları durdurup kaldırır, proxy de trafiği hemen keser (yalnız `active` instance'lar route edilir). Yani pause gerçek bir "durdur"dur, sadece deploy kilidi değil.
+
+`paused` API alanı **PUT ve POST body'sinden okunur** (pointer alan: göndermezsen mevcut değer korunur). Uyarı: yeterince eski bir MUVON sürümünde `componentRequest` struct'ında bu alan hiç yoktu, dolayısıyla `paused` API'den set edilemiyor, DB'de default `false` kalıyordu. Beklediğin gibi durmuyorsa çalışan sürümde alanın işlendiğini doğrula (`grep -n '"'"'json:"paused"'"'"' internal/admin/handlers_deploy_components.go`).
+
+**Devam ettirme (resume):** `{"paused": false}` yeni deploy'lara izin verir ama çalışan instance'ı geri getirmez (pause onları drain etmişti). Ayağa kaldırmak için bir deploy gerekir: son başarılı release için `POST .../rollback`, ya da CI webhook / manual deploy.
+
+Durdurmak için artık DELETE gerekmez; DELETE component'i kalıcı siler (spec kaybolur), pause ise config'i koruyup yalnız çalışmayı durdurur.
 
 ## 26) `MUVON_ENCRYPTION_KEY` ↔ `AGENT_ENCRYPTION_KEY` **eşleşmek zorunda**
 

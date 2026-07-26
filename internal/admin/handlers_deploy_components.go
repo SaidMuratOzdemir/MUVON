@@ -128,6 +128,10 @@ type componentRequest struct {
 	EnvSecretKeys           *[]string          `json:"env_secret_keys"`
 	Mounts                  *[]db.Mount        `json:"mounts"`
 	IsRoutable              *bool              `json:"is_routable"`
+	// Paused stops the deployer from accepting new deployments for this
+	// component and drains its running instances (see the update handler).
+	// Pointer so an update that omits it leaves the current value untouched.
+	Paused *bool `json:"paused"`
 	// AgentID picks which host runs this component's containers. Honoured
 	// only on CREATE — update endpoints intentionally ignore it because
 	// rebinding a running component to a new host would orphan containers
@@ -285,6 +289,9 @@ func buildComponentInput(req componentRequest, base db.DeployComponent, projectI
 	}
 	if req.IsRoutable != nil {
 		in.IsRoutable = *req.IsRoutable
+	}
+	if req.Paused != nil {
+		in.Paused = *req.Paused
 	}
 	if req.KeepReleases != nil {
 		in.KeepReleases = *req.KeepReleases
@@ -506,7 +513,19 @@ func (s *Server) handleUpdateDeployComponent(w http.ResponseWriter, r *http.Requ
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	s.auditLog(r, "deploy_component.update", "deploy_component", fmt.Sprintf("%s/%s", projectSlug, componentSlug), map[string]any{"image_repo": c.ImageRepo})
+	// A paused component must have no running instances. Draining its active
+	// instances here (idempotent: no-op once none are active) completes the
+	// "pause = stop" contract that enqueue rejection alone does not: the
+	// component's deployer, central or edge, reaps the drained containers on
+	// its next tick, and the reload below drops them from the proxy snapshot
+	// immediately since only 'active' instances are routed.
+	if c.Paused {
+		if _, err := s.db.DrainActiveInstancesForComponent(r.Context(), c.ID); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "component paused but draining its instances failed: " + err.Error()})
+			return
+		}
+	}
+	s.auditLog(r, "deploy_component.update", "deploy_component", fmt.Sprintf("%s/%s", projectSlug, componentSlug), map[string]any{"image_repo": c.ImageRepo, "paused": c.Paused})
 	if err := s.triggerReload(); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "component updated but config reload failed: " + err.Error()})
 		return

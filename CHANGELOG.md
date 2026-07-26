@@ -23,6 +23,25 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+### BUGFIXES
+
+- **Component `paused` alanı API'den set edilemiyordu; artık çalışıyor ve
+  gerçekten durduruyor.** `componentRequest` struct'ında `paused` alanı yoktu,
+  bu yüzden PUT/POST update handler'ı değeri body'den hiç okumuyor, DB'deki
+  değer create anındaki default'ta (`false`) sabit kalıyordu. DB ve query
+  katmanı `paused`'u destekliyor olmasına ve dokümanların pause'u bir "durdurma"
+  primitive'i olarak tarif etmesine rağmen, operatörün bir component'i
+  duraklatmasının hiçbir yolu yoktu.
+
+  Ayrıca pause fiilen yalnız yeni deploy'u reddediyordu; çalışan instance'a
+  dokunmuyor, proxy ona trafik göndermeye devam ediyordu. Artık `paused: true`
+  yapıldığında component'in active instance'ları draining'e alınıyor (sahibi
+  deployer central ya da edge olsun bir sonraki tick'te container'ları durdurup
+  kaldırıyor, reload sonrası proxy hemen trafiği kesiyor). `paused: false` yeni
+  deploy'lara izin verir; instance'ı geri getirmek için bir deploy (veya
+  rollback) gerekir. Bu, bir component'i config'ini kaybetmeden durdurmak için
+  DELETE + yeniden yaratma zorunluluğunu ortadan kaldırır.
+
 ### ENHANCEMENTS
 
 - **Gerçek istemci IP'si için entegrasyon dokümanı**: `docs/client-ip.md`. MUVON'un
