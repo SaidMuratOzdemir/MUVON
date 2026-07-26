@@ -23,6 +23,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+Henüz birikme yok.
+
+---
+
+## [0.1.50] - 2026-07-26
+
+Component pause'un düzeltilmesi ve gerçek istemci IP entegrasyon dokümanı. Şema
+migration'ı yok.
+
 ### BUGFIXES
 
 - **Component `paused` alanı API'den set edilemiyordu; artık çalışıyor ve
