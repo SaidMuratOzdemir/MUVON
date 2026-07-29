@@ -23,7 +23,39 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-Henüz birikme yok.
+### BUGFIXES
+
+- **Aynı sunucuda birden çok proje barındırıldığında servisler birbirinin ağ
+  adını kapıyordu.** Bir servis, ağlara yalnızca kendi slug'ıyla bağlanıyordu.
+  Tek projeli bir sunucuda bu sorun değil, ama aynı sunucuda iki projenin de
+  `api` adlı bir servisi olduğunda iki container aynı adı paylaşımlı proxy
+  ağında birden talep ediyor. Docker bu durumda adı sırayla dağıtıyor, yani
+  `http://api:8000` adresine giden bir kardeş servis rastgele bir projenin
+  API'sine düşüyor. Canlı bir sunucuda dört container'ın `api`, dördünün
+  `landing`, ikisinin `admin` adını paylaştığı görüldü. Hiçbir şey hata
+  vermediği için sessizce yanlış veri servis edilebiliyordu.
+
+  Container'lar artık ek olarak `<proje>-<servis>` adını da taşıyor. Kısa ad
+  korundu, dolayısıyla mevcut env değerleri çalışmaya devam ediyor; operatör
+  hazır olduğunda belirsizliği olmayan uzun ada geçebilir. İki projenin aynı
+  sunucuda çalıştığı her kurulumda `SERVER_API_URL` benzeri değerlerin uzun ada
+  çevrilmesi önerilir.
+
+- **`GET /api/alerts/stats` her çağrıda 500 dönüyordu.** Toplamları hesaplayan
+  sorgu `alerts` tablosunu şema niteleyicisi olmadan yazıyordu; aynı fonksiyondaki
+  diğer iki sorgu zaten `dialog.alerts` kullanıyordu. `muvon` binary'si
+  `search_path=public,paradedb` ile çalıştığı için tablo hiçbir zaman görünmüyor,
+  handler da hatayı 500'e çeviriyordu. Sonuç: admin panelindeki Alerts sayfasının
+  istatistik bloğu kalıcı olarak boştu. v0.1.1'de düzeltilen aynı sınıf hatanın
+  gözden kaçmış son örneğiydi; admin'den çağrılan 65 sorgu tarandı, başka vaka yok.
+
+### ENHANCEMENTS
+
+- **Aralıklı başarısız olan bir test kararlı hale getirildi.** Kurcalanmış imza
+  testi, base64url imzasının son karakterini değiştiriyordu. 32 baytlık bir HMAC
+  43 karaktere kodlanıyor ve son karakterin yalnızca 4 biti anlamlı, kalan 2 bit
+  dolgu. Değişiklik bu yüzden sık sık aynı imza baytlarına çözülüyor ve token
+  geçerli kalıyordu. Artık tam 6 bit taşıyan ilk karakter değiştiriliyor.
 
 ---
 

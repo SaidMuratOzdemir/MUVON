@@ -336,3 +336,53 @@ docker inspect <agent-container> --format '{{index .Config.Labels "org.openconta
 ```
 `:latest` tag'i yalnız yeni bir sürüm tag'i yayınlandığında hareket eder; agent'ın onu alması için
 ayrıca `agent.self_upgrade` komutu (veya compose pull) gerekir.
+
+## 41) Component silinince route'un bağı kopar (taşımalarda ana tuzak)
+
+`agent_id` değiştirilemediği için bir component'i başka host'a taşımanın tek yolu silip yeniden
+yaratmaktır (bkz. #23). Yeni component **yeni bir id alır**, oysa `routes.managed_component_id`
+eskisini işaret ediyordu. DELETE sırasında bu alan `NULL`'a düşer ve route hiçbir backend'e
+bağlı kalmaz.
+
+Belirti son derece yanıltıcı: container'lar `healthy`, `/api/deploy/projects` çıktısında
+instance'lar `active`, `GET /api/system/health/backends` hepsini `open` gösterir, ama **tüm
+domainler 502 döner**. Backend sağlıklı olduğu için hata deployer'da veya uygulamada aranır;
+oysa sorun route katmanındadır.
+
+Taşıma sonrası mutlaka kontrol et:
+```sql
+SELECT h.domain, r.path_prefix, COALESCE(r.managed_component_id::text,'NULL') AS comp
+FROM muvon.routes r JOIN muvon.hosts h ON h.id = r.host_id
+WHERE h.domain LIKE '%<proje>%' ORDER BY 1;
+```
+`NULL` görünen her proxy route'u yeni component id'sine bağla. `PUT /api/routes/{id}`
+gövdesi **tam route objesi** ister (pointer alan yok), bu yüzden önce `GET /api/routes/{id}`
+ile oku, yalnız `managed_component_id`'yi değiştir, geri yaz.
+
+Ayrıca **bir route tamamen kaybolabilir**: gerçek bir taşımada `form.tatilji.online`'ın tek
+route'u silindi ve o domain 404 vermeye başladı. Taşıma öncesi ve sonrası route sayısını
+karşılaştır, eksik olanı `POST /api/hosts/{id}/routes` ile geri ekle.
+
+## 42) Aynı host'ta iki proje aynı slug'ı kullanırsa Docker ağ adı çakışır
+
+Deployer container'ı ağa component slug'ıyla bağlar. Tek projeli host'ta sorun yok, ama çok
+projeli bir host'ta iki projenin de `api` adlı component'i varsa **iki container aynı adı
+paylaşımlı proxy ağında talep eder**. Docker DNS bu durumda round-robin yapar:
+`http://api:8000` isteği rastgele bir projenin servisine düşer.
+
+Gerçek bir kurulumda dört container `api`, dört container `landing`, iki container `admin`
+adını paylaşıyordu. Hiçbir şey hata vermez, sadece yanlış projenin verisi servis edilir.
+Özellikle SSR yapan landing'lerin `SERVER_API_URL=http://api:8000` ayarı bundan etkilenir.
+
+Kontrol:
+```bash
+for c in $(docker network inspect muvon-agent_default --format '{{range .Containers}}{{.Name}}{{println}}{{end}}'); do
+  docker inspect "$c" --format '{{.Name}} {{range $k,$v := .NetworkSettings.Networks}}{{if eq $k "muvon-agent_default"}}{{$v.Aliases}}{{end}}{{end}}'
+done | sort -k2
+```
+Aynı ad birden fazla satırda görünüyorsa çakışma var.
+
+Çözüm: bu sürümden itibaren container'lar ek olarak `<proje>-<component>` adını da taşır.
+Çok projeli host'larda component'ler arası çağrıları bu uzun ada çevir
+(`SERVER_API_URL=http://tatilji-api:8000`). Kısa ad geriye uyumluluk için duruyor, ama çok
+projeli bir host'ta ona güvenme.

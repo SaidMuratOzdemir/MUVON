@@ -17,6 +17,9 @@ Kullanıcı "şu sorun var" dediğinde nereden başlayacağını bilesin.
 ```
 
 **Tipik bulgular**:
+- 502 **ama container'lar healthy ve instance'lar active** → route bağı kopmuş olabilir.
+  Bir component yakın zamanda silinip yeniden yaratıldıysa (host taşıma) `routes.managed_component_id`
+  `NULL`'a düşmüştür. Backend'i aramadan önce route'a bak, bkz. `pitfalls.md` #41.
 - 502 → backend down (managed component crashed). `GET /api/containers` → status `exited`/`restarting`.
 - 503 → backend healthy ama overload. Rate limit configleri kontrol.
 - 504 → backend timeout. `timeout_seconds` route'ta küçük olabilir.
