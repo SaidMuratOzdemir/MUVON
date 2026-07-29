@@ -23,6 +23,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+Henüz birikme yok.
+
+---
+
+## [0.1.51] - 2026-07-29
+
+Çok projeli sunucularda ortaya çıkan iki sessiz hatanın düzeltmesi. Şema
+migration'ı yok; sadece image güncellemesi gerekir.
+
 ### BUGFIXES
 
 - **Aynı sunucuda birden çok proje barındırıldığında servisler birbirinin ağ
@@ -56,6 +65,25 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   43 karaktere kodlanıyor ve son karakterin yalnızca 4 biti anlamlı, kalan 2 bit
   dolgu. Değişiklik bu yüzden sık sık aynı imza baytlarına çözülüyor ve token
   geçerli kalıyordu. Artık tam 6 bit taşıyan ilk karakter değiştiriliyor.
+
+### Upgrade notları
+
+Alias düzeltmesi container'ı yaratan deployer'da çalışır: central servisler için
+`muvon-deployer`, edge servisleri için ilgili agent bu sürüme yükseldikten sonra
+etkin olur. Yeni ad bir sonraki deploy'da geçerli olur.
+
+Aynı sunucuda birden fazla proje çalıştırıyorsanız, yükseltmeden sonra
+servisler arası env değerlerini uzun ada çevirin, örneğin
+`SERVER_API_URL=http://<proje>-api:8000`. Kısa ad çalışmaya devam eder ama çok
+projeli bir sunucuda hangi projeye gideceği garanti değildir.
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.1.51
+
+# Agent:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.1.51
+```
 
 ---
 
