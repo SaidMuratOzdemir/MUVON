@@ -734,14 +734,14 @@ func (c *DockerClient) ContainerWait(ctx context.Context, id string) (int64, err
 	return out.StatusCode, nil
 }
 
-func (c *DockerClient) NetworkConnect(ctx context.Context, network, containerID, alias string) error {
+func (c *DockerClient) NetworkConnect(ctx context.Context, network, containerID string, aliases ...string) error {
 	if network == "" || containerID == "" {
 		return nil
 	}
 	payload := map[string]any{"Container": containerID}
-	if alias != "" {
+	if clean := nonEmpty(aliases); len(clean) > 0 {
 		payload["EndpointConfig"] = map[string]any{
-			"Aliases": []string{alias},
+			"Aliases": clean,
 		}
 	}
 	body, _ := json.Marshal(payload)

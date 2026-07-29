@@ -245,14 +245,14 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 				},
 				Mounts: mounts,
 			},
-			NetworkingConfig: networkConfig(component.Networks, component.Slug),
+			NetworkingConfig: networkConfig(component.Networks, component.Slug, qualifiedAlias(plan.Project.Slug, component.Slug)),
 		}
 		containerID, err := s.docker.ContainerCreate(ctx, containerName, createReq)
 		if err != nil {
 			return fmt.Errorf("create candidate %s: %w", component.Slug, err)
 		}
 		createdContainers = append(createdContainers, containerID)
-		if err := s.connectExtraNetworks(ctx, component.Networks, containerID, component.Slug); err != nil {
+		if err := s.connectExtraNetworks(ctx, component.Networks, containerID, component.Slug, qualifiedAlias(plan.Project.Slug, component.Slug)); err != nil {
 			return fmt.Errorf("connect networks for %s: %w", component.Slug, err)
 		}
 		if err := s.docker.ContainerStart(ctx, containerID); err != nil {
@@ -841,12 +841,12 @@ func (s *Service) ensureNetworks(ctx context.Context, networks []string) error {
 	return nil
 }
 
-func (s *Service) connectExtraNetworks(ctx context.Context, networks []string, containerID, alias string) error {
+func (s *Service) connectExtraNetworks(ctx context.Context, networks []string, containerID string, aliases ...string) error {
 	if len(networks) <= 1 {
 		return nil
 	}
 	for _, network := range networks[1:] {
-		if err := s.docker.NetworkConnect(ctx, network, containerID, alias); err != nil {
+		if err := s.docker.NetworkConnect(ctx, network, containerID, aliases...); err != nil {
 			return err
 		}
 	}
@@ -1049,11 +1049,42 @@ func firstNetwork(networks []string) string {
 	return "muvon-edge"
 }
 
-func networkConfig(networks []string, alias string) networkingConfig {
+// qualifiedAlias is the project-scoped network alias for a component.
+// The bare component slug is kept as well for backwards compatibility, but
+// it collides once a host runs two projects that both name a component
+// "api": Docker round-robins between them and a caller reaching
+// http://api:8000 lands on an arbitrary project's service.
+func qualifiedAlias(project, component string) string {
+	if project == "" || component == "" {
+		return ""
+	}
+	return project + "-" + component
+}
+
+// nonEmpty drops blank entries and duplicates while keeping order, so a
+// caller can pass the short and the project-qualified alias without
+// worrying about either being empty or the two being identical.
+func nonEmpty(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		if v == "" {
+			continue
+		}
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func networkConfig(networks []string, aliases ...string) networkingConfig {
 	first := firstNetwork(networks)
 	ep := endpointSettings{}
-	if alias != "" {
-		ep.Aliases = []string{alias}
+	if clean := nonEmpty(aliases); len(clean) > 0 {
+		ep.Aliases = clean
 	}
 	return networkingConfig{EndpointsConfig: map[string]endpointSettings{first: ep}}
 }
