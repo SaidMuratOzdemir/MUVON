@@ -108,14 +108,20 @@ func TestCSRFTokenUniqueness(t *testing.T) {
 	}
 }
 
+// flipLast alters the first character rather than the last one. A 32-byte
+// HMAC encodes to 43 base64url characters, and the final character only
+// carries 4 significant bits — the low 2 are padding. Changing it therefore
+// decodes to the same signature bytes about half the time, which made the
+// tamper test fail intermittently. The first character carries a full 6
+// bits, so flipping it always changes the decoded signature.
 func flipLast(s string) string {
 	if s == "" {
 		return s
 	}
-	last := s[len(s)-1]
+	first := s[0]
 	var repl byte = 'A'
-	if last == 'A' {
+	if first == 'A' {
 		repl = 'B'
 	}
-	return s[:len(s)-1] + string(repl)
+	return string(repl) + s[1:]
 }
