@@ -196,7 +196,7 @@ func (d *DB) GetAlertStats(ctx context.Context) (AlertStats, error) {
 			COUNT(*) FILTER (WHERE NOT acknowledged),
 			COUNT(*),
 			MAX(last_seen_at)
-		 FROM alerts`).Scan(&s.TotalOpen, &s.TotalAll, &s.LastAlertAt); err != nil {
+		 FROM dialog.alerts`).Scan(&s.TotalOpen, &s.TotalAll, &s.LastAlertAt); err != nil {
 		return s, fmt.Errorf("alert stats totals: %w", err)
 	}
 
