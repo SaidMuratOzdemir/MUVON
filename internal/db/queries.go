@@ -636,6 +636,19 @@ func (d *DB) ListCerts(ctx context.Context) ([]TLSCert, error) {
 	return certs, rows.Err()
 }
 
+// DeleteCertByDomain drops every stored certificate for a domain and reports
+// whether anything was removed. Used by a forced renewal: an agent consults
+// the central store before its own ACME cache, so the stored copy keeps being
+// served until it is released.
+func (d *DB) DeleteCertByDomain(ctx context.Context, domain string) (bool, error) {
+	tag, err := d.Pool.Exec(ctx,
+		`DELETE FROM tls_certificates WHERE domain = lower($1)`, strings.TrimSpace(domain))
+	if err != nil {
+		return false, fmt.Errorf("delete cert by domain: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (d *DB) DeleteCert(ctx context.Context, id int) (string, error) {
 	var domain string
 	err := d.Pool.QueryRow(ctx, `DELETE FROM tls_certificates WHERE id = $1 RETURNING domain`, id).Scan(&domain)

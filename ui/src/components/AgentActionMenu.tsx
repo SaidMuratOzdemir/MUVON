@@ -56,6 +56,7 @@ export function AgentActionMenu({ agentID, agentName, onCommandSent }: Props) {
   // cert.renew için domain prompt durumu
   const [domainPromptOpen, setDomainPromptOpen] = useState(false)
   const [domain, setDomain] = useState('')
+  const [forceRenew, setForceRenew] = useState(false)
 
   async function send(action: ActionDef, payload?: Record<string, unknown>) {
     try {
@@ -162,8 +163,9 @@ export function AgentActionMenu({ agentID, agentName, onCommandSent }: Props) {
           <AlertDialogHeader>
             <AlertDialogTitle>Sertifikayı yenile</AlertDialogTitle>
             <AlertDialogDescription>
-              Hangi domain için cert cache'i invalidate edilsin? Bir sonraki TLS handshake'inde
-              agent autocert yeni sertifika alır.
+              Sertifikanın bitimine 30 günden az kaldıysa agent hemen yenisini alır. Daha uzun
+              süre kaldıysa bir şey yapmaz ve sonucu bildirir; sertifika hâlâ geçerliyken
+              yenilemek Let's Encrypt kotasından düşer ve kısa bir kesinti yaratır.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <input
@@ -174,15 +176,32 @@ export function AgentActionMenu({ agentID, agentName, onCommandSent }: Props) {
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono"
             autoFocus
           />
+          <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={forceRenew}
+              onChange={e => setForceRenew(e.target.checked)}
+              className="mt-0.5 cursor-pointer"
+            />
+            <span>
+              Süresi dolmamış olsa da zorla yenile. Merkezde saklanan sertifika da silinir,
+              çünkü servis yolunda o kopya öncelikli; yeni sertifika ancak o silinince
+              kullanılır. Domain başına yaklaşık 10 saniyelik TLS kesintisi beklenir.
+            </span>
+          </label>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => { setDomain(''); setDomainPromptOpen(false) }}>
+            <AlertDialogCancel onClick={() => { setDomain(''); setForceRenew(false); setDomainPromptOpen(false) }}>
               Vazgeç
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 if (domain.trim()) {
-                  send({ kind: 'cert.renew', label: 'Sertifikayı yenile', icon: RefreshCw, destructive: false, needsConfirm: false }, { domain: domain.trim() })
+                  send(
+                    { kind: 'cert.renew', label: 'Sertifikayı yenile', icon: RefreshCw, destructive: false, needsConfirm: false },
+                    { domain: domain.trim(), force: forceRenew },
+                  )
                   setDomain('')
+                  setForceRenew(false)
                   setDomainPromptOpen(false)
                 } else {
                   toast.error('Domain gerekli')

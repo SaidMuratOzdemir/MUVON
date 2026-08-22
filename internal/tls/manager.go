@@ -3,11 +3,14 @@ package tls
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"muvon/internal/config"
 	"muvon/internal/db"
@@ -107,6 +110,116 @@ func (m *Manager) AutocertManager() *autocert.Manager {
 
 func (m *Manager) InvalidateCache(domain string) {
 	m.certStore.Invalidate(domain)
+}
+
+// CertInfo describes the certificate a domain would be served right now,
+// established without asking ACME for anything.
+type CertInfo struct {
+	// Source is where the certificate came from: "manual" for one an operator
+	// uploaded, "central" for one pulled from the central store, "acme" for
+	// one autocert already holds.
+	Source   string
+	NotAfter time.Time
+	Issuer   string
+}
+
+// PeekCertificate reports what is currently being served for domain without
+// triggering issuance. Returns nil when nothing is cached anywhere, which for
+// an agent-terminated domain is the normal state before its first handshake.
+func (m *Manager) PeekCertificate(ctx context.Context, domain string) *CertInfo {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+
+	if cert, err := m.certStore.GetCertificate(domain); err == nil && cert != nil {
+		if info := certInfoFrom(cert, "manual"); info != nil {
+			return info
+		}
+	}
+	if m.agentSync != nil {
+		if cert, err := m.agentSync.FetchCertificate(domain); err == nil && cert != nil {
+			if info := certInfoFrom(cert, "central"); info != nil {
+				return info
+			}
+		}
+	}
+	if m.autocertMgr.Cache != nil {
+		if blob, err := m.autocertMgr.Cache.Get(ctx, domain); err == nil {
+			if leaf := firstCertificateFromPEM(blob); leaf != nil {
+				return &CertInfo{Source: "acme", NotAfter: leaf.NotAfter, Issuer: leaf.Issuer.CommonName}
+			}
+		}
+	}
+	return nil
+}
+
+// ForceRenew discards every cached copy for domain and obtains a certificate
+// immediately rather than waiting for a handshake, so the caller can report
+// what actually happened instead of promising a future renewal.
+//
+// autocert only goes back to the CA when the cached certificate is missing or
+// close to expiry, which is why dropping the cache first is what makes this a
+// renewal at all. On an agent this covers the local ACME cache only: a
+// certificate stored centrally still wins on the serving path, so central has
+// to release its copy for the new one to be used.
+func (m *Manager) ForceRenew(ctx context.Context, domain string) (*CertInfo, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	if domain == "" {
+		return nil, fmt.Errorf("domain required")
+	}
+
+	m.certStore.Invalidate(domain)
+	if m.agentSync != nil {
+		m.agentSync.InvalidateCache()
+	}
+	if m.autocertMgr.Cache != nil {
+		if err := m.autocertMgr.Cache.Delete(ctx, domain); err != nil {
+			return nil, fmt.Errorf("dropping cached certificate: %w", err)
+		}
+	}
+
+	cert, err := m.autocertMgr.GetCertificate(&tls.ClientHelloInfo{ServerName: domain})
+	if err != nil {
+		return nil, fmt.Errorf("obtaining certificate: %w", err)
+	}
+	info := certInfoFrom(cert, "acme")
+	if info == nil {
+		return nil, fmt.Errorf("issued certificate could not be parsed")
+	}
+	return info, nil
+}
+
+func certInfoFrom(cert *tls.Certificate, source string) *CertInfo {
+	leaf := cert.Leaf
+	if leaf == nil {
+		if len(cert.Certificate) == 0 {
+			return nil
+		}
+		parsed, err := x509.ParseCertificate(cert.Certificate[0])
+		if err != nil {
+			return nil
+		}
+		leaf = parsed
+	}
+	return &CertInfo{Source: source, NotAfter: leaf.NotAfter, Issuer: leaf.Issuer.CommonName}
+}
+
+// firstCertificateFromPEM pulls the leaf out of an autocert cache blob, which
+// holds the private key followed by the certificate chain.
+func firstCertificateFromPEM(blob []byte) *x509.Certificate {
+	for {
+		var block *pem.Block
+		block, blob = pem.Decode(blob)
+		if block == nil {
+			return nil
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		leaf, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil
+		}
+		return leaf
+	}
 }
 
 // InvalidateMissing removes in-memory cached certs for domains

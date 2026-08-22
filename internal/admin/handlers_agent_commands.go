@@ -3,6 +3,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"muvon/internal/agentctrl"
@@ -90,6 +91,25 @@ func (s *Server) handleEnqueueAgentCommand(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "payload merge failed: " + err.Error()})
 			return
+		}
+	}
+	// A forced renewal only reaches the wire if central lets go of its copy
+	// first: the agent consults the central store before its own ACME cache,
+	// so a stored certificate keeps being served no matter what the agent
+	// issues. Dropping the row is what made renewals actually take effect the
+	// last time this was done by hand.
+	if req.Kind == string(agentctrl.KindCertRenew) {
+		domain, force := certRenewTarget(payload)
+		if force && domain != "" {
+			removed, err := s.db.DeleteCertByDomain(r.Context(), domain)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "releasing stored certificate failed: " + err.Error()})
+				return
+			}
+			if removed {
+				s.auditLog(r, "delete_certificate", "tls_certificate", domain,
+					map[string]string{"reason": "forced renewal on agent " + agentID})
+			}
 		}
 	}
 	cmd, err := s.db.EnqueueAgentCommand(r.Context(), db.EnqueueAgentCommandInput{
@@ -225,6 +245,20 @@ var errInvalidNumber = stringError("invalid number")
 type stringError string
 
 func (e stringError) Error() string { return string(e) }
+
+// certRenewTarget reads the domain and force flag out of a cert.renew payload.
+// A malformed payload yields no domain, which leaves the stored certificate
+// untouched: the agent will reject the command anyway.
+func certRenewTarget(payload json.RawMessage) (domain string, force bool) {
+	var p struct {
+		Domain string `json:"domain"`
+		Force  bool   `json:"force"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return "", false
+	}
+	return strings.ToLower(strings.TrimSpace(p.Domain)), p.Force
+}
 
 // mergeExtraMountsIntoPayload writes agents.extra_mounts into the
 // command payload so handleSelfUpgrade can act on it without a fresh

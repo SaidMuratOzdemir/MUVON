@@ -353,25 +353,65 @@ func handleRevoke() agentctrl.Handler {
 	}
 }
 
-// handleCertRenew tells the TLS manager to drop its cache for the
-// domain. autocert.Manager will fetch a fresh cert on the next TLS
-// handshake. If the operator wants the cert proactively, they can
-// follow up with a no-op HTTPS request from outside.
+// handleCertRenew renews a certificate and reports what actually happened.
+//
+// The previous version only dropped the in-memory cache and reported success
+// with "next handshake will renew". autocert goes back to the CA only when its
+// cached certificate is missing or near expiry, so for a still-valid domain
+// nothing was renewed and the operator was told otherwise. That is exactly how
+// nine renew commands once came back succeeded with no certificate changed.
+//
+// Without force we renew only when it is due (or when nothing is cached);
+// otherwise we report the expiry we found and leave it alone, because
+// discarding a healthy certificate spends a Let's Encrypt issuance and briefly
+// leaves the domain without one.
 func handleCertRenew(deps agentCommandDeps) agentctrl.Handler {
-	return func(_ context.Context, cmd agentctrl.Command) (agentctrl.Result, error) {
+	return func(ctx context.Context, cmd agentctrl.Command) (agentctrl.Result, error) {
 		var p struct {
 			Domain string `json:"domain"`
+			Force  bool   `json:"force"`
 		}
 		_ = json.Unmarshal(cmd.Payload, &p)
 		if p.Domain == "" {
 			return agentctrl.Result{}, fmt.Errorf("domain required")
 		}
-		if deps.tlsMgr != nil {
-			deps.tlsMgr.InvalidateCache(p.Domain)
+		if deps.tlsMgr == nil {
+			return agentctrl.Result{}, fmt.Errorf("TLS manager unavailable on this agent")
 		}
-		return agentctrl.Result{Output: "cert cache invalidated for " + p.Domain + " (next handshake will renew)"}, nil
+
+		current := deps.tlsMgr.PeekCertificate(ctx, p.Domain)
+		switch {
+		case current == nil:
+			// Nothing cached locally: obtaining one now is pure gain.
+		case p.Force:
+			// Operator asked for it explicitly.
+		case time.Until(current.NotAfter) > certRenewWindow:
+			return agentctrl.Result{Output: fmt.Sprintf(
+				"no renewal needed: %s is valid until %s (source: %s). Renewal happens automatically within %d days of expiry; re-run with force to renew now.",
+				p.Domain, current.NotAfter.UTC().Format(time.RFC3339), current.Source,
+				int(certRenewWindow.Hours()/24))}, nil
+		}
+
+		renewed, err := deps.tlsMgr.ForceRenew(ctx, p.Domain)
+		if err != nil {
+			return agentctrl.Result{}, fmt.Errorf("renewing %s: %w", p.Domain, err)
+		}
+
+		out := fmt.Sprintf("renewed %s, now valid until %s", p.Domain, renewed.NotAfter.UTC().Format(time.RFC3339))
+		if current != nil {
+			out += fmt.Sprintf(" (was %s, source: %s)", current.NotAfter.UTC().Format(time.RFC3339), current.Source)
+		}
+		if current != nil && current.Source == "central" {
+			out += ". The central store still holds the previous certificate and it wins on the serving path, so delete it there for this one to be served."
+		}
+		return agentctrl.Result{Output: out}, nil
 	}
 }
+
+// certRenewWindow mirrors autocert's default RenewBefore: inside this window a
+// certificate is due and renewing is routine, outside it a renewal is a
+// deliberate act that costs an issuance.
+const certRenewWindow = 30 * 24 * time.Hour
 
 // handleContainerRestart restarts a managed container by ID. Used
 // for edge-deployed components where the agent owns the Docker socket.

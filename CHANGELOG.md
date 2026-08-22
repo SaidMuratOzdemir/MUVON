@@ -44,6 +44,18 @@ düzeltmesi. Yedekleme kusuru veri kaybı riski taşıdığı için önce onu ok
   devam etmek yerine duruyor. **Elinizdeki eski `pgdata-*.dump` dosyalarına
   güvenmeyin; `pg_restore -l` ile teker teker doğrulayın.**
 
+- **"Sertifikayı yenile" komutu sertifika yenilemiyordu.** Komut yalnızca
+  bellek içi önbelleği temizleyip "bir sonraki handshake'te yenilenecek"
+  diyerek başarı bildiriyordu. Sertifika hâlâ geçerliyken autocert yeniden
+  sertifika almaz, yani hiçbir şey olmuyordu. Bir üretim sunucusunda dokuz
+  komut da başarılı döndü ve tek bir sertifika yenilenmedi; gerçek yenileme
+  ancak merkezdeki kayıt elle silinince gerçekleşti. Artık komut bitişe 30
+  günden az kaldıysa sertifikayı hemen alıyor, kalmadıysa hiçbir şey yapmadan
+  bulduğu bitiş tarihini bildiriyor. Erken yenileme istenirse "zorla" seçeneği
+  var: bu durumda merkezdeki kayıt da bırakılıyor, çünkü servis yolunda o kopya
+  öncelikli ve silinmeden yeni sertifika kullanılmıyor. Zorlamanın Let's
+  Encrypt kotasından düştüğü ve kısa bir kesinti yarattığı panelde yazıyor.
+
 - **Servis ayarlarını düzenlemek çalışan container'ı değiştirmiyordu, panel de
   bunu söylemiyordu.** env değişkenleri, ağlar, mount'lar ve komut container
   yaratılırken uygulanır. Kaydedince form yeni değeri gösteriyor, container ise
