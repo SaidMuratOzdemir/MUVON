@@ -23,6 +23,17 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+Henüz birikme yok.
+
+---
+
+## [0.2.0] - 2026-08-22
+
+Ziyaretçi konumunun kaynağı değişti: yerel MaxMind veritabanı kaldırıldı,
+yerini Cloudflare'in ziyaretçi başlıkları aldı. Minor sürüm, çünkü bir özellik
+kaldırılıyor ve Cloudflare arkasında olmayan kurulumlar konum bilgisini
+tamamen kaybediyor. Bir şema migration'ı var, eklemeli.
+
 ### BREAKING
 
 - **Yerel GeoIP veritabanı kaldırıldı; konum artık Cloudflare'den geliyor.**
@@ -33,18 +44,44 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   sırrını taşımalı. Aksi halde herkes kendi ülkesini seçebilirdi.
 
   **Etkisi:** `geoip_enabled` ve `geoip_db_path` ayarları, Ayarlar sayfasındaki
-  GeoIP bölümü, panosundaki "GeoIP çalışmıyor" uyarı bandı, `geoip` volume'ü ve
+  GeoIP bölümü, panodaki "GeoIP çalışmıyor" uyarı bandı, `geoip` volume'ü ve
   kurulum script'indeki MaxMind lisans adımı kaldırıldı. `country` ve `city`
-  kolonları duruyor, artık yeni kaynaktan doluyor. Cloudflare arkasında olmayan
-  host'larda konum boş kalır, çünkü isteği başka hiçbir şey bilmiyor.
+  kolonları duruyor: eski satırlar olduğu gibi kalır, yeni satırları artık
+  Cloudflare doldurur. Cloudflare arkasında olmayan host'larda konum boş kalır,
+  çünkü isteği başka hiçbir şey bilmiyor.
 
-  Şehir bilgisinin gelmesi için Cloudflare'de **Managed Transforms → Add
-  visitor location headers** açık olmalı. Ölçtüğümüz kadarıyla mevcut
-  zone'larda zaten açık: `CF-IPCity`, `CF-Region`, `CF-IPCountry` origin'e
-  ulaşıyor ve dolu geliyor.
+### Upgrade notları
 
-  Kaybedilen veri yok: GeoIP üretimde hiç etkin edilmemişti, 838 bin kayıtta
-  tek bir ülke veya şehir değeri üretmemişti.
+Konumun dolması için proxy'lediğiniz her Cloudflare zone'unda iki şey gerekir:
+
+1. **Managed Transforms → Add visitor location headers** açık olmalı.
+   `CF-IPCountry` ve `CF-IPCity` bunu gerektirir.
+2. **Transform Rules → Modify Request Header → Set static** ile paylaşılan sır
+   başlığı eklenmeli: ad `X-Muvon-CF-Key` (veya `AGENT_CLOUDFLARE_IP_HEADER` /
+   `MUVON_CLOUDFLARE_IP_HEADER` ile değiştirdiğiniz ad), değer o host'u
+   sonlandıran binary'nin sırrı: edge host'lar için ilgili agent'ın
+   `AGENT_CLOUDFLARE_IP_SECRET` değeri, central host'lar için
+   `MUVON_CLOUDFLARE_IP_SECRET`.
+
+İkinci madde zaten gerçek istemci IP'si için de gerekliydi; eksikse MUVON
+isteği güvenilmez sayar, log'lara Cloudflare edge IP'si düşer ve konum boş
+kalır. **Sır her agent'ta ayrıdır**, bir zone'daki kuralı başka bir agent'ın
+domain'ine kopyalamak sessizce çalışmaz.
+
+Cloudflare kullanmıyorsanız bu sürümden sonra ülke ve şehir alanları boş
+kalır. GeoLite dosyanız artık okunmuyor; `muvon_geoip` volume'ü elle
+silinebilir.
+
+Migration eklemeli çalışır: `geoip_enabled` ve `geoip_db_path` satırları
+`settings` tablosundan silinir. Şema değişikliği yoktur.
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.2.0
+
+# Agent:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.2.0
+```
 
 ---
 
