@@ -23,7 +23,28 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-Henüz birikme yok.
+### BREAKING
+
+- **Yerel GeoIP veritabanı kaldırıldı; konum artık Cloudflare'den geliyor.**
+  MUVON, ülke ve şehir bilgisini MaxMind GeoLite2 dosyasından okumayı bıraktı.
+  Bunun yerine Cloudflare'in ziyaretçi konum başlıklarını (`CF-IPCountry`,
+  `CF-IPCity`) kenarda damgalıyor; güven modeli istemci IP'siyle aynı, yani
+  istek hem bir Cloudflare edge'inden gelmeli hem de operatörün paylaşılan
+  sırrını taşımalı. Aksi halde herkes kendi ülkesini seçebilirdi.
+
+  **Etkisi:** `geoip_enabled` ve `geoip_db_path` ayarları, Ayarlar sayfasındaki
+  GeoIP bölümü, panosundaki "GeoIP çalışmıyor" uyarı bandı, `geoip` volume'ü ve
+  kurulum script'indeki MaxMind lisans adımı kaldırıldı. `country` ve `city`
+  kolonları duruyor, artık yeni kaynaktan doluyor. Cloudflare arkasında olmayan
+  host'larda konum boş kalır, çünkü isteği başka hiçbir şey bilmiyor.
+
+  Şehir bilgisinin gelmesi için Cloudflare'de **Managed Transforms → Add
+  visitor location headers** açık olmalı. Ölçtüğümüz kadarıyla mevcut
+  zone'larda zaten açık: `CF-IPCity`, `CF-Region`, `CF-IPCountry` origin'e
+  ulaşıyor ve dolu geliyor.
+
+  Kaybedilen veri yok: GeoIP üretimde hiç etkin edilmemişti, 838 bin kayıtta
+  tek bir ülke veya şehir değeri üretmemişti.
 
 ---
 

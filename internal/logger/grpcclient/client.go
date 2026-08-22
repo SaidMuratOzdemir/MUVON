@@ -272,7 +272,7 @@ func (r *RemoteLogSink) GetLogRawJWT(ctx context.Context, requestID string) (*pb
 	return r.client.GetLogRawJWT(ctx, &pb.GetLogRawJWTRequest{RequestId: requestID})
 }
 
-// EnrichmentStatus reports whether GeoIP / JWT identity enrichment are
+// EnrichmentStatus reports whether JWT identity enrichment is
 // loaded on the diaLOG side. Used by the admin /api/system/health handler
 // to render an actionable banner when an enrichment feature is configured
 // but not actually working.
@@ -319,6 +319,8 @@ func clientEventBatchToProto(b logger.ClientEventBatch) *pb.ClientEventBatch {
 		HostId:    b.HostID,
 		ClientIp:  b.ClientIP,
 		UserAgent: b.UserAgent,
+		Country:   b.Country,
+		City:      b.City,
 		Events:    make([]*pb.ClientEvent, 0, len(b.Events)),
 	}
 	if !b.ReceivedAt.IsZero() {

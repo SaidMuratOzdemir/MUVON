@@ -303,6 +303,10 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	}
 
 	elapsed := time.Since(start)
+	// Location comes from Cloudflare, under the same trust gate as the client
+	// IP. Hosts that are not behind Cloudflare carry no location at all, which
+	// is honest: nothing else on the request knows where the visitor is.
+	country, city := CloudflareLocation(r)
 	entry := logger.Entry{
 		RequestID:      reqID,
 		Timestamp:      start,
@@ -316,6 +320,8 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 		UserAgent:      r.UserAgent(),
 		TraceID:        traceID,
 		SpanID:         spanID,
+		Country:        country,
+		City:           city,
 	}
 
 	if reqCapture != nil {

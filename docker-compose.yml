@@ -55,7 +55,6 @@ services:
       MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:-}
     volumes:
       - sockets:/run/muvon
-      - geoip:/var/lib/geoip:ro
     logging:
       driver: json-file
       options:
@@ -177,7 +176,6 @@ services:
 volumes:
   pgdata:       # PostgreSQL data — never deleted by compose down (use down -v explicitly)
   tls_cache:    # ACME TLS certificates
-  geoip:        # GeoLite2-City.mmdb — seeded by install.sh if MaxMind key is provided
   logship_spool: # On-disk fallback for container log batches when dialog-siem is down
   backups:      # pg_dump -Fc snapshots written by SystemUpgrade flow
   sockets:      # Unix sockets shared between services (tmpfs — ephemeral, world-writable)

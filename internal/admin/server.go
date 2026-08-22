@@ -314,22 +314,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enrichment health is reported separately from "logging" because diaLOG
-	// can be reachable while a sub-feature (GeoIP file mistyped, JWT off) is
-	// silently broken. Surfacing the sub-state lets the admin UI show an
-	// actionable banner pointing at the feature, not just "logging: ok".
+	// can be reachable while a sub-feature (JWT identity off, or configured
+	// with a secret that never matches) is silently doing nothing. Surfacing
+	// the sub-state lets the admin UI point at the feature, not just say
+	// "logging: ok".
 	if s.logClient != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if es, err := s.logClient.EnrichmentStatus(ctx); err == nil && es != nil {
-			enrich := map[string]any{
-				"geoip_state":               es.GeoipState,
-				"geoip_path":                es.GeoipPath,
-				"geoip_error":               es.GeoipError,
-				"geoip_loaded_at":           es.GeoipLoadedAt,
-				"jwt_identity_state":        es.JwtIdentityState,
-				"jwt_identity_host_count":   es.JwtIdentityHostOverrides,
+			resp["enrichment"] = map[string]any{
+				"jwt_identity_state":      es.JwtIdentityState,
+				"jwt_identity_host_count": es.JwtIdentityHostOverrides,
 			}
-			resp["enrichment"] = enrich
 		}
 	}
 

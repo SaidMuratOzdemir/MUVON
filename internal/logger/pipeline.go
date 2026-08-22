@@ -10,8 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// GeoEnricher resolves a client IP to country and city.
-type GeoEnricher func(ip string) (country, city string)
 
 // IdentityEnricher extracts JWT identity from a raw bearer-style header.
 // The host is passed alongside the header value so the caller can pick a
@@ -44,19 +42,10 @@ type Pipeline struct {
 	subMu      sync.RWMutex
 	subs       map[chan Entry]struct{}
 
-	enrichMu       sync.RWMutex
-	geoFn          GeoEnricher
-	jwtFn          IdentityEnricher
-	jwtHeaderFn    IdentityHeaderResolver
-	rawTokenFn     RawTokenPolicy
-}
-
-// SetGeoEnricher sets the function used to resolve IPs to country/city.
-// Safe to call after pipeline creation (e.g. after GeoIP DB loads).
-func (p *Pipeline) SetGeoEnricher(fn GeoEnricher) {
-	p.enrichMu.Lock()
-	p.geoFn = fn
-	p.enrichMu.Unlock()
+	enrichMu    sync.RWMutex
+	jwtFn       IdentityEnricher
+	jwtHeaderFn IdentityHeaderResolver
+	rawTokenFn  RawTokenPolicy
 }
 
 // SetIdentityEnricher sets the function used to extract JWT identity from
@@ -109,18 +98,15 @@ func (p *Pipeline) Send(entry Entry) {
 		return
 	}
 
-	// Enrich with GeoIP and JWT identity — happens centrally here so
-	// both hub-local and agent-forwarded logs are treated identically.
+	// JWT identity is enriched centrally so hub-local and agent-forwarded
+	// logs are treated identically. Location is not: it comes from Cloudflare
+	// and only the edge that terminated the request can read those headers.
 	p.enrichMu.RLock()
-	geoFn := p.geoFn
 	jwtFn := p.jwtFn
 	headerFn := p.jwtHeaderFn
 	rawFn := p.rawTokenFn
 	p.enrichMu.RUnlock()
 
-	if geoFn != nil && entry.Country == "" {
-		entry.Country, entry.City = geoFn(entry.ClientIP)
-	}
 	if jwtFn != nil && entry.UserIdentity == nil {
 		header := "Authorization"
 		if headerFn != nil {

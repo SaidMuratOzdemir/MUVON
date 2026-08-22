@@ -69,7 +69,7 @@ func (h *Holder) Version() string {
 // The reload runs unconditionally on a 5-second background timer in both the
 // MUVON and diaLOG processes; without a digest check the same unchanged
 // snapshot was reapplied 12× per minute, spamming logs and re-triggering
-// every OnReload subscriber (GeoIP reopen, ...). We hash the source-derived
+// every OnReload subscriber. We hash the source-derived
 // snapshot and skip both the swap and the callbacks when nothing changed.
 // The first call (after Init) always proceeds because lastDigest starts nil.
 func (h *Holder) Reload(ctx context.Context) error {

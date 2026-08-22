@@ -71,9 +71,6 @@ type GlobalConfig struct {
 	JWTClaims          []string // claim keys to extract
 	JWTSecret          string   // HS256 secret (write-only in UI)
 
-	// GeoIP settings
-	GeoIPEnabled bool
-	GeoIPDBPath  string
 
 	// Alerting settings
 	AlertingEnabled         bool
@@ -227,10 +224,6 @@ func loadGlobalConfig(ctx context.Context, database *db.DB, box *secret.Box) (Gl
 	}
 	g.JWTSecret = decryptSetting(box, getStrSetting(settings, "jwt_secret", ""), "jwt_secret")
 
-	// GeoIP
-	g.GeoIPEnabled = getBoolSetting(settings, "geoip_enabled", false)
-	g.GeoIPDBPath = getStrSetting(settings, "geoip_db_path", "")
-
 	// Alerting
 	g.AlertingEnabled = getBoolSetting(settings, "alerting_enabled", false)
 	g.AlertingSlackWebhook = getStrSetting(settings, "alerting_slack_webhook", "")
@@ -372,7 +365,7 @@ func getStrSetting(m map[string]json.RawMessage, key string, def string) string 
 
 // unquoteJSON pulls a string out of a JSONB settings cell and trims surrounding
 // whitespace. Trim happens here on purpose: the admin panel forgives a trailing
-// space in a path or hostname, but downstream consumers (geoip.Open, ACME host
+// space in a path or hostname, but downstream consumers (ACME host
 // policy, regex compilers) treat the literal value and a leaked space silently
 // disables the feature. Numeric/bool getters layered on top inherit the same
 // trim, which is also safe — strconv parsers reject whitespace anyway.

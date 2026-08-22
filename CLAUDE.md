@@ -59,6 +59,8 @@ All services import from the same `muvon` Go module but each one only touches it
 ### Proxy pipeline (`internal/proxy`)
 Per request: resolve host → match route by longest path prefix → proxy/static/redirect/accel → if `log_enabled`, async-ship log entry to diaLOG via `logclient`. `accel.go` handles both `X-Accel-Redirect` (backend sets header) and pre-signed serve (`?token=<hmac>&expires=<unix>` where token is `HMAC-SHA256(secret, path+":"+expires)`).
 
+**Visitor location.** `country` and `city` on `http_logs` and `client_events` are stamped at the edge from Cloudflare's `CF-IPCountry` / `CF-IPCity` headers (`CloudflareLocation` in `internal/proxy/cloudflare.go`), behind the same gate as `CF-Connecting-IP`: the peer must be a Cloudflare edge and the request must carry the operator's shared secret. Any client can send those headers, so without that check a visitor could choose the country attributed to them. Hosts not behind Cloudflare carry no location, and the values require Cloudflare's "Add visitor location headers" managed transform. The local MaxMind reader (`internal/geoip`, the `geoip_*` settings, the `geoip` volume, the installer's MaxMind step) was removed in v0.1.53 — it had produced zero rows in production because it was never enabled.
+
 ### Managed deploy (hybrid topology)
 Routes can bind to a managed component. The proxy selects only `active` instances (never warming/draining). The deploy lifecycle — image pull → migration container → candidate start → health check → atomic promote (old `active` → `draining`, candidate → `active`) → graceful drain — is shared code in `internal/deployer/service.go`, sitting behind a `State` interface:
 
@@ -121,7 +123,7 @@ Pipeline sizing (`log_pipeline_buffer`, `log_worker_count`, `log_batch_size`, `l
 - **Fail-open behavior is load-bearing.** When adding a new dependency on diaLOG in the MUVON proxy path, the call must not block traffic on socket failure — log and continue.
 - **Selective body forwarding**: bodies are only captured for POST/PUT/PATCH. Don't add body inspection to GET/HEAD/DELETE paths.
 - **`frontend/dist/` is generated** by `make ui-build`; the Makefile wipes and repopulates it. Do not edit files inside it.
-- The repo root has a few hefty artifacts checked in (`muvon`, `dialog-siem` binaries; `GeoLite2-City.mmdb`, `geo.tar.gz`). These are not build inputs — don't modify, and don't commit new binaries.
+- The repo root may hold leftover local artifacts (`muvon`, `dialog-siem` binaries; `GeoLite2-City.mmdb`, `geo.tar.gz`). They are gitignored, not repo content, and nothing builds from them — don't commit binaries.
 - CI (`.github/workflows/release.yml`) builds all four images in parallel on every push to `main` and publishes to `ghcr.io/SaidMuratOzdemir/MUVON/<service>:latest`. Tag pushes (`v*`) create GitHub Releases.
 
 ## Language note

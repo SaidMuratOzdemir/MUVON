@@ -260,14 +260,9 @@ export interface ServiceHealth {
     database: string;
     logging: string;
   };
-  // Reported by diaLOG when reachable. The admin UI uses these to surface
-  // "GeoIP enabled but failing" as a banner instead of leaving country/user
-  // columns silently empty. Absent when diaLOG is unavailable.
+  // Reported by diaLOG when reachable, so the panel can tell a configured
+  // feature apart from a working one. Absent when diaLOG is unavailable.
   enrichment?: {
-    geoip_state: 'disabled' | 'ok' | 'error';
-    geoip_path: string;
-    geoip_error: string;
-    geoip_loaded_at: string;
     jwt_identity_state: 'disabled' | 'ok';
     jwt_identity_host_count: number;
   };

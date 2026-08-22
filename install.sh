@@ -2,7 +2,7 @@
 # MUVON Kurulum + Güncelleme Scripti
 #
 # Tek script, iki rol:
-#   • İlk kurulum  — .env yoksa interaktif olarak admin/şifre/MaxMind sorar
+#   • İlk kurulum  — .env yoksa interaktif olarak admin/şifre sorar
 #   • Güncelleme   — .env varsa secret'ları korur, yalnız yeni satırları
 #                    ekler, image pull + DB backup + compose up yapar
 #
@@ -224,14 +224,6 @@ if [ "$MODE" = "install" ]; then
     fi
   done
 
-  echo ""
-  echo "── GeoIP (isteğe bağlı) ──────────────────────────────────────────────"
-  echo ""
-  echo "  MaxMind GeoLite2-City — IP bazlı ülke/şehir bilgisi."
-  echo "  Ücretsiz lisans: https://www.maxmind.com/en/geolite2/signup"
-  echo "  Atlamak için Enter'a basın."
-  echo ""
-  _ask "  MaxMind Lisans Anahtarı: " MAXMIND_KEY
 else
   # Update modu — kullanıcıdan en az şey iste
   echo ""
@@ -342,29 +334,6 @@ while IFS= read -r line; do
   fi
 done < .env.example
 
-# ── GeoIP (ilk kurulumda) ─────────────────────────────────────────────────
-if [ "$MODE" = "install" ] && [ -n "$MAXMIND_KEY" ]; then
-  status "GEOIP" "GeoLite2-City indiriliyor..."
-  GEOIP_URL="https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&license_key=${MAXMIND_KEY}&suffix=tar.gz"
-  if wget -q "$GEOIP_URL" -O geo.tar.gz 2>/dev/null; then
-    tar -xzf geo.tar.gz --wildcards '*.mmdb' --strip-components=1
-    if [ -f GeoLite2-City.mmdb ]; then
-      docker volume create muvon_geoip 2>/dev/null || true
-      docker run --rm \
-        -v muvon_geoip:/data \
-        -v "$INSTALL_DIR/GeoLite2-City.mmdb:/src/GeoLite2-City.mmdb:ro" \
-        alpine sh -c "cp /src/GeoLite2-City.mmdb /data/GeoLite2-City.mmdb"
-      rm -f geo.tar.gz GeoLite2-City.mmdb
-      status "GEOIP" "Hazır. Admin panelinden etkinleştirin: geoip_enabled = true"
-    else
-      rm -f geo.tar.gz
-      status "GEOIP" "mmdb dosyası bulunamadı, atlandı."
-    fi
-  else
-    rm -f geo.tar.gz 2>/dev/null || true
-    status "GEOIP" "İndirilemedi (lisans anahtarı hatalı?), atlandı."
-  fi
-fi
 
 # ── Update modunda DB backup ─────────────────────────────────────────────
 if [ "$MODE" = "update" ]; then

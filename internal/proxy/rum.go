@@ -151,6 +151,7 @@ func (h *Handler) ingestRUM(r *http.Request, hc *config.HostConfig) {
 		UserAgent:  r.UserAgent(),
 		ReceivedAt: time.Now(),
 	}
+	batch.Country, batch.City = CloudflareLocation(r)
 	for _, ev := range p.Events {
 		if ev.EventName == "" {
 			continue

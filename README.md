@@ -66,7 +66,7 @@ Each service is a standalone binary with its own database schema. They share a s
 
 | Service | What it does |
 |---------|-------------|
-| **MUVON** | Central server. Terminates TLS (auto Let's Encrypt or manual PEM), resolves virtual hosts, matches routes by path prefix, and proxies to upstreams. Serves the admin panel on `:443` for the configured `MUVON_ADMIN_DOMAIN` (falls back to `:9443` when no domain is set, for local dev). Enriches every log entry with **JWT identity** (verify + decode fallback) and **GeoIP** (country/city from local MaxMind DB). Provides config API and SSE watch endpoint for agents. Also runs the **cron scheduler** that enqueues due scheduled-job runs for the deployer to execute. |
+| **MUVON** | Central server. Terminates TLS (auto Let's Encrypt or manual PEM), resolves virtual hosts, matches routes by path prefix, and proxies to upstreams. Serves the admin panel on `:443` for the configured `MUVON_ADMIN_DOMAIN` (falls back to `:9443` when no domain is set, for local dev). Enriches every log entry with **JWT identity** (verify + decode fallback); visitor country and city are stamped at the edge from Cloudflare's headers. Provides config API and SSE watch endpoint for agents. Also runs the **cron scheduler** that enqueues due scheduled-job runs for the deployer to execute. |
 | **agent** | Lightweight edge binary deployed on client servers. Pulls config from central MUVON on startup, watches for changes via SSE (hot reload). Proxies traffic using the central-managed host/route config. Sends logs to central diaLOG over TCP gRPC. No database, no admin panel — zero local state except ACME cert cache + an optional config snapshot for fail-soft cold-start (`AGENT_CONFIG_CACHE`). When `AGENT_DEPLOYER_ENABLED=true` it also runs the same managed-deploy lifecycle as `muvon-deployer` against its local Docker socket, with central reached via `/api/v1/agent/deployer/*` instead of a direct DB connection. |
 | **diaLOG** | Receives structured log entries from MUVON or remote agents via gRPC (Unix socket for local, TCP for agents), buffers them in a Go channel, and flushes in batches using PostgreSQL `COPY FROM` for throughput. Stores logs in TimescaleDB Hypertables with UUIDv7 primary keys. Provides BM25 full-text search (via pg_search/Tantivy) across path, host, user-agent, and IP fields. Exposes SSE live tail for real-time monitoring. Runs a **correlation engine** that detects attack patterns (brute force, scanning, error spikes) in real time and triggers **alerts** via Slack and email. |
 | **muvon-deployer** | A separate worker process that owns the Docker socket. Polls the database for pending deployment jobs and executes the full deploy lifecycle: image pull → one-off migration container → candidate container start → health check with restart retries → atomic promote (old active → draining, candidate → active) → graceful drain. The same loop also executes pending **scheduled job runs** (cron) in bounded background workers. Isolates host-level Docker access from the proxy and admin processes. |
@@ -307,7 +307,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | SSE Live Tail | Real-time log stream over Server-Sent Events |
 | Body Capture | Configurable max size (default 64KB), truncation flag |
 | JWT Identity Enrichment | Per-host verify/decode, claim extraction |
-| GeoIP Enrichment | MaxMind GeoLite2 country/city lookup |
+| Visitor Location | Country and city from Cloudflare's visitor headers, trusted only through the operator's own zone |
 | Correlation Engine | path_scan, auth_brute, error_spike, traffic_anomaly, sensitive_access, data_export_burst |
 | Alerting | Slack webhook + SMTP, per-fingerprint cooldown |
 | Container Logs | stdout/stderr capture from managed containers, dimension table for picker |
@@ -329,7 +329,7 @@ React 19 + Vite 8 + shadcn/ui. Bundled into the `muvon` binary via `//go:embed`.
 | Uygulamalar | `/apps` | Central-hosted apps (services on the MUVON server); wizard, env editor, CI/CD snippets, rollback, pause |
 | Uzak Uygulamalar | `/apps/edge` | Same UI filtered to apps whose services run on an agent host |
 | Agents | `/agents` | API key management for hub-and-spoke setups (plaintext key revealed once on create) |
-| Settings | `/settings` | Global settings (alerting, JWT, GeoIP, retention, central public_ip) |
+| Settings | `/settings` | Global settings (retention, telemetry sampling, TLS/ACME, JWT, alerting, correlation) |
 | TLS | `/tls` | Manual PEM upload, ACME cert listing |
 | Audit | `/audit` | Admin audit log |
 | Settings → Sistem | `/settings` (üst panel) | One-click upgrade panel: running vs GHCR digest comparison, tag picker (`latest`/`v0`/`v0.1`/custom), DB backup toggle, inline CHANGELOG preview, live SSE progress |
@@ -421,7 +421,6 @@ internal/
   correlation/        Real-time correlation engine (sliding window rules, alerts)
   db/                 PostgreSQL pool, migrations, query helpers
   deployer/           Docker client, deploy lifecycle, gRPC server/client
-  geoip/              MaxMind GeoLite2 reader
   health/             Backend health manager + circuit breaker
   identity/           JWT verify/decode + per-host claim extraction
   logger/             Pipeline + worker (COPY FROM batches), gRPC server/client, log entries

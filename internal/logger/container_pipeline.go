@@ -10,7 +10,7 @@ import (
 )
 
 // ContainerPipeline mirrors Pipeline for container stdout/stderr lines.
-// Lighter than the http path: no GeoIP/JWT enrichment, no body fan-out,
+// Lighter than the http path: no JWT enrichment, no body fan-out,
 // but still does drop-on-overflow with counters and an SSE-friendly
 // Subscribe()/Unsubscribe() so the admin live-tail bridge can splice in
 // without paying the gRPC round-trip cost on each line.

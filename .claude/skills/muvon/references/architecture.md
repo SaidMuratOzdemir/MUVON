@@ -148,7 +148,6 @@ internal/
   correlation/     — anomaly/error-spike/auth-brute/export-burst
   db/              — pgx pool, migrations
   deployer/        — managed deploy worker, logship, gRPC
-  geoip/           — MaxMind reader
   health/          — health/stats handlers
   identity/        — JWT identity extraction (kuryeden JWT user_id çıkar)
   logger/          — log enqueue → diaLOG

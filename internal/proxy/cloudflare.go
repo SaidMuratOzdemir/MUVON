@@ -52,6 +52,33 @@ func SetCloudflareTrust(header, secret string) {
 
 // cloudflareTrustedRequest reports whether the request carries the operator's
 // configured Cloudflare shared secret. Disabled (false) when no secret is set.
+// CloudflareLocation returns the visitor's country and city as reported by
+// Cloudflare, or empty strings when the request did not arrive through the
+// operator's own Cloudflare zone.
+//
+// The gate is the same one that decides whether CF-Connecting-IP may set the
+// client IP: the direct peer has to be a Cloudflare edge AND the request has to
+// carry the operator's shared secret. Cloudflare's egress addresses are shared
+// across every account, and any client can send a CF-IPCountry header, so
+// without that check a visitor could pick the country attributed to them.
+//
+// The values come from Cloudflare's "Add visitor location headers" managed
+// transform. When it is off the headers are simply absent and the log entry
+// carries no location, which is the same outcome as a host that is not behind
+// Cloudflare at all.
+func CloudflareLocation(r *http.Request) (country, city string) {
+	if !isCloudflareIP(peerHost(r)) || !cloudflareTrustedRequest(r) {
+		return "", ""
+	}
+	country = strings.TrimSpace(r.Header.Get("CF-IPCountry"))
+	// XX marks an address Cloudflare could not place, and T1 marks Tor exits.
+	// Neither is a country, so they are dropped rather than stored as one.
+	if country == "XX" || country == "T1" {
+		country = ""
+	}
+	return country, strings.TrimSpace(r.Header.Get("CF-IPCity"))
+}
+
 func cloudflareTrustedRequest(r *http.Request) bool {
 	sp := cfTrustSecret.Load()
 	if sp == nil || *sp == "" {

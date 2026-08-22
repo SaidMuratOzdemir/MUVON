@@ -16,7 +16,7 @@ import (
 // resolve host-scoped JWT claim priority without baking it in here.
 type ConfigFunc func() *config.Config
 
-// EnrichmentStatusFunc returns a snapshot of GeoIP/JWT enrichment health for
+// EnrichmentStatusFunc returns a snapshot of JWT enrichment health for
 // the admin panel. Optional — a nil func means GetEnrichmentStatus reports
 // "disabled" for both signals, which is the correct behaviour when the host
 // process has not wired up enrichment at all (e.g. minimal builds).
@@ -300,23 +300,16 @@ func (s *Server) GetLogRawJWT(ctx context.Context, req *pb.GetLogRawJWTRequest) 
 
 // --- Enrichment health ---
 
-// GetEnrichmentStatus reports whether GeoIP / JWT identity enrichment are
-// actually loaded. The admin panel uses this to surface "GeoIP enabled but
-// failing to load" as a visible warning instead of empty country columns.
+// GetEnrichmentStatus reports whether JWT identity enrichment is actually
+// loaded, so the admin panel can tell "configured" apart from "working".
 func (s *Server) GetEnrichmentStatus(_ context.Context, _ *pb.EnrichmentStatusRequest) (*pb.EnrichmentStatusResponse, error) {
 	if s.enrichStatusFn == nil {
-		return &pb.EnrichmentStatusResponse{
-			GeoipState:        "disabled",
-			JwtIdentityState:  "disabled",
-		}, nil
+		return &pb.EnrichmentStatusResponse{JwtIdentityState: "disabled"}, nil
 	}
 	if resp := s.enrichStatusFn(); resp != nil {
 		return resp, nil
 	}
-	return &pb.EnrichmentStatusResponse{
-		GeoipState:        "disabled",
-		JwtIdentityState:  "disabled",
-	}, nil
+	return &pb.EnrichmentStatusResponse{JwtIdentityState: "disabled"}, nil
 }
 
 // --- Stream ---

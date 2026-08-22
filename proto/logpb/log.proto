@@ -110,7 +110,7 @@ message LogEntry {
   // Identity enrichment (JWT)
   UserIdentity user_identity = 24;
 
-  // GeoIP enrichment
+  // Visitor location, stamped by the edge from Cloudflare's headers.
   string country             = 25;
   string city                = 26;
 
@@ -248,12 +248,12 @@ message GetLogRawJWTResponse {
 }
 
 message EnrichmentStatusResponse {
-  // GeoIP — file-backed MaxMind reader.
-  // state ∈ {"disabled","ok","error"}.
-  string geoip_state          = 1;
-  string geoip_path           = 2;  // path the loader tried (post-trim)
-  string geoip_error          = 3;  // last error if state == "error"
-  string geoip_loaded_at      = 4;  // RFC3339, empty when not loaded
+  // 1-4 held the GeoIP loader's state, path, error and load time. Location now
+  // comes from Cloudflare's visitor headers at the edge, so there is no local
+  // database to be healthy or broken. Reserved so the numbers are never reused
+  // with a different meaning.
+  reserved 1, 2, 3, 4;
+  reserved "geoip_state", "geoip_path", "geoip_error", "geoip_loaded_at";
 
   // JWT identity — global toggle plus a non-zero indicator that some host
   // override is active. We do not return secrets here.
@@ -335,6 +335,11 @@ message ClientEventBatch {
   string client_ip   = 10;
   string user_agent  = 11;
   string received_at = 12;  // RFC3339Nano, edge server-receive time
+  // Visitor location as Cloudflare reported it, stamped by the edge under the
+  // same trust gate as client_ip. Empty for hosts that are not behind
+  // Cloudflare; never taken from the browser payload.
+  string country     = 13;
+  string city        = 14;
   repeated ClientEvent events = 20;
 }
 

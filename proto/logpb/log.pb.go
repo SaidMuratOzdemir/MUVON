@@ -44,7 +44,7 @@ type LogEntry struct {
 	IsResponseTruncated bool                   `protobuf:"varint,19,opt,name=is_response_truncated,json=isResponseTruncated,proto3" json:"is_response_truncated,omitempty"`
 	// Identity enrichment (JWT)
 	UserIdentity *UserIdentity `protobuf:"bytes,24,opt,name=user_identity,json=userIdentity,proto3" json:"user_identity,omitempty"`
-	// GeoIP enrichment
+	// Visitor location, stamped by the edge from Cloudflare's headers.
 	Country string `protobuf:"bytes,25,opt,name=country,proto3" json:"country,omitempty"`
 	City    string `protobuf:"bytes,26,opt,name=city,proto3" json:"city,omitempty"`
 	// W3C Trace Context — lowercase hex, 32-char trace-id + 16-char span-id.
@@ -1322,12 +1322,6 @@ func (x *GetLogRawJWTResponse) GetHost() string {
 
 type EnrichmentStatusResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// GeoIP — file-backed MaxMind reader.
-	// state ∈ {"disabled","ok","error"}.
-	GeoipState    string `protobuf:"bytes,1,opt,name=geoip_state,json=geoipState,proto3" json:"geoip_state,omitempty"`
-	GeoipPath     string `protobuf:"bytes,2,opt,name=geoip_path,json=geoipPath,proto3" json:"geoip_path,omitempty"`               // path the loader tried (post-trim)
-	GeoipError    string `protobuf:"bytes,3,opt,name=geoip_error,json=geoipError,proto3" json:"geoip_error,omitempty"`            // last error if state == "error"
-	GeoipLoadedAt string `protobuf:"bytes,4,opt,name=geoip_loaded_at,json=geoipLoadedAt,proto3" json:"geoip_loaded_at,omitempty"` // RFC3339, empty when not loaded
 	// JWT identity — global toggle plus a non-zero indicator that some host
 	// override is active. We do not return secrets here.
 	JwtIdentityState         string `protobuf:"bytes,5,opt,name=jwt_identity_state,json=jwtIdentityState,proto3" json:"jwt_identity_state,omitempty"` // "disabled" | "ok"
@@ -1364,34 +1358,6 @@ func (x *EnrichmentStatusResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use EnrichmentStatusResponse.ProtoReflect.Descriptor instead.
 func (*EnrichmentStatusResponse) Descriptor() ([]byte, []int) {
 	return file_proto_logpb_log_proto_rawDescGZIP(), []int{17}
-}
-
-func (x *EnrichmentStatusResponse) GetGeoipState() string {
-	if x != nil {
-		return x.GeoipState
-	}
-	return ""
-}
-
-func (x *EnrichmentStatusResponse) GetGeoipPath() string {
-	if x != nil {
-		return x.GeoipPath
-	}
-	return ""
-}
-
-func (x *EnrichmentStatusResponse) GetGeoipError() string {
-	if x != nil {
-		return x.GeoipError
-	}
-	return ""
-}
-
-func (x *EnrichmentStatusResponse) GetGeoipLoadedAt() string {
-	if x != nil {
-		return x.GeoipLoadedAt
-	}
-	return ""
 }
 
 func (x *EnrichmentStatusResponse) GetJwtIdentityState() string {
@@ -1780,20 +1746,25 @@ func (x *ClientEvent) GetAttrs() map[string]string {
 // host/host_id/client_ip/user_agent/received_at are stamped by the edge and
 // never trusted from the client.
 type ClientEventBatch struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	App           string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
-	Release       string                 `protobuf:"bytes,2,opt,name=release,proto3" json:"release,omitempty"`
-	Sdk           string                 `protobuf:"bytes,3,opt,name=sdk,proto3" json:"sdk,omitempty"`
-	SessionId     string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	ViewId        string                 `protobuf:"bytes,5,opt,name=view_id,json=viewId,proto3" json:"view_id,omitempty"`
-	Route         string                 `protobuf:"bytes,6,opt,name=route,proto3" json:"route,omitempty"`
-	UrlPath       string                 `protobuf:"bytes,7,opt,name=url_path,json=urlPath,proto3" json:"url_path,omitempty"`
-	Host          string                 `protobuf:"bytes,8,opt,name=host,proto3" json:"host,omitempty"`                   // vhost the beacon hit
-	HostId        string                 `protobuf:"bytes,9,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"` // "central" or agent UUID
-	ClientIp      string                 `protobuf:"bytes,10,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
-	UserAgent     string                 `protobuf:"bytes,11,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
-	ReceivedAt    string                 `protobuf:"bytes,12,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"` // RFC3339Nano, edge server-receive time
-	Events        []*ClientEvent         `protobuf:"bytes,20,rep,name=events,proto3" json:"events,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	App        string                 `protobuf:"bytes,1,opt,name=app,proto3" json:"app,omitempty"`
+	Release    string                 `protobuf:"bytes,2,opt,name=release,proto3" json:"release,omitempty"`
+	Sdk        string                 `protobuf:"bytes,3,opt,name=sdk,proto3" json:"sdk,omitempty"`
+	SessionId  string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ViewId     string                 `protobuf:"bytes,5,opt,name=view_id,json=viewId,proto3" json:"view_id,omitempty"`
+	Route      string                 `protobuf:"bytes,6,opt,name=route,proto3" json:"route,omitempty"`
+	UrlPath    string                 `protobuf:"bytes,7,opt,name=url_path,json=urlPath,proto3" json:"url_path,omitempty"`
+	Host       string                 `protobuf:"bytes,8,opt,name=host,proto3" json:"host,omitempty"`                   // vhost the beacon hit
+	HostId     string                 `protobuf:"bytes,9,opt,name=host_id,json=hostId,proto3" json:"host_id,omitempty"` // "central" or agent UUID
+	ClientIp   string                 `protobuf:"bytes,10,opt,name=client_ip,json=clientIp,proto3" json:"client_ip,omitempty"`
+	UserAgent  string                 `protobuf:"bytes,11,opt,name=user_agent,json=userAgent,proto3" json:"user_agent,omitempty"`
+	ReceivedAt string                 `protobuf:"bytes,12,opt,name=received_at,json=receivedAt,proto3" json:"received_at,omitempty"` // RFC3339Nano, edge server-receive time
+	// Visitor location as Cloudflare reported it, stamped by the edge under the
+	// same trust gate as client_ip. Empty for hosts that are not behind
+	// Cloudflare; never taken from the browser payload.
+	Country       string         `protobuf:"bytes,13,opt,name=country,proto3" json:"country,omitempty"`
+	City          string         `protobuf:"bytes,14,opt,name=city,proto3" json:"city,omitempty"`
+	Events        []*ClientEvent `protobuf:"bytes,20,rep,name=events,proto3" json:"events,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1908,6 +1879,20 @@ func (x *ClientEventBatch) GetUserAgent() string {
 func (x *ClientEventBatch) GetReceivedAt() string {
 	if x != nil {
 		return x.ReceivedAt
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetCountry() string {
+	if x != nil {
+		return x.Country
+	}
+	return ""
+}
+
+func (x *ClientEventBatch) GetCity() string {
+	if x != nil {
+		return x.City
 	}
 	return ""
 }
@@ -3371,17 +3356,11 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"request_id\x18\x01 \x01(\tR\trequestId\"@\n" +
 	"\x14GetLogRawJWTResponse\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x12\n" +
-	"\x04host\x18\x02 \x01(\tR\x04host\"\x90\x02\n" +
-	"\x18EnrichmentStatusResponse\x12\x1f\n" +
-	"\vgeoip_state\x18\x01 \x01(\tR\n" +
-	"geoipState\x12\x1d\n" +
-	"\n" +
-	"geoip_path\x18\x02 \x01(\tR\tgeoipPath\x12\x1f\n" +
-	"\vgeoip_error\x18\x03 \x01(\tR\n" +
-	"geoipError\x12&\n" +
-	"\x0fgeoip_loaded_at\x18\x04 \x01(\tR\rgeoipLoadedAt\x12,\n" +
+	"\x04host\x18\x02 \x01(\tR\x04host\"\xd6\x01\n" +
+	"\x18EnrichmentStatusResponse\x12,\n" +
 	"\x12jwt_identity_state\x18\x05 \x01(\tR\x10jwtIdentityState\x12=\n" +
-	"\x1bjwt_identity_host_overrides\x18\x06 \x01(\x05R\x18jwtIdentityHostOverrides\"\x82\x02\n" +
+	"\x1bjwt_identity_host_overrides\x18\x06 \x01(\x05R\x18jwtIdentityHostOverridesJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\x04\x10\x05R\vgeoip_stateR\n" +
+	"geoip_pathR\vgeoip_errorR\x0fgeoip_loaded_at\"\x82\x02\n" +
 	"\x11ContainerLogEntry\x12\x1c\n" +
 	"\ttimestamp\x18\x01 \x01(\tR\ttimestamp\x12\x16\n" +
 	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
@@ -3427,7 +3406,7 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\n" +
 	"AttrsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xef\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9d\x03\n" +
 	"\x10ClientEventBatch\x12\x10\n" +
 	"\x03app\x18\x01 \x01(\tR\x03app\x12\x18\n" +
 	"\arelease\x18\x02 \x01(\tR\arelease\x12\x10\n" +
@@ -3444,7 +3423,9 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\n" +
 	"user_agent\x18\v \x01(\tR\tuserAgent\x12\x1f\n" +
 	"\vreceived_at\x18\f \x01(\tR\n" +
-	"receivedAt\x12*\n" +
+	"receivedAt\x12\x18\n" +
+	"\acountry\x18\r \x01(\tR\acountry\x12\x12\n" +
+	"\x04city\x18\x0e \x01(\tR\x04city\x12*\n" +
 	"\x06events\x18\x14 \x03(\v2\x12.logpb.ClientEventR\x06events\"\xf1\x01\n" +
 	"\x19SearchClientEventsRequest\x12\x19\n" +
 	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12\x1d\n" +

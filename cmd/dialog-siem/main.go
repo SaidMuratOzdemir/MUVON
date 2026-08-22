@@ -20,7 +20,6 @@ import (
 	"muvon/internal/config"
 	"muvon/internal/correlation"
 	"muvon/internal/db"
-	"muvon/internal/geoip"
 	"muvon/internal/identity"
 	"muvon/internal/logger"
 	loggrpc "muvon/internal/logger/grpcserver"
@@ -93,7 +92,7 @@ func main() {
 	}
 
 	// Background config reload. Without this the snapshot loaded at
-	// startup is frozen — admin-panel changes to JWT identity, GeoIP,
+	// startup is frozen — admin-panel changes to JWT identity,
 	// correlation thresholds, and alerting config never reach this
 	// process. MUVON runs an equivalent loop in its own main; matching
 	// the cadence here keeps the two services in sync within ~5s.
@@ -155,36 +154,14 @@ func main() {
 	}
 
 	// Client event (RUM) pipeline — fed by the edge's /__muvon/rum handler
-	// via SendClientEventBatch. Separate thin pipe like containers, but it
-	// carries a GeoIP enricher (set below) since the edge stamps only the
-	// client IP.
+	// via SendClientEventBatch. Location arrives already stamped by the edge
+	// from Cloudflare, like the client IP.
 	var clientEventPipeline *logger.ClientEventPipeline
 	if *clientEventIngestEnabled {
 		clientEventFlushInterval := time.Duration(*ceFlushMs) * time.Millisecond
 		clientEventPipeline = logger.NewClientEventPipeline(database.Pool, *ceBufSize, *ceWorkers, *ceBatch, clientEventFlushInterval)
 	} else {
 		slog.Info("client event ingest disabled (DIALOG_CLIENT_EVENT_INGEST=false)")
-	}
-
-	// GeoIP — central enrichment for every log entry, regardless of whether
-	// the entry came from the local Unix socket or an agent's TCP gRPC. The
-	// Manager owns load state so a misconfigured path surfaces as a status
-	// the admin UI can show instead of failing silently.
-	geoMgr := geoip.NewManager()
-	if cfg := ch.Get(); cfg.Global.GeoIPEnabled && cfg.Global.GeoIPDBPath != "" {
-		if err := geoMgr.Apply(true, cfg.Global.GeoIPDBPath); err != nil {
-			slog.Warn("GeoIP initial load failed; banner will display in admin UI", "error", err)
-		}
-	}
-	ch.OnReload(func(newCfg *config.Config) {
-		// Apply is idempotent: only reopens when (enabled, path) actually
-		// changes, so the 5-second background reload does not thrash the
-		// .mmdb file on every tick.
-		_ = geoMgr.Apply(newCfg.Global.GeoIPEnabled, newCfg.Global.GeoIPDBPath)
-	})
-	pipeline.SetGeoEnricher(geoMgr.Lookup)
-	if clientEventPipeline != nil {
-		clientEventPipeline.SetGeoEnricher(geoMgr.Lookup)
 	}
 
 	// JWT identity enrichment — extracts claims from Authorization header
@@ -287,15 +264,7 @@ func main() {
 		logSrv.SetClientEventPipeline(clientEventPipeline)
 	}
 	logSrv.SetEnrichmentStatusFn(func() *pb.EnrichmentStatusResponse {
-		gs := geoMgr.GetStatus()
-		resp := &pb.EnrichmentStatusResponse{
-			GeoipState: gs.State,
-			GeoipPath:  gs.Path,
-			GeoipError: gs.Error,
-		}
-		if !gs.LoadedAt.IsZero() {
-			resp.GeoipLoadedAt = gs.LoadedAt.UTC().Format(time.RFC3339)
-		}
+		resp := &pb.EnrichmentStatusResponse{}
 		cfg := ch.Get()
 		if cfg.Global.JWTIdentityEnabled || hasHostJWTOverride(cfg) {
 			resp.JwtIdentityState = "ok"
@@ -330,7 +299,6 @@ func main() {
 			clientEventPipeline.Stop()
 		}
 		alertMgr.Stop()
-		_ = geoMgr.Close()
 		cancel()
 	}()
 	if *tcpAddr != "" {

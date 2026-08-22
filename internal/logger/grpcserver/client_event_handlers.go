@@ -51,6 +51,8 @@ func (s *Server) SendClientEventBatch(ctx context.Context, req *pb.ClientEventBa
 			HostID:     req.HostId,
 			ClientIP:   req.ClientIp,
 			UserAgent:  req.UserAgent,
+			Country:    req.Country,
+			City:       req.City,
 			ReceivedAt: receivedAt,
 			EventName:  ev.EventName,
 			ClientTS:   parseRFC3339(ev.ClientTs),

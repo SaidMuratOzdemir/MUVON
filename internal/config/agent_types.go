@@ -30,7 +30,7 @@ type AgentPayload struct {
 	// echo it back via X-Config-Version on the next pull / SSE reconnect
 	// so central can distinguish "agent missed the push" from "agent
 	// reapplied an older snapshot".
-	Version   string        `json:"version,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 // AgentSettings is the subset of GlobalConfig that agents need to operate.
@@ -51,10 +51,7 @@ type AgentSettings struct {
 	// entries (with the original Authorization header) and never need the
 	// signing secret. Sending it would leak a high-value credential to
 	// every edge node.
-	JWTSecret          string   `json:"-"`
-
-	GeoIPEnabled bool   `json:"geoip_enabled"`
-	GeoIPDBPath  string `json:"geoip_db_path"`
+	JWTSecret string `json:"-"`
 }
 
 // AgentPayloadFromConfig builds an AgentPayload tailored to a specific
@@ -169,9 +166,6 @@ func globalToAgentSettings(g GlobalConfig) AgentSettings {
 		JWTClaims:          g.JWTClaims,
 		// JWTSecret deliberately omitted from the agent payload — see the
 		// json:"-" tag on AgentSettings.JWTSecret for reasoning.
-
-		GeoIPEnabled: g.GeoIPEnabled,
-		GeoIPDBPath:  g.GeoIPDBPath,
 	}
 }
 
@@ -195,8 +189,5 @@ func agentSettingsToGlobal(s AgentSettings) GlobalConfig {
 		JWTIdentityMode:    s.JWTIdentityMode,
 		JWTClaims:          claims,
 		// JWTSecret is never populated agent-side — central holds the secret.
-
-		GeoIPEnabled: s.GeoIPEnabled,
-		GeoIPDBPath:  s.GeoIPDBPath,
 	}
 }

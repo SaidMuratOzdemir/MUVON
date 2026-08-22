@@ -9,8 +9,8 @@ import (
 // already enriched with the dimension fields the shipper passed alongside
 // the line. Worker writes it to container_logs.
 //
-// Independent of Entry: the http log path needs GeoIP + JWT enrichment
-// hooks and per-row body shipping; container logs are a thinner pipe and
+// Independent of Entry: the http log path needs JWT enrichment hooks and
+// per-row body shipping; container logs are a thinner pipe and
 // duplicating the small struct keeps each path simple.
 type ContainerEntry struct {
 	// Dimension — propagated to every row in the batch.

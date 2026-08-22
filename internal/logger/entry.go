@@ -36,7 +36,8 @@ type Entry struct {
 	// audit-logs every read.
 	RawJWT          string
 
-	// GeoIP enrichment
+	// Visitor location, stamped by the edge from Cloudflare's headers.
+	// Empty for hosts that are not behind Cloudflare.
 	Country         string
 	City            string
 

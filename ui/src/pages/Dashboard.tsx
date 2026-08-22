@@ -82,7 +82,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [reloading, setReloading] = useState(false)
   const [lastRefresh, setLastRefresh] = useState(new Date())
-  const { logOnline, dbOnline, geoIPBroken, geoIPError } = useServiceHealth()
+  const { logOnline, dbOnline } = useServiceHealth()
 
   // Host filter — URL state, so refresh / share-link preserves the view.
   // Empty string means "all hosts"; the backend treats that as a claim
@@ -211,24 +211,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Enrichment failure banner — shown only when GeoIP is configured but
-          the loader on the diaLOG side reports an error. A plain "disabled"
-          state never lights this up; the goal is to convert silent empty
-          country columns into a visible, actionable signal. */}
-      {geoIPBroken && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-300">
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <p className="font-medium">GeoIP enrichment offline</p>
-            <p className="text-xs text-amber-300/80 mt-0.5 break-all">
-              {geoIPError || 'GeoIP database is enabled but could not be loaded. Country/city columns will stay empty until this is fixed.'}
-            </p>
-            <Link to="/settings" className="text-xs underline underline-offset-2 mt-1 inline-block">
-              Open Settings →
-            </Link>
-          </div>
-        </div>
-      )}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">

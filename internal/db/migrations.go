@@ -1082,7 +1082,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_commands_agent_recent
 		      CREATE INDEX IF NOT EXISTS idx_http_logs_trace ON http_logs (trace_id) WHERE trace_id IS NOT NULL;`,
 	},
 	// Channel 3: browser RUM telemetry. The edge (/__muvon/rum) enriches
-	// each event with server-receive time + client IP, the SIEM adds GeoIP,
+	// each event with server-receive time, client IP and Cloudflare location,
 	// and rows land here. `time` is the partition column (server-receive);
 	// client_ts keeps the untrusted browser clock for skew analysis.
 	// trace_id joins http_logs/container_logs; session_id groups a visit.
@@ -1282,5 +1282,14 @@ WHERE key IN ('acme_email', 'acme_staging', 'log_retention_days',
 		name: "add_deploy_instances_spec_hash", product: "muvon",
 		sql: `ALTER TABLE deploy_instances
 		  ADD COLUMN IF NOT EXISTS spec_hash TEXT NOT NULL DEFAULT '';`,
+	},
+	// Visitor location now comes from Cloudflare's headers at the edge, so the
+	// local MaxMind reader and its two settings are gone. The rows would
+	// otherwise sit in the table advertising a feature the binary no longer
+	// has. The country and city columns stay: they are what the new source
+	// fills.
+	{
+		name: "drop_geoip_settings", product: "muvon",
+		sql: `DELETE FROM settings WHERE key IN ('geoip_enabled', 'geoip_db_path');`,
 	},
 }

@@ -10,10 +10,10 @@ import (
 // fields are copied onto every row in a batch — like ContainerEntry, a small
 // duplicated struct keeps this thin pipe independent of the http log path.
 //
-// ClientIP / Host / UserAgent / ReceivedAt are stamped by the edge (the proxy
-// handler), never trusted from the browser. Country/City are filled by the
-// SIEM pipeline's GeoIP enricher — agents don't carry the GeoLite DB, so geo
-// resolution happens centrally, exactly like the http log path.
+// ClientIP / Host / UserAgent / ReceivedAt / Country / City are stamped by the
+// edge (the proxy handler), never trusted from the browser. Location comes from
+// Cloudflare's visitor headers, which only the edge that terminated the request
+// can read, exactly like the http log path.
 type ClientEvent struct {
 	// Envelope dimension — one logical batch, propagated to every row.
 	App       string
@@ -70,6 +70,10 @@ type ClientEventBatch struct {
 	ClientIP   string
 	UserAgent  string
 	ReceivedAt time.Time
+	// Country and City are stamped by the edge from Cloudflare's visitor
+	// location headers, never taken from the browser payload.
+	Country string
+	City    string
 
 	Events []ClientEventItem
 }

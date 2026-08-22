@@ -10,10 +10,8 @@ import (
 )
 
 // ClientEventPipeline is the thin ingest pipe for browser RUM events,
-// parallel to ContainerPipeline. It differs in one way: it carries a GeoIP
-// enricher, because the edge stamps only the client IP (it knows the trusted
-// proxies) and geo resolution must happen centrally — agents have no GeoLite
-// DB. This mirrors the http log path, where GeoIP also runs in the SIEM.
+// parallel to ContainerPipeline. Every dimension the row carries about the
+// visitor, including location, is stamped at the edge before it reaches here.
 //
 // Drop-on-overflow with counters: a browser beacon is best-effort by design,
 // and the edge has already replied 204, so a full buffer must never block.
@@ -25,9 +23,6 @@ type ClientEventPipeline struct {
 	closed   atomic.Bool
 	dropped  atomic.Int64
 	enqueued atomic.Int64
-
-	enrichMu sync.RWMutex
-	geoFn    func(ip string) (country, city string)
 }
 
 // NewClientEventPipeline starts workers and returns a ready pipeline. Same
@@ -69,31 +64,14 @@ func NewClientEventPipeline(pool *pgxpool.Pool, bufferSize, workerCount, batchSi
 	return p
 }
 
-// SetGeoEnricher registers the GeoIP lookup. Safe to call after creation
-// (e.g. after the GeoLite DB loads) — reads take a short read-lock. Mirrors
-// Pipeline.SetGeoEnricher.
-func (p *ClientEventPipeline) SetGeoEnricher(fn func(ip string) (country, city string)) {
-	p.enrichMu.Lock()
-	p.geoFn = fn
-	p.enrichMu.Unlock()
-}
-
-// Send enriches with GeoIP and enqueues; drops on overflow.
+// Send enqueues an event; drops on overflow. Location arrives already stamped
+// by the edge from Cloudflare, so there is nothing to enrich here.
 func (p *ClientEventPipeline) Send(e ClientEvent) {
 	if p.closed.Load() {
 		return
 	}
 	if e.ReceivedAt.IsZero() {
 		e.ReceivedAt = time.Now()
-	}
-
-	if e.Country == "" && e.ClientIP != "" {
-		p.enrichMu.RLock()
-		geoFn := p.geoFn
-		p.enrichMu.RUnlock()
-		if geoFn != nil {
-			e.Country, e.City = geoFn(e.ClientIP)
-		}
 	}
 
 	// Strip NUL / invalid UTF-8 so a crafted beacon field can't fail the COPY

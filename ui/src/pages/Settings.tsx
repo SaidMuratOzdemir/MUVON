@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Save, RefreshCw, Loader2, HardDrive, Shield,
-  Activity, AlertTriangle, Check, KeyRound, Globe, Bell,
+  Activity, AlertTriangle, Check, KeyRound, Bell,
   Mail, Send, Radar, Lock, AlertOctagon, FileKey, Download,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -146,25 +146,6 @@ const SETTING_GROUPS: SettingGroup[] = [
         description: 'HS256 HMAC secret for JWT verification (write-only, not displayed after save)',
         type: 'password',
         placeholder: 'Enter JWT secret',
-      },
-    ],
-  },
-  {
-    title: 'GeoIP',
-    icon: Globe,
-    settings: [
-      {
-        key: 'geoip_enabled',
-        label: 'Enable GeoIP',
-        description: 'Enrich logs with geographic information from client IPs',
-        type: 'boolean',
-      },
-      {
-        key: 'geoip_db_path',
-        label: 'GeoIP Database Path',
-        description: 'Path to GeoLite2-City.mmdb file on disk',
-        type: 'string',
-        placeholder: '/data/GeoLite2-City.mmdb',
       },
     ],
   },
