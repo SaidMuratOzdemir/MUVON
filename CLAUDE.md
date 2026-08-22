@@ -108,6 +108,8 @@ Admin panel binds:
 ### Data engine
 diaLOG relies on three PostgreSQL extensions — miss any and startup fails:
 - **TimescaleDB** — hypertables for `http_logs`, `http_bodies`, `alerts`; 7-day compression. Retention starts at 30 days from the migration but is owned by the `retention_days` setting: `runRetentionReconciler` in `cmd/dialog-siem` reconciles it into the Timescale job catalog (`internal/db/retention.go`) on change and every 5 minutes, so the panel value is the truth. `0` removes the policies entirely (keep forever). Migrations only ever install the initial policy with `if_not_exists`, so never treat the interval written there as the live value; read `timescaledb_information.jobs` or `GET /api/system/retention`.
+Pipeline sizing (`log_pipeline_buffer`, `log_worker_count`, `log_batch_size`, `log_flush_interval_ms`) comes from the settings table, but only at startup: resizing a live pipeline would drop what it holds. An explicitly passed flag or `DIALOG_*` env var wins over the setting, since that is the choice made at the host. The effective values are logged at boot. These four were seeded and parsed but read by nothing until v0.1.52.
+
 - **pg_search** (ParadeDB/Tantivy) — BM25 full-text search; no Elasticsearch dependency.
 - **pg_uuidv7** — UUIDv7 PKs are time-ordered, so `ORDER BY id` is chronological and no separate timestamp index is needed.
 

@@ -120,6 +120,24 @@ func main() {
 	// panel value is decoration.
 	go runRetentionReconciler(ctx, database, ch)
 
+	// Pipeline sizing. log_pipeline_buffer, log_worker_count, log_batch_size
+	// and log_flush_interval_ms are seeded into the settings table and parsed
+	// into GlobalConfig, but nothing ever read them: the pipelines were built
+	// purely from flags, so an operator tuning them through the API changed
+	// nothing. They apply now, at startup only — resizing a running pipeline
+	// would mean dropping whatever it is holding — and an explicitly passed
+	// flag or environment variable still wins, because that is the one the
+	// person at the host chose deliberately.
+	if cfg := ch.Get(); cfg != nil {
+		g := cfg.Global
+		*bufSize = settingOrFlag("buffer", "DIALOG_BUFFER", *bufSize, g.LogPipelineBuffer)
+		*workers = settingOrFlag("workers", "DIALOG_WORKERS", *workers, g.LogWorkerCount)
+		*batchSize = settingOrFlag("batch", "DIALOG_BATCH", *batchSize, g.LogBatchSize)
+		*flushMs = settingOrFlag("flush-ms", "DIALOG_FLUSH_MS", *flushMs, g.LogFlushIntervalMs)
+	}
+	slog.Info("http log pipeline sizing",
+		"buffer", *bufSize, "workers", *workers, "batch", *batchSize, "flush_ms", *flushMs)
+
 	// Log pipeline
 	flushInterval := time.Duration(*flushMs) * time.Millisecond
 	pipeline := logger.NewPipeline(database.Pool, *bufSize, *workers, *batchSize, flushInterval)
@@ -427,6 +445,30 @@ func countHostJWTOverrides(cfg *config.Config) int {
 		}
 	}
 	return n
+}
+
+// settingOrFlag decides which value a pipeline knob takes. Anything the
+// operator set explicitly at the host, as a flag or an environment variable,
+// stays untouched; otherwise the value from the settings table applies, and a
+// missing or nonsensical setting falls back to what the flag already held.
+func settingOrFlag(flagName, envName string, fromFlag, fromSettings int) int {
+	if flagWasSet(flagName) || os.Getenv(envName) != "" {
+		return fromFlag
+	}
+	if fromSettings > 0 {
+		return fromSettings
+	}
+	return fromFlag
+}
+
+func flagWasSet(name string) bool {
+	set := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
 }
 
 func intEnvOr(key string, fallback int) int {

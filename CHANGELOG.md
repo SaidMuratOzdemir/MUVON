@@ -88,6 +88,15 @@ düzeltmesi. Yedekleme kusuru veri kaybı riski taşıdığı için önce onu ok
   taşınırken pencere yalnızca büyütülüyor, asla küçültülmüyor: bir yükseltme
   log silmeye karar vermemeli.
 
+- **Log işleme hattının dört ayarı hiçbir şeyi değiştirmiyordu.**
+  `log_pipeline_buffer`, `log_worker_count`, `log_batch_size` ve
+  `log_flush_interval_ms` veritabanına yazılıyor ve okunuyordu, ama hattı
+  kuran kod yalnızca ortam değişkenlerine bakıyordu. Artık bu ayarlar
+  gerçekten uygulanıyor. Yalnızca servis başlarken devreye girerler, çünkü
+  çalışan bir hattı yeniden boyutlandırmak elindeki kayıtları düşürmek
+  demektir; sunucuda açıkça `DIALOG_*` değişkeni verilmişse o kazanır.
+  Geçerli değerler açılışta log'a yazılıyor.
+
 - **Ayarların elle yeniden yüklenmesi gerektiği yazıyordu.** MUVON ve diaLOG
   zaten birkaç saniyede bir config'i tazeliyor; Dashboard'daki düğme sadece
   bunu hemen tetikliyor ve agent'lara gönderiyor.
