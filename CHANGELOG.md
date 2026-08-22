@@ -23,7 +23,23 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-Henüz birikme yok.
+### FEATURES
+
+- **Panelden yedek alınabiliyor.** Ayarlar → Sistem altına "Yedek al" düğmesi
+  ve yedek listesi eklendi. Önceden yedek almanın tek yolu bir sistem
+  yükseltmesi başlatmaktı; yükseltilecek bir şey yoksa yedek de alınamıyordu,
+  yani riskli bir işten önce yedek almanın yolu yoktu.
+
+  Yedek, yükseltmenin kullandığı akışın aynısından geçer: dosya `.part` adıyla
+  yazılır, başlık kontrolünden ve veritabanının kendi imajıyla çalıştırılan
+  `pg_restore -l` doğrulamasından geçerse yayınlanır, geçemezse `.rejected`
+  uzantısıyla saklanır ve yedek sayılmaz. Panel doğrulanmış ile doğrulanamamış
+  yedeği ayırt eder.
+
+  Son 5 yedek tutulur, eskiler yeni bir yedek alındığında silinir. Bu sınır
+  daha önce yoktu ve bir kurulumda 5,5 GB'lık ölü dosya birikmişti. Yükseltme
+  ve yedek aynı kilidi paylaşır, çünkü ikisi de aynı veritabanını aynı dizine
+  döker.
 
 ---
 

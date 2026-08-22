@@ -165,6 +165,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/system/retention", s.handleRetentionStatus)
 	api.HandleFunc("GET /api/system/version", s.handleSystemVersion)
 	api.HandleFunc("GET /api/system/version/latest", s.handleSystemVersionLatest)
+	api.HandleFunc("POST /api/system/backup", s.handleCreateBackup)
+	api.HandleFunc("GET /api/system/backups", s.handleListBackups)
 	api.HandleFunc("POST /api/system/upgrade", s.handleSystemUpgrade)
 	api.HandleFunc("GET /api/system/upgrade/stream", s.handleSystemUpgradeStream)
 

@@ -156,3 +156,19 @@ func (r *RemoteDeployer) SelfImageDigest(ctx context.Context) (string, error) {
 func (r *RemoteDeployer) SystemUpgrade(ctx context.Context, req *pb.SystemUpgradeRequest) (pb.DeployerService_SystemUpgradeClient, error) {
 	return r.client.SystemUpgrade(ctx, req)
 }
+
+// CreateBackup takes a verified dump on demand. The timeout is generous
+// because the dump is bounded by database size, not by anything we control:
+// several gigabytes over a container exec takes minutes.
+func (r *RemoteDeployer) CreateBackup(ctx context.Context) (*pb.CreateBackupResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+	return r.client.CreateBackup(ctx, &pb.CreateBackupRequest{})
+}
+
+// ListBackups reports the dumps on disk, newest first.
+func (r *RemoteDeployer) ListBackups(ctx context.Context) (*pb.ListBackupsResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return r.client.ListBackups(ctx, &pb.ListBackupsRequest{})
+}

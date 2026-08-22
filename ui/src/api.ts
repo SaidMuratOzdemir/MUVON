@@ -963,6 +963,35 @@ export interface UpgradeEvent {
   done: boolean
 }
 
+export interface BackupResult {
+  path: string
+  bytes: number
+  created_at: string
+  // False means the dump was written but nothing confirmed it can be
+  // restored; note carries the reason.
+  verified: boolean
+  note?: string
+}
+
+export interface BackupListItem {
+  name: string
+  bytes: number
+  created_at: string
+}
+
+export interface BackupList {
+  backups: BackupListItem[]
+  keep_limit: number
+}
+
+export async function createBackup(): Promise<BackupResult> {
+  return request<BackupResult>("POST", "/api/system/backup")
+}
+
+export async function listBackups(): Promise<BackupList> {
+  return request<BackupList>("GET", "/api/system/backups")
+}
+
 export interface RetentionPolicy {
   table: string
   job_id?: number

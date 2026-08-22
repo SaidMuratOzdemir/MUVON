@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import * as api from '@/api'
 import { SystemUpgradePanel } from '@/components/SystemUpgradePanel'
+import { BackupPanel } from '@/components/BackupPanel'
 
 interface SettingDef {
   key: string
@@ -563,6 +564,8 @@ export default function Settings() {
 
       {/* Sistem güncellemesi — en üstte, ayarlardan bağımsız panel */}
       <SystemUpgradePanel />
+
+      <BackupPanel />
 
       {allDirtyKeys.length > 0 && (
         <div className="flex items-center gap-3 rounded-lg border border-yellow-400/30 bg-yellow-400/5 px-4 py-3 text-sm text-yellow-400">

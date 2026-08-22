@@ -21,6 +21,270 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type CreateBackupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateBackupRequest) Reset() {
+	*x = CreateBackupRequest{}
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateBackupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateBackupRequest) ProtoMessage() {}
+
+func (x *CreateBackupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateBackupRequest.ProtoReflect.Descriptor instead.
+func (*CreateBackupRequest) Descriptor() ([]byte, []int) {
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{0}
+}
+
+type CreateBackupResponse struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Path      string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // yayınlanan dosyanın tam yolu
+	Bytes     int64                  `protobuf:"varint,2,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	CreatedAt string                 `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // RFC3339
+	// Verified, pg_restore -l doğrulamasının geçtiğini söyler. False ise note
+	// nedenini taşır; dosya yine de yazılmıştır ama körlemesine güvenilmemeli.
+	Verified      bool   `protobuf:"varint,4,opt,name=verified,proto3" json:"verified,omitempty"`
+	Note          string `protobuf:"bytes,5,opt,name=note,proto3" json:"note,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateBackupResponse) Reset() {
+	*x = CreateBackupResponse{}
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateBackupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateBackupResponse) ProtoMessage() {}
+
+func (x *CreateBackupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateBackupResponse.ProtoReflect.Descriptor instead.
+func (*CreateBackupResponse) Descriptor() ([]byte, []int) {
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *CreateBackupResponse) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *CreateBackupResponse) GetBytes() int64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
+func (x *CreateBackupResponse) GetCreatedAt() string {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *CreateBackupResponse) GetVerified() bool {
+	if x != nil {
+		return x.Verified
+	}
+	return false
+}
+
+func (x *CreateBackupResponse) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
+type BackupInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Bytes         int64                  `protobuf:"varint,2,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	CreatedAt     string                 `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // RFC3339
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupInfo) Reset() {
+	*x = BackupInfo{}
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupInfo) ProtoMessage() {}
+
+func (x *BackupInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupInfo.ProtoReflect.Descriptor instead.
+func (*BackupInfo) Descriptor() ([]byte, []int) {
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *BackupInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *BackupInfo) GetBytes() int64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
+func (x *BackupInfo) GetCreatedAt() string {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return ""
+}
+
+type ListBackupsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListBackupsRequest) Reset() {
+	*x = ListBackupsRequest{}
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBackupsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBackupsRequest) ProtoMessage() {}
+
+func (x *ListBackupsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBackupsRequest.ProtoReflect.Descriptor instead.
+func (*ListBackupsRequest) Descriptor() ([]byte, []int) {
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{3}
+}
+
+type ListBackupsResponse struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Backups []*BackupInfo          `protobuf:"bytes,1,rep,name=backups,proto3" json:"backups,omitempty"`
+	// KeepLimit, kaç yedeğin saklandığını söyler; UI bunu kullanıcıya
+	// gösterir ki eski dosyaların neden kaybolduğu belirsiz kalmasın.
+	KeepLimit     int32 `protobuf:"varint,2,opt,name=keep_limit,json=keepLimit,proto3" json:"keep_limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListBackupsResponse) Reset() {
+	*x = ListBackupsResponse{}
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBackupsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBackupsResponse) ProtoMessage() {}
+
+func (x *ListBackupsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBackupsResponse.ProtoReflect.Descriptor instead.
+func (*ListBackupsResponse) Descriptor() ([]byte, []int) {
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ListBackupsResponse) GetBackups() []*BackupInfo {
+	if x != nil {
+		return x.Backups
+	}
+	return nil
+}
+
+func (x *ListBackupsResponse) GetKeepLimit() int32 {
+	if x != nil {
+		return x.KeepLimit
+	}
+	return 0
+}
+
 type ListContainersRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// managed_only=true sadece muvon.managed=true label'li container'lar.
@@ -35,7 +299,7 @@ type ListContainersRequest struct {
 
 func (x *ListContainersRequest) Reset() {
 	*x = ListContainersRequest{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[0]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -47,7 +311,7 @@ func (x *ListContainersRequest) String() string {
 func (*ListContainersRequest) ProtoMessage() {}
 
 func (x *ListContainersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[0]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -60,7 +324,7 @@ func (x *ListContainersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListContainersRequest.ProtoReflect.Descriptor instead.
 func (*ListContainersRequest) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{0}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ListContainersRequest) GetManagedOnly() bool {
@@ -100,7 +364,7 @@ type ListContainersResponse struct {
 
 func (x *ListContainersResponse) Reset() {
 	*x = ListContainersResponse{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[1]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -112,7 +376,7 @@ func (x *ListContainersResponse) String() string {
 func (*ListContainersResponse) ProtoMessage() {}
 
 func (x *ListContainersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[1]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -125,7 +389,7 @@ func (x *ListContainersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListContainersResponse.ProtoReflect.Descriptor instead.
 func (*ListContainersResponse) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{1}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ListContainersResponse) GetContainers() []*ContainerDetail {
@@ -144,7 +408,7 @@ type GetContainerRequest struct {
 
 func (x *GetContainerRequest) Reset() {
 	*x = GetContainerRequest{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[2]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -156,7 +420,7 @@ func (x *GetContainerRequest) String() string {
 func (*GetContainerRequest) ProtoMessage() {}
 
 func (x *GetContainerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[2]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -169,7 +433,7 @@ func (x *GetContainerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetContainerRequest.ProtoReflect.Descriptor instead.
 func (*GetContainerRequest) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{2}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetContainerRequest) GetContainerId() string {
@@ -208,7 +472,7 @@ type ContainerDetail struct {
 
 func (x *ContainerDetail) Reset() {
 	*x = ContainerDetail{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[3]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -220,7 +484,7 @@ func (x *ContainerDetail) String() string {
 func (*ContainerDetail) ProtoMessage() {}
 
 func (x *ContainerDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[3]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -233,7 +497,7 @@ func (x *ContainerDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerDetail.ProtoReflect.Descriptor instead.
 func (*ContainerDetail) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{3}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ContainerDetail) GetContainerId() string {
@@ -348,7 +612,7 @@ type StreamContainerLogsRequest struct {
 
 func (x *StreamContainerLogsRequest) Reset() {
 	*x = StreamContainerLogsRequest{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[4]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -360,7 +624,7 @@ func (x *StreamContainerLogsRequest) String() string {
 func (*StreamContainerLogsRequest) ProtoMessage() {}
 
 func (x *StreamContainerLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[4]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -373,7 +637,7 @@ func (x *StreamContainerLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamContainerLogsRequest.ProtoReflect.Descriptor instead.
 func (*StreamContainerLogsRequest) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{4}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *StreamContainerLogsRequest) GetContainerId() string {
@@ -434,7 +698,7 @@ type ContainerLogChunk struct {
 
 func (x *ContainerLogChunk) Reset() {
 	*x = ContainerLogChunk{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[5]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -446,7 +710,7 @@ func (x *ContainerLogChunk) String() string {
 func (*ContainerLogChunk) ProtoMessage() {}
 
 func (x *ContainerLogChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[5]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -459,7 +723,7 @@ func (x *ContainerLogChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerLogChunk.ProtoReflect.Descriptor instead.
 func (*ContainerLogChunk) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{5}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ContainerLogChunk) GetTimestamp() string {
@@ -512,7 +776,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[6]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -524,7 +788,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[6]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -537,7 +801,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{6}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{11}
 }
 
 type HealthResponse struct {
@@ -558,7 +822,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[7]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -570,7 +834,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[7]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -583,7 +847,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{7}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *HealthResponse) GetOk() bool {
@@ -622,7 +886,7 @@ type SelfImageDigestRequest struct {
 
 func (x *SelfImageDigestRequest) Reset() {
 	*x = SelfImageDigestRequest{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[8]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -634,7 +898,7 @@ func (x *SelfImageDigestRequest) String() string {
 func (*SelfImageDigestRequest) ProtoMessage() {}
 
 func (x *SelfImageDigestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[8]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -647,7 +911,7 @@ func (x *SelfImageDigestRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelfImageDigestRequest.ProtoReflect.Descriptor instead.
 func (*SelfImageDigestRequest) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{8}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{13}
 }
 
 type SelfImageDigestResponse struct {
@@ -661,7 +925,7 @@ type SelfImageDigestResponse struct {
 
 func (x *SelfImageDigestResponse) Reset() {
 	*x = SelfImageDigestResponse{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[9]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -673,7 +937,7 @@ func (x *SelfImageDigestResponse) String() string {
 func (*SelfImageDigestResponse) ProtoMessage() {}
 
 func (x *SelfImageDigestResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[9]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -686,7 +950,7 @@ func (x *SelfImageDigestResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelfImageDigestResponse.ProtoReflect.Descriptor instead.
 func (*SelfImageDigestResponse) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{9}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SelfImageDigestResponse) GetDigests() map[string]string {
@@ -709,7 +973,7 @@ type SystemUpgradeRequest struct {
 
 func (x *SystemUpgradeRequest) Reset() {
 	*x = SystemUpgradeRequest{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[10]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -721,7 +985,7 @@ func (x *SystemUpgradeRequest) String() string {
 func (*SystemUpgradeRequest) ProtoMessage() {}
 
 func (x *SystemUpgradeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[10]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -734,7 +998,7 @@ func (x *SystemUpgradeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SystemUpgradeRequest.ProtoReflect.Descriptor instead.
 func (*SystemUpgradeRequest) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{10}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SystemUpgradeRequest) GetTargetTag() string {
@@ -769,7 +1033,7 @@ type UpgradeEvent struct {
 
 func (x *UpgradeEvent) Reset() {
 	*x = UpgradeEvent{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[11]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -781,7 +1045,7 @@ func (x *UpgradeEvent) String() string {
 func (*UpgradeEvent) ProtoMessage() {}
 
 func (x *UpgradeEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[11]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -794,7 +1058,7 @@ func (x *UpgradeEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeEvent.ProtoReflect.Descriptor instead.
 func (*UpgradeEvent) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{11}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *UpgradeEvent) GetStep() string {
@@ -837,7 +1101,26 @@ var File_proto_deployerpb_deployer_proto protoreflect.FileDescriptor
 const file_proto_deployerpb_deployer_proto_rawDesc = "" +
 	"\n" +
 	"\x1fproto/deployerpb/deployer.proto\x12\n" +
-	"deployerpb\"\x88\x01\n" +
+	"deployerpb\"\x15\n" +
+	"\x13CreateBackupRequest\"\x8f\x01\n" +
+	"\x14CreateBackupResponse\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x14\n" +
+	"\x05bytes\x18\x02 \x01(\x03R\x05bytes\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x03 \x01(\tR\tcreatedAt\x12\x1a\n" +
+	"\bverified\x18\x04 \x01(\bR\bverified\x12\x12\n" +
+	"\x04note\x18\x05 \x01(\tR\x04note\"U\n" +
+	"\n" +
+	"BackupInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05bytes\x18\x02 \x01(\x03R\x05bytes\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x03 \x01(\tR\tcreatedAt\"\x14\n" +
+	"\x12ListBackupsRequest\"f\n" +
+	"\x13ListBackupsResponse\x120\n" +
+	"\abackups\x18\x01 \x03(\v2\x16.deployerpb.BackupInfoR\abackups\x12\x1d\n" +
+	"\n" +
+	"keep_limit\x18\x02 \x01(\x05R\tkeepLimit\"\x88\x01\n" +
 	"\x15ListContainersRequest\x12!\n" +
 	"\fmanaged_only\x18\x01 \x01(\bR\vmanagedOnly\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12\x1c\n" +
@@ -905,14 +1188,16 @@ const file_proto_deployerpb_deployer_proto_rawDesc = "" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
 	"\ttimestamp\x18\x04 \x01(\tR\ttimestamp\x12\x12\n" +
-	"\x04done\x18\x05 \x01(\bR\x04done2\x84\x04\n" +
+	"\x04done\x18\x05 \x01(\bR\x04done2\xa7\x05\n" +
 	"\x0fDeployerService\x12W\n" +
 	"\x0eListContainers\x12!.deployerpb.ListContainersRequest\x1a\".deployerpb.ListContainersResponse\x12L\n" +
 	"\fGetContainer\x12\x1f.deployerpb.GetContainerRequest\x1a\x1b.deployerpb.ContainerDetail\x12^\n" +
 	"\x13StreamContainerLogs\x12&.deployerpb.StreamContainerLogsRequest\x1a\x1d.deployerpb.ContainerLogChunk0\x01\x12?\n" +
 	"\x06Health\x12\x19.deployerpb.HealthRequest\x1a\x1a.deployerpb.HealthResponse\x12Z\n" +
 	"\x0fSelfImageDigest\x12\".deployerpb.SelfImageDigestRequest\x1a#.deployerpb.SelfImageDigestResponse\x12M\n" +
-	"\rSystemUpgrade\x12 .deployerpb.SystemUpgradeRequest\x1a\x18.deployerpb.UpgradeEvent0\x01B\x18Z\x16muvon/proto/deployerpbb\x06proto3"
+	"\rSystemUpgrade\x12 .deployerpb.SystemUpgradeRequest\x1a\x18.deployerpb.UpgradeEvent0\x01\x12Q\n" +
+	"\fCreateBackup\x12\x1f.deployerpb.CreateBackupRequest\x1a .deployerpb.CreateBackupResponse\x12N\n" +
+	"\vListBackups\x12\x1e.deployerpb.ListBackupsRequest\x1a\x1f.deployerpb.ListBackupsResponseB\x18Z\x16muvon/proto/deployerpbb\x06proto3"
 
 var (
 	file_proto_deployerpb_deployer_proto_rawDescOnce sync.Once
@@ -926,44 +1211,54 @@ func file_proto_deployerpb_deployer_proto_rawDescGZIP() []byte {
 	return file_proto_deployerpb_deployer_proto_rawDescData
 }
 
-var file_proto_deployerpb_deployer_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_proto_deployerpb_deployer_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_proto_deployerpb_deployer_proto_goTypes = []any{
-	(*ListContainersRequest)(nil),      // 0: deployerpb.ListContainersRequest
-	(*ListContainersResponse)(nil),     // 1: deployerpb.ListContainersResponse
-	(*GetContainerRequest)(nil),        // 2: deployerpb.GetContainerRequest
-	(*ContainerDetail)(nil),            // 3: deployerpb.ContainerDetail
-	(*StreamContainerLogsRequest)(nil), // 4: deployerpb.StreamContainerLogsRequest
-	(*ContainerLogChunk)(nil),          // 5: deployerpb.ContainerLogChunk
-	(*HealthRequest)(nil),              // 6: deployerpb.HealthRequest
-	(*HealthResponse)(nil),             // 7: deployerpb.HealthResponse
-	(*SelfImageDigestRequest)(nil),     // 8: deployerpb.SelfImageDigestRequest
-	(*SelfImageDigestResponse)(nil),    // 9: deployerpb.SelfImageDigestResponse
-	(*SystemUpgradeRequest)(nil),       // 10: deployerpb.SystemUpgradeRequest
-	(*UpgradeEvent)(nil),               // 11: deployerpb.UpgradeEvent
-	nil,                                // 12: deployerpb.ContainerDetail.LabelsEntry
-	nil,                                // 13: deployerpb.SelfImageDigestResponse.DigestsEntry
+	(*CreateBackupRequest)(nil),        // 0: deployerpb.CreateBackupRequest
+	(*CreateBackupResponse)(nil),       // 1: deployerpb.CreateBackupResponse
+	(*BackupInfo)(nil),                 // 2: deployerpb.BackupInfo
+	(*ListBackupsRequest)(nil),         // 3: deployerpb.ListBackupsRequest
+	(*ListBackupsResponse)(nil),        // 4: deployerpb.ListBackupsResponse
+	(*ListContainersRequest)(nil),      // 5: deployerpb.ListContainersRequest
+	(*ListContainersResponse)(nil),     // 6: deployerpb.ListContainersResponse
+	(*GetContainerRequest)(nil),        // 7: deployerpb.GetContainerRequest
+	(*ContainerDetail)(nil),            // 8: deployerpb.ContainerDetail
+	(*StreamContainerLogsRequest)(nil), // 9: deployerpb.StreamContainerLogsRequest
+	(*ContainerLogChunk)(nil),          // 10: deployerpb.ContainerLogChunk
+	(*HealthRequest)(nil),              // 11: deployerpb.HealthRequest
+	(*HealthResponse)(nil),             // 12: deployerpb.HealthResponse
+	(*SelfImageDigestRequest)(nil),     // 13: deployerpb.SelfImageDigestRequest
+	(*SelfImageDigestResponse)(nil),    // 14: deployerpb.SelfImageDigestResponse
+	(*SystemUpgradeRequest)(nil),       // 15: deployerpb.SystemUpgradeRequest
+	(*UpgradeEvent)(nil),               // 16: deployerpb.UpgradeEvent
+	nil,                                // 17: deployerpb.ContainerDetail.LabelsEntry
+	nil,                                // 18: deployerpb.SelfImageDigestResponse.DigestsEntry
 }
 var file_proto_deployerpb_deployer_proto_depIdxs = []int32{
-	3,  // 0: deployerpb.ListContainersResponse.containers:type_name -> deployerpb.ContainerDetail
-	12, // 1: deployerpb.ContainerDetail.labels:type_name -> deployerpb.ContainerDetail.LabelsEntry
-	13, // 2: deployerpb.SelfImageDigestResponse.digests:type_name -> deployerpb.SelfImageDigestResponse.DigestsEntry
-	0,  // 3: deployerpb.DeployerService.ListContainers:input_type -> deployerpb.ListContainersRequest
-	2,  // 4: deployerpb.DeployerService.GetContainer:input_type -> deployerpb.GetContainerRequest
-	4,  // 5: deployerpb.DeployerService.StreamContainerLogs:input_type -> deployerpb.StreamContainerLogsRequest
-	6,  // 6: deployerpb.DeployerService.Health:input_type -> deployerpb.HealthRequest
-	8,  // 7: deployerpb.DeployerService.SelfImageDigest:input_type -> deployerpb.SelfImageDigestRequest
-	10, // 8: deployerpb.DeployerService.SystemUpgrade:input_type -> deployerpb.SystemUpgradeRequest
-	1,  // 9: deployerpb.DeployerService.ListContainers:output_type -> deployerpb.ListContainersResponse
-	3,  // 10: deployerpb.DeployerService.GetContainer:output_type -> deployerpb.ContainerDetail
-	5,  // 11: deployerpb.DeployerService.StreamContainerLogs:output_type -> deployerpb.ContainerLogChunk
-	7,  // 12: deployerpb.DeployerService.Health:output_type -> deployerpb.HealthResponse
-	9,  // 13: deployerpb.DeployerService.SelfImageDigest:output_type -> deployerpb.SelfImageDigestResponse
-	11, // 14: deployerpb.DeployerService.SystemUpgrade:output_type -> deployerpb.UpgradeEvent
-	9,  // [9:15] is the sub-list for method output_type
-	3,  // [3:9] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	2,  // 0: deployerpb.ListBackupsResponse.backups:type_name -> deployerpb.BackupInfo
+	8,  // 1: deployerpb.ListContainersResponse.containers:type_name -> deployerpb.ContainerDetail
+	17, // 2: deployerpb.ContainerDetail.labels:type_name -> deployerpb.ContainerDetail.LabelsEntry
+	18, // 3: deployerpb.SelfImageDigestResponse.digests:type_name -> deployerpb.SelfImageDigestResponse.DigestsEntry
+	5,  // 4: deployerpb.DeployerService.ListContainers:input_type -> deployerpb.ListContainersRequest
+	7,  // 5: deployerpb.DeployerService.GetContainer:input_type -> deployerpb.GetContainerRequest
+	9,  // 6: deployerpb.DeployerService.StreamContainerLogs:input_type -> deployerpb.StreamContainerLogsRequest
+	11, // 7: deployerpb.DeployerService.Health:input_type -> deployerpb.HealthRequest
+	13, // 8: deployerpb.DeployerService.SelfImageDigest:input_type -> deployerpb.SelfImageDigestRequest
+	15, // 9: deployerpb.DeployerService.SystemUpgrade:input_type -> deployerpb.SystemUpgradeRequest
+	0,  // 10: deployerpb.DeployerService.CreateBackup:input_type -> deployerpb.CreateBackupRequest
+	3,  // 11: deployerpb.DeployerService.ListBackups:input_type -> deployerpb.ListBackupsRequest
+	6,  // 12: deployerpb.DeployerService.ListContainers:output_type -> deployerpb.ListContainersResponse
+	8,  // 13: deployerpb.DeployerService.GetContainer:output_type -> deployerpb.ContainerDetail
+	10, // 14: deployerpb.DeployerService.StreamContainerLogs:output_type -> deployerpb.ContainerLogChunk
+	12, // 15: deployerpb.DeployerService.Health:output_type -> deployerpb.HealthResponse
+	14, // 16: deployerpb.DeployerService.SelfImageDigest:output_type -> deployerpb.SelfImageDigestResponse
+	16, // 17: deployerpb.DeployerService.SystemUpgrade:output_type -> deployerpb.UpgradeEvent
+	1,  // 18: deployerpb.DeployerService.CreateBackup:output_type -> deployerpb.CreateBackupResponse
+	4,  // 19: deployerpb.DeployerService.ListBackups:output_type -> deployerpb.ListBackupsResponse
+	12, // [12:20] is the sub-list for method output_type
+	4,  // [4:12] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_proto_deployerpb_deployer_proto_init() }
@@ -977,7 +1272,7 @@ func file_proto_deployerpb_deployer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_deployerpb_deployer_proto_rawDesc), len(file_proto_deployerpb_deployer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

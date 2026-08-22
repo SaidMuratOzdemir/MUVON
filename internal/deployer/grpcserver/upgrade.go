@@ -39,7 +39,8 @@ import (
 // admin (muvon) and worker (deployer) are already in different
 // containers, so deployer can safely tell Docker to recycle itself.
 
-// upgradeMu serialises SystemUpgrade calls. Combined with the DB
+// upgradeMu serialises SystemUpgrade and CreateBackup: both dump the same
+// database into the same directory, so they must not overlap. Combined with the DB
 // advisory lock on the admin side this gives us two independent guards.
 var upgradeMu sync.Mutex
 
@@ -73,7 +74,7 @@ func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerS
 	}
 
 	if !upgradeMu.TryLock() {
-		emit("failed", "error", "another upgrade is already in progress", true)
+		emit("failed", "error", "another upgrade or backup is already running", true)
 		return nil
 	}
 	defer upgradeMu.Unlock()

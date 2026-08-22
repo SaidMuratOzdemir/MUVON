@@ -38,6 +38,43 @@ service DeployerService {
   // POST /api/system/upgrade bu çağrıyı proxy'ler ve event'leri SSE
   // olarak UI'ya yansıtır.
   rpc SystemUpgrade(SystemUpgradeRequest) returns (stream UpgradeEvent);
+
+  // CreateBackup pg_dump -Fc alıp doğrular. Yükseltmeden bağımsızdır:
+  // önceden yedek almanın tek yolu bir yükseltme başlatmaktı, dolayısıyla
+  // yükseltilecek bir şey yokken yedek de alınamıyordu.
+  rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
+
+  // ListBackups diskteki yedekleri döner (en yeni önce).
+  rpc ListBackups(ListBackupsRequest) returns (ListBackupsResponse);
+}
+
+// ===== Backups =====
+
+message CreateBackupRequest {}
+
+message CreateBackupResponse {
+  string path       = 1;  // yayınlanan dosyanın tam yolu
+  int64  bytes      = 2;
+  string created_at = 3;  // RFC3339
+  // Verified, pg_restore -l doğrulamasının geçtiğini söyler. False ise note
+  // nedenini taşır; dosya yine de yazılmıştır ama körlemesine güvenilmemeli.
+  bool   verified   = 4;
+  string note       = 5;
+}
+
+message BackupInfo {
+  string name       = 1;
+  int64  bytes      = 2;
+  string created_at = 3;  // RFC3339
+}
+
+message ListBackupsRequest {}
+
+message ListBackupsResponse {
+  repeated BackupInfo backups = 1;
+  // KeepLimit, kaç yedeğin saklandığını söyler; UI bunu kullanıcıya
+  // gösterir ki eski dosyaların neden kaybolduğu belirsiz kalmasın.
+  int32 keep_limit = 2;
 }
 
 // ===== ListContainers =====
