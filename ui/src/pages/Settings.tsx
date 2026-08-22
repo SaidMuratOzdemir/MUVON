@@ -620,10 +620,12 @@ export default function Settings() {
 
       <div className="rounded-lg border border-border bg-card px-4 py-4">
         <p className="text-xs text-muted-foreground">
-          Settings are persisted to the database and take effect after the next{' '}
-          <strong className="text-foreground">config reload</strong> (triggered from the Dashboard).
-          Retention is picked up by diaLOG within a few seconds; the badges above show what is
-          actually enforced.
+          Settings are persisted to the database and picked up automatically: MUVON and diaLOG
+          both reload their snapshot every few seconds. The{' '}
+          <strong className="text-foreground">config reload</strong> button on the Dashboard only
+          forces that immediately and pushes the snapshot to connected agents. Retention is the one
+          setting whose effect lives outside the process, so the badges above show what Timescale
+          actually enforces.
         </p>
       </div>
     </div>
