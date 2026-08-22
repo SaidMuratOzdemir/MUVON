@@ -525,6 +525,9 @@ proxied host when `hosts.rum_enabled` is on (no JWT — public, fail-open).
 | `GET` | `/__muvon/rum.js` | The embedded browser client lib (ETag-cached) |
 | `GET` | `/api/client-events` | Admin search (filter by `trace_id`/`session_id`/`app`/`event_name`, cursor) — proxied to diaLOG |
 
+Sampling is set in Settings → Client Telemetry: `rum_sample_rate` (0 to 1) and
+`rum_max_batch_bytes`. Both are served to browsers and pushed to agents.
+
 ### Alerts
 
 | Method | Path | Notes |

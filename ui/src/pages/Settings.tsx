@@ -76,6 +76,28 @@ const SETTING_GROUPS: SettingGroup[] = [
     ],
   },
   {
+    title: 'Client Telemetry (RUM)',
+    icon: Radar,
+    description: 'Served to browsers from /__muvon/rum/config and pushed to agents. Only hosts with RUM enabled load the script at all.',
+    settings: [
+      {
+        key: 'rum_sample_rate',
+        label: 'Sample Rate',
+        description: 'Fraction of browser sessions that report telemetry, between 0 and 1. 1 sends everything; 0.1 keeps a tenth. Values outside that range are treated as 1.',
+        type: 'string',
+        placeholder: '1',
+      },
+      {
+        key: 'rum_max_batch_bytes',
+        label: 'Max Beacon Size',
+        description: 'Cap on a single browser beacon. Larger batches are split by the client library.',
+        type: 'number',
+        placeholder: '65536',
+        unit: 'bytes',
+      },
+    ],
+  },
+  {
     title: 'TLS / ACME',
     icon: Shield,
     settings: [

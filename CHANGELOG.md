@@ -101,6 +101,13 @@ düzeltmesi. Yedekleme kusuru veri kaybı riski taşıdığı için önce onu ok
   zaten birkaç saniyede bir config'i tazeliyor; Dashboard'daki düğme sadece
   bunu hemen tetikliyor ve agent'lara gönderiyor.
 
+### ENHANCEMENTS
+
+- **Tarayıcı telemetrisinin örnekleme ayarları panele eklendi.**
+  `rum_sample_rate` ve `rum_max_batch_bytes` kod tarafından okunuyor,
+  tarayıcılara sunuluyor ve agent'lara gönderiliyordu, ama panelde kontrolleri
+  yoktu; değiştirmenin tek yolu doğrudan API çağrısıydı.
+
 ---
 
 ## [0.1.51] - 2026-07-29
