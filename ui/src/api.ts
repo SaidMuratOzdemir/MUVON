@@ -960,6 +960,26 @@ export interface UpgradeEvent {
   done: boolean
 }
 
+export interface RetentionPolicy {
+  table: string
+  job_id?: number
+  days: number
+  has_policy: boolean
+  next_run?: string
+}
+
+export interface RetentionStatus {
+  setting_days: number
+  policies: RetentionPolicy[] | null
+  in_sync: boolean
+  unavailable?: boolean
+  error?: string
+}
+
+export async function getRetentionStatus(): Promise<RetentionStatus> {
+  return request<RetentionStatus>("GET", "/api/system/retention")
+}
+
 export async function getSystemVersion(): Promise<SystemVersion> {
   return request<SystemVersion>("GET", "/api/system/version")
 }

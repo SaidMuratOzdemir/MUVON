@@ -21,7 +21,7 @@ Tek Go modülü (`muvon`), dört bağımsız binary:
 ## Veritabanı
 
 Tek PostgreSQL 18 instance, **şema izolasyonlu**. Aktif eklentiler:
-- **TimescaleDB** — `http_logs`, `http_bodies`, `alerts` hypertable. 7g compression, 30g retention.
+- **TimescaleDB** — `http_logs`, `http_bodies`, `alerts` hypertable. 7g compression. Retention `retention_days` ayarindan gelir (varsayilan 30g, `0` = hic silme); dialog-siem Timescale job katalogunu ayara gore uzlastirir. Gercekte uygulanan degeri `GET /api/system/retention` doner.
 - **pg_search** (ParadeDB/Tantivy) — `http_logs` üzerine BM25 indexes. Elasticsearch dependency yok.
 - **pg_uuidv7** — primary key'ler zaman-sıralı; `ORDER BY id` chronological.
 

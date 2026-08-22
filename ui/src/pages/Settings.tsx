@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Save, RefreshCw, Loader2, HardDrive, Clock, Shield,
+  Save, RefreshCw, Loader2, HardDrive, Shield,
   Activity, AlertTriangle, Check, KeyRound, Globe, Bell,
   Mail, Send, Radar, Lock, AlertOctagon, FileKey, Download,
 } from 'lucide-react'
@@ -29,6 +29,10 @@ interface SettingGroup {
   icon: React.ElementType
   description?: string
   settings: SettingDef[]
+  // extra renders a group-specific panel under the fields. Retention uses it
+  // to show what Timescale actually enforces, so the input box can never
+  // again imply a policy that is not installed.
+  extra?: 'retention'
   // testAction adds a "Send Test" button to groups that configure outbound
   // notifications (Slack / SMTP). The button fires the corresponding
   // /api/alerting/test/* endpoint and toasts the result.
@@ -39,36 +43,15 @@ const SETTING_GROUPS: SettingGroup[] = [
   {
     title: 'Log Retention',
     icon: HardDrive,
+    extra: 'retention',
     settings: [
       {
-        key: 'log_retention_days',
+        key: 'retention_days',
         label: 'Retention Period',
-        description: 'How many days to keep HTTP access logs in the database',
+        description: 'How long diaLOG keeps HTTP logs, captured bodies, container logs, client events and alerts. Lowering it deletes everything outside the new window within a day, permanently: chunks are dropped, not archived. 0 keeps data forever and lets the disk grow without bound.',
         type: 'number',
-        placeholder: '90',
+        placeholder: '30',
         unit: 'days',
-      },
-    ],
-  },
-  {
-    title: 'Rate Limiting',
-    icon: Shield,
-    settings: [
-      {
-        key: 'rate_limit_rps',
-        label: 'Requests per Second',
-        description: 'Maximum requests per second per client IP (0 = disabled)',
-        type: 'number',
-        placeholder: '100',
-        unit: 'req/s',
-      },
-      {
-        key: 'rate_limit_burst',
-        label: 'Burst Size',
-        description: 'Token bucket burst size for rate limiting',
-        type: 'number',
-        placeholder: '200',
-        unit: 'tokens',
       },
     ],
   },
@@ -76,14 +59,6 @@ const SETTING_GROUPS: SettingGroup[] = [
     title: 'Proxy Behavior',
     icon: Activity,
     settings: [
-      {
-        key: 'proxy_timeout_seconds',
-        label: 'Backend Timeout',
-        description: 'Timeout for proxied requests to backend services',
-        type: 'number',
-        placeholder: '30',
-        unit: 'seconds',
-      },
       {
         key: 'enable_body_capture',
         label: 'Capture Bodies',
@@ -105,31 +80,17 @@ const SETTING_GROUPS: SettingGroup[] = [
     icon: Shield,
     settings: [
       {
-        key: 'acme_email',
+        key: 'letsencrypt_email',
         label: 'ACME Email',
         description: "Email address for Let's Encrypt certificate notifications",
         type: 'string',
         placeholder: 'admin@example.com',
       },
       {
-        key: 'acme_staging',
+        key: 'letsencrypt_staging',
         label: 'ACME Staging Mode',
         description: "Use Let's Encrypt staging environment (for testing only)",
         type: 'boolean',
-      },
-    ],
-  },
-  {
-    title: 'Timing',
-    icon: Clock,
-    settings: [
-      {
-        key: 'partition_ahead_days',
-        label: 'Partition Lookahead',
-        description: 'How many days ahead to pre-create daily log partitions',
-        type: 'number',
-        placeholder: '7',
-        unit: 'days',
       },
     ],
   },
@@ -437,6 +398,83 @@ function SettingRow({
   )
 }
 
+// RetentionStatusPanel shows what Timescale enforces, not what the input box
+// says. diaLOG reconciles the setting into the retention jobs within a few
+// seconds, so right after a save the two legitimately disagree for a moment;
+// we re-read a couple of times instead of leaving a stale warning on screen.
+function RetentionStatusPanel({ refreshKey }: { refreshKey: string }) {
+  const [status, setStatus] = useState<api.RetentionStatus | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const timers: ReturnType<typeof setTimeout>[] = []
+
+    const fetchOnce = async () => {
+      try {
+        const s = await api.getRetentionStatus()
+        if (!cancelled) { setStatus(s); setFailed(false) }
+      } catch {
+        if (!cancelled) setFailed(true)
+      }
+    }
+
+    fetchOnce()
+    timers.push(setTimeout(fetchOnce, 3000))
+    timers.push(setTimeout(fetchOnce, 8000))
+    return () => { cancelled = true; timers.forEach(clearTimeout) }
+  }, [refreshKey])
+
+  if (failed) {
+    return (
+      <p className="px-4 pb-3 text-xs text-muted-foreground">
+        Could not read the enforced retention policy.
+      </p>
+    )
+  }
+  if (!status) return null
+
+  if (status.unavailable) {
+    return (
+      <p className="px-4 pb-3 text-xs text-muted-foreground">
+        No log hypertables on this deployment, so nothing enforces retention here.
+      </p>
+    )
+  }
+
+  const policies = status.policies ?? []
+  const describe = (p: api.RetentionPolicy) =>
+    p.has_policy ? `${p.days}d` : 'kept forever'
+
+  return (
+    <div className="px-4 pb-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground">Enforced by diaLOG right now:</span>
+        {policies.map(p => (
+          <Badge
+            key={p.table}
+            variant="outline"
+            className={cn(
+              'text-[10px] font-mono',
+              (p.has_policy ? p.days : 0) === status.setting_days
+                ? 'text-emerald-400 border-emerald-400/40'
+                : 'text-yellow-400 border-yellow-400/40'
+            )}
+          >
+            {p.table} {describe(p)}
+          </Badge>
+        ))}
+      </div>
+      {!status.in_sync && (
+        <p className="text-xs text-yellow-400">
+          The setting says {status.setting_days} days but the policies above differ. diaLOG applies
+          the change within a few seconds; if this stays, diaLOG is down or cannot alter the jobs.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function Settings() {
   const [rawValues, setRawValues] = useState<Record<string, string>>({})
   const [savedValues, setSavedValues] = useState<Record<string, string>>({})
@@ -462,12 +500,16 @@ export default function Settings() {
 
   useEffect(() => { load() }, [load])
 
+  // An unset setting has no value. Falling back to the placeholder here
+  // rendered the suggested default as though it were stored and in force,
+  // which is how a retention window nobody had ever configured showed 90
+  // while Timescale was dropping data at 30.
   function getValue(key: string, def: SettingDef) {
-    return rawValues[key] ?? (def.type === 'boolean' ? 'false' : def.placeholder ?? '')
+    return rawValues[key] ?? (def.type === 'boolean' ? 'false' : '')
   }
 
   function getSaved(key: string, def: SettingDef) {
-    return savedValues[key] ?? (def.type === 'boolean' ? 'false' : def.placeholder ?? '')
+    return savedValues[key] ?? (def.type === 'boolean' ? 'false' : '')
   }
 
   async function handleSave(key: string, value: string) {
@@ -568,6 +610,9 @@ export default function Settings() {
                   />
                 ))}
               </div>
+              {group.extra === 'retention' && (
+                <RetentionStatusPanel refreshKey={savedValues['retention_days'] ?? ''} />
+              )}
             </div>
           ))}
         </div>
@@ -577,7 +622,8 @@ export default function Settings() {
         <p className="text-xs text-muted-foreground">
           Settings are persisted to the database and take effect after the next{' '}
           <strong className="text-foreground">config reload</strong> (triggered from the Dashboard).
-          Some settings (like retention or partition lookahead) apply at the next scheduled cron cycle.
+          Retention is picked up by diaLOG within a few seconds; the badges above show what is
+          actually enforced.
         </p>
       </div>
     </div>

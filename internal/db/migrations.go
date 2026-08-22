@@ -1229,4 +1229,47 @@ SELECT add_retention_policy('client_events', INTERVAL '30 days', if_not_exists =
 		CREATE UNIQUE INDEX IF NOT EXISTS uq_job_runs_scheduled
 		    ON scheduled_job_runs (job_id, scheduled_for) WHERE trigger = 'schedule';`,
 	},
+	// The admin panel wrote three settings under keys nothing ever read:
+	// acme_email / acme_staging (the loader reads letsencrypt_*) and
+	// log_retention_days (the loader reads retention_days). Carry the values
+	// across before dropping the strays, so an operator who configured ACME
+	// through the panel does not silently lose their contact address.
+	//
+	// retention_days is deliberately only raised, never lowered, by this
+	// migration: growing the window is inert, but shrinking it makes the
+	// retention job delete chunks on its next run, and a deploy must never
+	// be the thing that decides to drop logs.
+	{
+		name: "migrate_stray_settings_keys", product: "muvon",
+		sql: `
+UPDATE settings dst
+SET value = src.value
+FROM settings src
+WHERE src.key = 'acme_email'
+  AND dst.key = 'letsencrypt_email'
+  AND COALESCE(dst.value #>> '{}', '') = ''
+  AND COALESCE(src.value #>> '{}', '') <> '';
+
+UPDATE settings dst
+SET value = src.value
+FROM settings src
+WHERE src.key = 'acme_staging'
+  AND dst.key = 'letsencrypt_staging'
+  AND COALESCE(dst.value #>> '{}', 'false') = 'false'
+  AND COALESCE(src.value #>> '{}', 'false') = 'true';
+
+UPDATE settings dst
+SET value = src.value
+FROM settings src
+WHERE src.key = 'log_retention_days'
+  AND dst.key = 'retention_days'
+  AND (src.value #>> '{}') ~ '^[0-9]+$'
+  AND (dst.value #>> '{}') ~ '^[0-9]+$'
+  AND (src.value #>> '{}')::int > (dst.value #>> '{}')::int;
+
+DELETE FROM settings
+WHERE key IN ('acme_email', 'acme_staging', 'log_retention_days',
+              'proxy_timeout_seconds', 'partition_ahead_days',
+              'rate_limit_rps', 'rate_limit_burst');`,
+	},
 }

@@ -301,7 +301,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Feature | Notes |
 |---------|-------|
 | HTTP Logs | Full request/response capture: headers, bodies, timing, user identity, geolocation |
-| TimescaleDB Hypertables | Daily chunks, 30-day retention, 7-day compression |
+| TimescaleDB Hypertables | Daily chunks, 7-day compression, retention from the `retention_days` setting (default 30 days, `0` = keep forever) |
 | BM25 Full-Text Search | pg_search index across path/host/UA/IP fields |
 | UUIDv7 IDs | Time-ordered, K-sortable, no separate timestamp index |
 | SSE Live Tail | Real-time log stream over Server-Sent Events |

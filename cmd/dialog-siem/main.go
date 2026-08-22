@@ -112,6 +112,14 @@ func main() {
 		}
 	}()
 
+	// Retention reconciler. The admin panel's retention_days setting is the
+	// only place an operator states how long diaLOG keeps log data, but
+	// Timescale enforces it from its own job catalog, so the two drift apart
+	// silently unless something writes the setting through. Migrations only
+	// install the initial policy (if_not_exists), so without this loop the
+	// panel value is decoration.
+	go runRetentionReconciler(ctx, database, ch)
+
 	// Log pipeline
 	flushInterval := time.Duration(*flushMs) * time.Millisecond
 	pipeline := logger.NewPipeline(database.Pool, *bufSize, *workers, *batchSize, flushInterval)
@@ -443,4 +451,59 @@ func boolEnvOr(key string, fallback bool) bool {
 		return false
 	}
 	return fallback
+}
+
+// runRetentionReconciler keeps the Timescale retention policies in step with
+// the retention_days setting. It applies on change rather than on every tick,
+// and re-checks the catalog periodically so drift introduced elsewhere (a new
+// hypertable arriving with the migration default, a policy edited by hand) is
+// healed without a restart.
+func runRetentionReconciler(ctx context.Context, database *db.DB, ch *config.Holder) {
+	const (
+		pollInterval = 5 * time.Second
+		fullInterval = 5 * time.Minute
+	)
+
+	applied := -1
+	// warned remembers the last out-of-range value we complained about, so a
+	// typo in the panel produces one line instead of one every five seconds.
+	warned := -1
+	var lastFull time.Time
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		if cfg := ch.Get(); cfg != nil {
+			desired := cfg.Global.RetentionDays
+			switch {
+			case desired < 0 || desired > db.MaxRetentionDays:
+				// Refuse rather than clamp: silently enforcing a different
+				// window than the one on screen is the bug we are fixing.
+				if desired != warned {
+					slog.Warn("retention_days out of range, leaving policies untouched",
+						"days", desired, "max", db.MaxRetentionDays)
+					warned = desired
+				}
+			case desired != applied || time.Since(lastFull) >= fullInterval:
+				changed, err := database.ApplyRetention(ctx, desired)
+				if err != nil {
+					// Leave `applied` alone so the next tick retries.
+					slog.Error("retention policy apply failed", "days", desired, "error", err)
+					break
+				}
+				applied = desired
+				lastFull = time.Now()
+				if len(changed) > 0 {
+					slog.Info("retention policy updated", "days", desired, "tables", changed)
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
