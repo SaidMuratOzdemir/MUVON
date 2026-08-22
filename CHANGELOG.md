@@ -23,6 +23,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+Henüz birikme yok.
+
+---
+
+## [0.2.2] - 2026-08-22
+
+TLS sertifikalarının otomatik yenilenmesini onaran sürüm. Şema değişikliği yok.
+Yenileme düzeltmesi agent tarafında, DNS ve uyarı düzeltmeleri merkezde çalışır.
+
 ### BUGFIXES
 
 - **Sertifikalar süresi dolana kadar hiç yenilenmiyordu.** Agent, kendi
@@ -58,6 +67,31 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   alerting yolundan (Slack, e-posta) uyarı çıkarıyor. Eşik bilerek 30 değil 14:
   yenileme 30 gün kala çalıştığı için 14 güne inmiş bir sertifika "zamanı
   geldi" değil, "yenileme yapılmıyor" demektir.
+
+### Upgrade notları
+
+Yenileme düzeltmesi **agent tarafında** çalışır, yani edge host'ları
+güncellemeden sertifikalar yenilenmeye başlamaz. Merkezi güncellemek DNS
+durumunu ve bitiş uyarısını devreye sokar.
+
+Agent güncellendikten sonraki ilk TLS el sıkışmasında autocert mevcut
+sertifikayı sahiplenir. Bitişine 30 günden az kalmışsa yenileme zamanlayıcısı
+geçmiş bir tarihle kurulur ve yenileme hemen arka planda yapılır; eski
+sertifika hâlâ geçerli olduğu için kesinti olmaz. Yani süresi yaklaşmış
+sertifikalar için ayrıca bir şey yapmanız gerekmez.
+
+Bu sürümden sonra sertifikaların sahibi autocert'tir. Bir domain için elle
+sertifika kullanmak isterseniz panelden yükleyin: operatörün yüklediği
+sertifika her zaman öncelikli kalır. Merkezde saklanan ACME kopyaları artık
+yalnızca agent'ın yerel önbelleği boşsa (soğuk başlangıç) devreye girer.
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.2.2
+
+# Agent (her edge sunucusunda):
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.2.2
+```
 
 ---
 
