@@ -23,6 +23,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+Henüz birikme yok.
+
+---
+
+## [0.2.3] - 2026-08-23
+
+Yedek almayı bağımsız bir yetenek haline getiren sürüm. Şema değişikliği yok;
+yalnızca merkezi güncellemek yeterli, agent'ları güncellemeye gerek yok.
+
 ### FEATURES
 
 - **Panelden yedek alınabiliyor.** Ayarlar → Sistem altına "Yedek al" düğmesi
@@ -40,6 +49,25 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   daha önce yoktu ve bir kurulumda 5,5 GB'lık ölü dosya birikmişti. Yükseltme
   ve yedek aynı kilidi paylaşır, çünkü ikisi de aynı veritabanını aynı dizine
   döker.
+
+### Upgrade notları
+
+Düğme merkezde çalışır: `muvon` ve `muvon-deployer` güncellendiğinde Ayarlar →
+Sistem altında görünür. Edge agent'larını güncellemenize gerek yok.
+
+Yedekler deployer container'ındaki `/var/lib/muvon/backups` dizinine, yani
+compose'daki `backups` volume'üne yazılır. Kurulum script'inin aldığı yedekler
+host üzerinde `/opt/muvon/backups` altında durmaya devam eder; ikisi ayrı
+yerlerdir ve saklama sınırı yalnızca ilkine uygulanır.
+
+Doğrulamayı geçemeyen bir yedek `.rejected` uzantısıyla saklanır ve listede
+görünmez. Bu dosyalar budanmaz; ne üretildiğini inceleyip elle silmeniz
+beklenir.
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.2.3
+```
 
 ---
 
