@@ -27,6 +27,51 @@ Henüz birikme yok.
 
 ---
 
+## [0.2.1] - 2026-08-22
+
+v0.1.52'de eklenen yedek doğrulaması sağlam yedekleri reddedip yükseltmeyi
+durduruyordu. Bu sürüm o hatayı ve onu teşhis etmeyi imkânsız kılan sessizliği
+düzeltir. Şema değişikliği yok.
+
+### BUGFIXES
+
+- **Yedek doğrulaması sağlam yedeği bozuk sanıyor, yükseltmeyi iptal
+  ediyordu.** Doğrulama, `pg_restore -l` komutunu veritabanının kendi imajından
+  türetilen kısa ömürlü bir container'da çalıştırıyor. O imaj `postgres`
+  kullanıcısına düşüyor, dump dosyası ise `0600 root` yazılıyor; sonuç izin
+  hatası ve exit 1. Kod bunu "dump doğrulamayı geçemedi" diye okuyup yükseltmeyi
+  durduruyordu. Aynı dosya root ile açıldığında sorunsuz okunuyor, yani yedekler
+  baştan beri sağlamdı. Doğrulama container'ı artık root çalışıyor ve depolamayı
+  salt okunur bağlıyor.
+
+- **Başarısız yükseltme sunucuda hiçbir iz bırakmıyordu.** Yükseltme adımları
+  yalnızca gRPC akışıyla tarayıcıya gidiyordu; operatör sekmeyi kapattığında ya
+  da bağlantı koptuğunda hatanın nedeni hiçbir yerde kalmıyordu. "Sunucu log'una
+  bak" demek anlamsızdı, çünkü log boştu. Her adım artık deployer'ın container
+  log'una da yazılıyor, hatalar error seviyesinde.
+
+- **Reddedilen yedek siliniyordu.** Doğrulamayı geçemeyen dosya artık
+  `.rejected` uzantısıyla saklanıyor ve yolu hem hata mesajında hem log'da
+  belirtiliyor, böylece ne üretildiği sonradan incelenebilir. Sağlam sanılıp
+  kullanılma riski yok, çünkü adı `pgdata-*.dump` kalıbına uymuyor.
+
+### Upgrade notları
+
+v0.1.52 veya v0.2.0'da panelden yükseltme denediyseniz ve "backup failed,
+upgrade aborted" hatası aldıysanız, yedeğiniz büyük olasılıkla sağlamdı; bu
+sürümden sonra aynı yükseltme sorunsuz tamamlanır.
+
+Bu sürüme geçerken yedek doğrulaması hâlâ eski (hatalı) kodla çalışacağı için
+yükseltmeyi **yedek kutusunu işaretlemeden** başlatın, ya da önce elle bir yedek
+alıp doğrulayın:
+
+```bash
+docker exec muvon-postgres pg_dump -Fc -U muvon -d muvon > muvon-$(date +%Y%m%d).dump
+pg_restore -l muvon-$(date +%Y%m%d).dump | head
+```
+
+---
+
 ## [0.2.0] - 2026-08-22
 
 Ziyaretçi konumunun kaynağı değişti: yerel MaxMind veritabanı kaldırıldı,
