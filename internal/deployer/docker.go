@@ -52,9 +52,13 @@ func NewDockerClient(host string) (*DockerClient, error) {
 }
 
 type containerCreateRequest struct {
-	Image            string            `json:"Image"`
-	Cmd              []string          `json:"Cmd,omitempty"`
-	Env              []string          `json:"Env,omitempty"`
+	Image string   `json:"Image"`
+	Cmd   []string `json:"Cmd,omitempty"`
+	Env   []string `json:"Env,omitempty"`
+	// User overrides the image's default user. Needed when a helper has to
+	// read a file the deployer wrote as root: most official images drop to an
+	// unprivileged user and would fail with EACCES instead.
+	User             string            `json:"User,omitempty"`
 	Labels           map[string]string `json:"Labels,omitempty"`
 	HostConfig       hostConfig        `json:"HostConfig"`
 	NetworkingConfig networkingConfig  `json:"NetworkingConfig,omitempty"`

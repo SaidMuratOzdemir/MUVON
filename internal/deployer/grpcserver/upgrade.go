@@ -49,7 +49,20 @@ const (
 )
 
 func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerService_SystemUpgradeServer) error {
+	// Every event goes to the container log as well as the stream. The stream
+	// lives only as long as the operator's browser tab: an upgrade that fails
+	// after they navigate away, or one whose reason arrives as the connection
+	// drops, used to leave no trace anywhere on the host. "Look at the server
+	// log" has to actually work.
 	emit := func(step, level, message string, done bool) {
+		switch level {
+		case "error":
+			slog.Error("system upgrade", "step", step, "message", message)
+		case "warn":
+			slog.Warn("system upgrade", "step", step, "message", message)
+		default:
+			slog.Info("system upgrade", "step", step, "message", message)
+		}
 		_ = stream.Send(&pb.UpgradeEvent{
 			Step:      step,
 			Level:     level,
@@ -153,9 +166,25 @@ func (s *Server) runPGDump(ctx context.Context, emit func(step, level, msg strin
 	syncErr := f.Sync()
 	closeErr := f.Close()
 
+	// A dump that fails its checks is kept, renamed so nothing can mistake it
+	// for a usable backup. Deleting the evidence is how a failed backup
+	// becomes unexplainable after the fact; the operator needs the file to
+	// see what actually came out.
 	fail := func(format string, args ...any) (string, error) {
-		os.Remove(partPath)
-		return "", fmt.Errorf(format, args...)
+		err := fmt.Errorf(format, args...)
+		rejected := outPath + ".rejected"
+		if renameErr := os.Rename(partPath, rejected); renameErr != nil {
+			os.Remove(partPath)
+			slog.Error("backup rejected and could not be preserved",
+				"error", err, "rename_error", renameErr)
+			return "", err
+		}
+		size := int64(-1)
+		if info, statErr := os.Stat(rejected); statErr == nil {
+			size = info.Size()
+		}
+		slog.Error("backup rejected", "error", err, "kept_at", rejected, "bytes", size)
+		return "", fmt.Errorf("%w (rejected file kept at %s)", err, rejected)
 	}
 	switch {
 	case execErr != nil:
@@ -247,9 +276,14 @@ func (s *Server) verifyDumpRestorable(ctx context.Context, fileName string, emit
 	}
 
 	id, logs, wait, err := s.docker.RunHelperContainer(ctx, deployer.HelperContainerOpts{
-		Image:      pg.ImageRef,
-		Cmd:        []string{"pg_restore", "-l", "/verify/" + fileName},
-		Binds:      []string{bind},
+		Image: pg.ImageRef,
+		Cmd:   []string{"pg_restore", "-l", "/verify/" + fileName},
+		Binds: []string{bind},
+		// The dump is written 0600 root, and the postgres image drops to the
+		// postgres user, so without this the check fails with EACCES on a
+		// perfectly good archive — which then aborted the upgrade. The
+		// container only reads, and the mount is read-only.
+		User:       "root",
 		AutoRemove: false,
 		Labels:     map[string]string{"muvon.helper.kind": "backup-verify"},
 	})
@@ -297,10 +331,10 @@ func (s *Server) backupStorageBind(ctx context.Context) (string, error) {
 		// A named volume is the normal case; mounting it by name lets Docker
 		// resolve the storage the same way it did for us.
 		if m.Name != "" {
-			return m.Name + ":/verify", nil
+			return m.Name + ":/verify:ro", nil
 		}
 		if m.Source != "" {
-			return m.Source + ":/verify", nil
+			return m.Source + ":/verify:ro", nil
 		}
 	}
 	return "", fmt.Errorf("no mount found at %s", backupDir)

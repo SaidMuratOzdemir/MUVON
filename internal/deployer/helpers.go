@@ -28,8 +28,12 @@ type HelperContainerOpts struct {
 	Env   map[string]string
 	// Binds are "host:container[:ro]" entries. Helpers typically need
 	// /var/run/docker.sock and a host config dir.
-	Binds      []string
-	Labels     map[string]string
+	Binds  []string
+	Labels map[string]string
+	// User overrides the image's default user ("root" or "uid:gid"). Set it
+	// when the helper reads files the deployer wrote, since those are
+	// root-owned and most images run as someone else.
+	User       string
 	AutoRemove bool
 	// Init=true makes Docker inject tini as PID 1 so child processes
 	// are reaped and signals propagate cleanly. Without it, `sh -c`
@@ -75,6 +79,7 @@ func (c *DockerClient) RunHelperContainer(ctx context.Context, opts HelperContai
 		Image:      opts.Image,
 		Cmd:        opts.Cmd,
 		Env:        envSlice,
+		User:       opts.User,
 		Labels:     opts.Labels,
 		HostConfig: hc,
 	}
