@@ -243,6 +243,12 @@ func main() {
 	})
 	corrEngine.Run(pipeline)
 
+	// Certificate expiry watch. Days-left has always been visible in the
+	// panel, and a fleet-wide renewal failure still went unnoticed for three
+	// months because seeing it required someone to go looking. This turns it
+	// into something that arrives on its own.
+	go runCertExpiryWatch(ctx, database, alertMgr)
+
 	// gRPC server on Unix socket
 	os.Remove(*socketPath)
 	lis, err := net.Listen("unix", *socketPath)
@@ -413,6 +419,74 @@ func countHostJWTOverrides(cfg *config.Config) int {
 		}
 	}
 	return n
+}
+
+// certExpiryAlertWindow is when a certificate becomes newsworthy. ACME renews
+// 30 days out, so anything still standing at 14 days is not "due for renewal",
+// it is evidence that renewal is not happening. Alerting at 30 would fire on
+// every healthy certificate and teach the operator to ignore it.
+const certExpiryAlertWindow = 14 * 24 * time.Hour
+
+// certExpiryCheckInterval is how often the fleet is swept. Certificates move
+// slowly; a few hours of delay costs nothing and keeps the query rare.
+const certExpiryCheckInterval = 6 * time.Hour
+
+// runCertExpiryWatch raises an alert for certificates that are close to expiry
+// despite renewal being automatic. Cooldown, storage and fan-out are the
+// alerting manager's job, keyed by the fingerprint below, so a domain does not
+// re-notify on every sweep.
+func runCertExpiryWatch(ctx context.Context, database *db.DB, sink *alerting.Manager) {
+	check := func() {
+		certs, err := database.ListExpiringCerts(ctx, certExpiryAlertWindow)
+		if err != nil {
+			slog.Warn("certificate expiry check failed", "error", err)
+			return
+		}
+		for _, c := range certs {
+			severity := "warning"
+			title := fmt.Sprintf("TLS sertifikası %d gün sonra doluyor: %s", c.DaysLeft, c.Domain)
+			switch {
+			case c.DaysLeft < 0:
+				severity = "critical"
+				title = fmt.Sprintf("TLS sertifikasının süresi doldu: %s", c.Domain)
+			case c.DaysLeft <= 3:
+				severity = "critical"
+			}
+			sink.HandleAlert(ctx, correlation.Alert{
+				Rule:     "tls_cert_expiring",
+				Severity: severity,
+				Title:    title,
+				Host:     c.Domain,
+				Detail: map[string]any{
+					"domain":     c.Domain,
+					"days_left":  c.DaysLeft,
+					"expires_at": c.ExpiresAt.UTC().Format(time.RFC3339),
+					"issuer":     c.Issuer,
+					"tls_mode":   c.TLSMode,
+					"terminator": c.Terminator,
+					"note":       "Otomatik yenileme 30 gün kala çalışır; bu noktaya gelmiş olması yenilemenin yapılmadığını gösterir.",
+				},
+				// One fingerprint per domain: the cooldown then decides how
+				// often it repeats, rather than every sweep re-notifying.
+				Fingerprint: "tls_cert_expiring:" + c.Domain,
+			})
+			slog.Warn("certificate nearing expiry",
+				"domain", c.Domain, "days_left", c.DaysLeft, "issuer", c.Issuer, "terminator", c.Terminator)
+		}
+	}
+
+	// A first pass shortly after boot, then on the slow cadence.
+	timer := time.NewTimer(time.Minute)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			check()
+			timer.Reset(certExpiryCheckInterval)
+		}
+	}
 }
 
 // settingOrFlag decides which value a pipeline knob takes. Anything the

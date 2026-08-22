@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"muvon/internal/db"
+	"muvon/internal/proxy"
 )
 
 // DNS verification — answers "does the operator's domain currently
@@ -29,6 +30,8 @@ type dnsStatusResponse struct {
 	ResolvedIPs []string `json:"resolved_ips"`
 	ExpectedIPs []string `json:"expected_ips"`
 	// Status: "ok" — at least one resolved IP matches an expected one.
+	//         "proxied" — every answer is a Cloudflare edge, so the record
+	//           points at a CDN in front of the origin. Expected, not broken.
 	//         "stale" — resolves to an IP we don't recognise (likely
 	//           still pointing at the customer's old host).
 	//         "unresolved" — no DNS record exists yet.
@@ -115,12 +118,36 @@ func (s *Server) handleHostDNSStatus(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if matched {
+	switch {
+	case matched:
 		resp.Status = "ok"
-	} else {
+	case allCloudflare(addrs):
+		// Every answer is a Cloudflare edge. The record points at a CDN in
+		// front of the origin, which is a deliberate setup, not a stale
+		// record — reporting it as wrong trains the operator to ignore this
+		// panel. The origin address stays in expected_ips so they can still
+		// see what sits behind it.
+		resp.Status = "proxied"
+		resp.Detail = "Domain Cloudflare üzerinden proxy'leniyor; DNS doğrudan origin'e değil Cloudflare'e çözülüyor. Bu beklenen durum."
+	default:
 		resp.Status = "stale"
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// allCloudflare reports whether every resolved address is a Cloudflare edge.
+// It has to be every one: a mixed answer means part of the record still points
+// somewhere else, which is worth flagging rather than explaining away.
+func allCloudflare(addrs []string) bool {
+	if len(addrs) == 0 {
+		return false
+	}
+	for _, a := range addrs {
+		if !proxy.IsCloudflareIP(a) {
+			return false
+		}
+	}
+	return true
 }
 
 // expectedHostIPs returns the IPs DNS for this specific host should point

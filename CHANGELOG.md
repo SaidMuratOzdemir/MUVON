@@ -23,7 +23,41 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-Henüz birikme yok.
+### BUGFIXES
+
+- **Sertifikalar süresi dolana kadar hiç yenilenmiyordu.** Agent, kendi
+  ürettiği sertifikayı merkeze yedek olarak gönderiyor, sonra her TLS el
+  sıkışmasında o yedeği merkezden geri okuyordu. autocert hiç çağrılmadığı için
+  30 günlük yenileme zamanlayıcısı hiç kurulmuyordu; sertifika dolana kadar
+  bekleniyor, dolduğu anda devreye giren kurtarma yolu yenisini alıyordu. Sonuç
+  her domain için bitiş anında kısa bir TLS kesintisiydi. Bir üretim filosunda
+  36 domain'in tamamı ilk üretimden beri bu durumdaydı; agent'ın yerel ACME
+  önbelleğindeki dosyalara üç aydır dokunulmamıştı.
+
+  Artık sıra şöyle: operatörün elle yüklediği sertifika her zaman kazanır,
+  onun dışında sertifikayı üreten autocert yönetir, merkezdeki kopya ise asıl
+  amacına döner ve yalnızca agent'ta yerel kopya yokken (soğuk başlangıç)
+  kullanılır. O durumda yerel önbelleğe de yazılır, böylece sahiplik autocert'e
+  geçer. Yenileme artık bitişten 30 gün önce, eski sertifika hâlâ geçerliyken
+  arka planda yapılıyor, yani kesinti ortadan kalkıyor. ACME cevap veremezse
+  merkezdeki geçerli yedek sunulmaya devam ediyor.
+
+- **Cloudflare arkasındaki domain'ler panelde "Yanlış IP'ye yönlendiriyor"
+  diye işaretleniyordu.** Kontrol, çözülen adresi origin IP'siyle karşılaştırıp
+  eşleşmeyince hata veriyordu; önde bir CDN olma ihtimali hesaba katılmamıştı.
+  Turuncu bulut açık her domain kalıcı olarak uyarı gösteriyordu, bu da gerçek
+  uyarıları görünmez kılıyordu. Artık tüm cevaplar Cloudflare aralığındaysa
+  durum `proxied` olarak raporlanıyor.
+
+### ENHANCEMENTS
+
+- **Sertifika bitişi artık uyarı üretiyor.** Kalan gün sayısı panelde zaten
+  görünüyordu ama filo çapında bir yenileme arızası üç ay boyunca fark
+  edilmedi, çünkü görmek için birinin bakması gerekiyordu. diaLOG artık altı
+  saatte bir kontrol edip 14 günün altına düşen sertifikalar için normal
+  alerting yolundan (Slack, e-posta) uyarı çıkarıyor. Eşik bilerek 30 değil 14:
+  yenileme 30 gün kala çalıştığı için 14 güne inmiş bir sertifika "zamanı
+  geldi" değil, "yenileme yapılmıyor" demektir.
 
 ---
 

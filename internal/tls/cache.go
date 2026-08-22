@@ -126,30 +126,68 @@ func extractExpiry(certPEM []byte) time.Time {
 type CertStore struct {
 	db    *db.DB
 	mu    sync.RWMutex
-	certs map[string]*tls.Certificate
+	certs map[string]storedCert
+}
+
+// storedCert keeps the issuer alongside the parsed certificate: the serving
+// path has to distinguish a certificate an operator uploaded from one autocert
+// issued, because answering ahead of autocert for its own certificates is what
+// stops them ever being renewed.
+type storedCert struct {
+	cert   *tls.Certificate
+	issuer string
+}
+
+// operatorManaged reports whether a human put this certificate in the store.
+// Mirrors CentralCert.OperatorManaged: anything not issued through ACME was
+// uploaded deliberately and outranks autocert.
+func (s storedCert) operatorManaged() bool {
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(s.issuer)), "letsencrypt")
 }
 
 func NewCertStore(database *db.DB) *CertStore {
 	return &CertStore{
 		db:    database,
-		certs: make(map[string]*tls.Certificate),
+		certs: make(map[string]storedCert),
 	}
 }
 
+// GetOperatorCertificate returns a certificate only when a human uploaded it.
+// ACME-issued rows are ignored here on purpose: autocert owns those and has to
+// be the one asked, or its renewal timer is never armed and the certificate is
+// served untouched until the day it expires.
+func (cs *CertStore) GetOperatorCertificate(domain string) (*tls.Certificate, error) {
+	cert, issuer, err := cs.lookup(domain)
+	if err != nil {
+		return nil, err
+	}
+	if !(storedCert{issuer: issuer}).operatorManaged() {
+		return nil, nil
+	}
+	return cert, nil
+}
+
+// GetCertificate returns whatever the store holds for the domain, regardless
+// of issuer. Callers on the serving path want GetOperatorCertificate instead.
 func (cs *CertStore) GetCertificate(domain string) (*tls.Certificate, error) {
+	cert, _, err := cs.lookup(domain)
+	return cert, err
+}
+
+func (cs *CertStore) lookup(domain string) (*tls.Certificate, string, error) {
 	cs.mu.RLock()
-	cert, ok := cs.certs[domain]
+	entry, ok := cs.certs[domain]
 	cs.mu.RUnlock()
 	if ok {
-		if cert.Leaf != nil && time.Now().After(cert.Leaf.NotAfter) {
+		if entry.cert.Leaf != nil && time.Now().After(entry.cert.Leaf.NotAfter) {
 			cs.Invalidate(domain)
 		} else {
-			return cert, nil
+			return entry.cert, entry.issuer, nil
 		}
 	}
 
 	if cs.db == nil {
-		return nil, fmt.Errorf("cert store: no database")
+		return nil, "", fmt.Errorf("cert store: no database")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -157,16 +195,16 @@ func (cs *CertStore) GetCertificate(domain string) (*tls.Certificate, error) {
 
 	dbCert, err := cs.db.GetCertByDomain(ctx, domain)
 	if err != nil {
-		return nil, fmt.Errorf("cert store: %w", err)
+		return nil, "", fmt.Errorf("cert store: %w", err)
 	}
 
 	if time.Now().After(dbCert.ExpiresAt) {
-		return nil, fmt.Errorf("cert store: certificate expired for %s", domain)
+		return nil, "", fmt.Errorf("cert store: certificate expired for %s", domain)
 	}
 
 	tlsCert, err := tls.X509KeyPair(dbCert.CertPEM, dbCert.KeyPEM)
 	if err != nil {
-		return nil, fmt.Errorf("cert store: parse cert for %s: %w", domain, err)
+		return nil, "", fmt.Errorf("cert store: parse cert for %s: %w", domain, err)
 	}
 
 	// Parse Leaf so in-memory expiry check works
@@ -175,11 +213,11 @@ func (cs *CertStore) GetCertificate(domain string) (*tls.Certificate, error) {
 	}
 
 	cs.mu.Lock()
-	cs.certs[domain] = &tlsCert
+	cs.certs[domain] = storedCert{cert: &tlsCert, issuer: dbCert.Issuer}
 	cs.mu.Unlock()
 
-	slog.Info("certificate loaded from DB", "domain", domain, "expires", dbCert.ExpiresAt)
-	return &tlsCert, nil
+	slog.Info("certificate loaded from DB", "domain", domain, "issuer", dbCert.Issuer, "expires", dbCert.ExpiresAt)
+	return &tlsCert, dbCert.Issuer, nil
 }
 
 func (cs *CertStore) Invalidate(domain string) {
@@ -190,6 +228,6 @@ func (cs *CertStore) Invalidate(domain string) {
 
 func (cs *CertStore) InvalidateAll() {
 	cs.mu.Lock()
-	cs.certs = make(map[string]*tls.Certificate)
+	cs.certs = make(map[string]storedCert)
 	cs.mu.Unlock()
 }

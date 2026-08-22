@@ -129,6 +129,7 @@ function DNSStatusSection({ host }: { host: Host }) {
     if (!status) return { icon: <ShieldQuestion className="h-4 w-4" />, tone: 'text-muted-foreground', title: 'Bilinmiyor', detail: '' }
     switch (status.status) {
       case 'ok': return { icon: <ShieldCheck className="h-4 w-4 text-emerald-400" />, tone: 'text-emerald-300', title: 'DNS doğrulandı', detail: `Resolve eden: ${status.resolved_ips.join(', ')}` }
+      case 'proxied': return { icon: <ShieldCheck className="h-4 w-4 text-emerald-400" />, tone: 'text-emerald-300', title: 'Cloudflare üzerinden proxy\'leniyor', detail: `Origin: ${status.expected_ips.join(', ') || '—'} · DNS Cloudflare'e çözülüyor, beklenen durum.` }
       case 'stale': return { icon: <ShieldAlert className="h-4 w-4 text-amber-400" />, tone: 'text-amber-300', title: 'Yanlış IP\'ye yönlendiriyor', detail: `Şu an: ${status.resolved_ips.join(', ') || '—'}` }
       case 'unresolved': return { icon: <ShieldAlert className="h-4 w-4 text-amber-400" />, tone: 'text-amber-300', title: 'DNS kaydı bulunamadı', detail: 'A kaydı henüz yayılmamış olabilir.' }
       case 'no_target': return { icon: <ShieldQuestion className="h-4 w-4" />, tone: 'text-muted-foreground', title: 'Hedef IP yapılandırılmamış', detail: status.detail ?? '' }

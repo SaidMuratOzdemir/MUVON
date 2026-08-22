@@ -448,7 +448,10 @@ export interface DNSStatus {
   domain: string
   resolved_ips: string[]
   expected_ips: string[]
-  status: 'ok' | 'stale' | 'unresolved' | 'no_target' | 'wildcard' | 'error'
+  // "proxied" means every answer is a Cloudflare edge: the record points at a
+  // CDN in front of the origin, which is a deliberate setup rather than a
+  // misconfigured record.
+  status: 'ok' | 'proxied' | 'stale' | 'unresolved' | 'no_target' | 'wildcard' | 'error'
   detail?: string
   checked_at: string
   resolve_time_ms: number

@@ -96,6 +96,13 @@ Admin panel binds:
 - to `:443` on `MUVON_ADMIN_DOMAIN` when set (production).
 - to `:9443` (local-only in docker-compose) when not set — used for initial setup before a TLS cert exists.
 
+### TLS certificate ownership
+Renewal only works if autocert is the one asked for its own certificates: it arms a renewal timer when it serves a cert, so anything answering ahead of it silently disables renewal. That is what happened here — agent-issued certs were pushed to central as backups (`ReportingCache` → `HandleUploadCert`), then handed back on every handshake, so autocert was never consulted and nothing renewed for three months; certs were replaced only after expiring, costing a short outage per domain.
+
+`Manager.GetCertificate` therefore resolves in this order: an operator-uploaded certificate (issuer is anything other than `letsencrypt*`) always wins; otherwise autocert answers for its own; central's copy is a backup used only when the agent has none locally, and it is seeded into the local ACME cache so autocert takes ownership from then on. `CertStore.GetOperatorCertificate` applies the same rule on central, where `PGCache.Put` mirrors ACME certs into `tls_certificates` for panel visibility. When adding a cert source, ask what arms its renewal before putting it ahead of autocert.
+
+`runCertExpiryWatch` in `cmd/dialog-siem` alerts through the normal alerting path when a certificate is inside 14 days, which with renewal at 30 days means renewal is broken rather than merely due.
+
 ### Secrets box
 `internal/secret.Box` is AES-256-GCM wrapping for settings values (JWT secret, SMTP password, etc.). Secret settings are **write-only in the API** — `GET /api/settings` returns masked placeholders. `MUVON_ENCRYPTION_KEY` must be stable across restarts or encrypted settings become unreadable (`decryptSetting` logs a warning and disables the feature rather than crashing). The same key also seeds the HKDF derivation used to sign agent commands (label `"muvon-agent-command-v1"`), so rotating it invalidates both encrypted settings and the agent command channel.
 

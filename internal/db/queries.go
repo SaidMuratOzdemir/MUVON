@@ -636,6 +636,63 @@ func (d *DB) ListCerts(ctx context.Context) ([]TLSCert, error) {
 	return certs, rows.Err()
 }
 
+// ExpiringCert is a certificate close enough to expiry that renewal should
+// already have replaced it.
+type ExpiringCert struct {
+	Domain     string
+	Issuer     string
+	TLSMode    string
+	ExpiresAt  time.Time
+	DaysLeft   int
+	Terminator string // agent name, or "central"
+}
+
+// ListExpiringCerts returns certificates for active hosts expiring within the
+// given window, soonest first.
+//
+// The window is deliberately shorter than the renewal window: ACME replaces a
+// certificate 30 days out, so anything still standing at 14 days means renewal
+// is not happening, which is the condition worth waking someone for. Only the
+// certificate a handshake would actually pick is considered, using the same
+// preference order as the serving path.
+func (d *DB) ListExpiringCerts(ctx context.Context, within time.Duration) ([]ExpiringCert, error) {
+	rows, err := d.Pool.Query(ctx,
+		`SELECT h.domain,
+		        c.issuer,
+		        h.tls_mode,
+		        c.expires_at,
+		        GREATEST(EXTRACT(EPOCH FROM (c.expires_at - now())) / 86400, -9999)::int AS days_left,
+		        COALESCE(a.name, 'central') AS terminator
+		 FROM muvon.hosts h
+		 JOIN LATERAL (
+		     SELECT issuer, expires_at
+		     FROM muvon.tls_certificates tc
+		     WHERE lower(tc.domain) = lower(h.domain)
+		     ORDER BY `+tlsCertificatePreferenceOrder+`
+		     LIMIT 1
+		 ) c ON true
+		 LEFT JOIN muvon.agents a ON a.id = h.target_agent_id
+		 WHERE h.is_active
+		   AND h.tls_mode <> 'off'
+		   AND c.expires_at < now() + $1::interval
+		 ORDER BY c.expires_at`,
+		fmt.Sprintf("%d seconds", int(within.Seconds())))
+	if err != nil {
+		return nil, fmt.Errorf("list expiring certs: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ExpiringCert
+	for rows.Next() {
+		var c ExpiringCert
+		if err := rows.Scan(&c.Domain, &c.Issuer, &c.TLSMode, &c.ExpiresAt, &c.DaysLeft, &c.Terminator); err != nil {
+			return nil, fmt.Errorf("scan expiring cert: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // DeleteCertByDomain drops every stored certificate for a domain and reports
 // whether anything was removed. Used by a forced renewal: an agent consults
 // the central store before its own ACME cache, so the stored copy keeps being

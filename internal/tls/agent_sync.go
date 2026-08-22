@@ -57,8 +57,34 @@ type pullCache struct {
 }
 
 type pullEntry struct {
-	cert *tls.Certificate
+	cert *CentralCert
 	at   time.Time
+}
+
+// CentralCert is a certificate central holds for a domain, together with the
+// issuer that says who is responsible for renewing it.
+type CentralCert struct {
+	Cert   *tls.Certificate
+	Issuer string
+	// PEM is the key-then-chain blob in autocert's cache format, kept so the
+	// agent can seed its local cache from central on a cold start.
+	PEM []byte
+}
+
+// OperatorManaged reports whether a human put this certificate there, in which
+// case it outranks anything ACME would produce and must never be replaced by
+// an automatic issuance.
+//
+// Everything issued through ACME carries an issuer starting with
+// "letsencrypt" ("letsencrypt" from central's own autocert mirror,
+// "letsencrypt:agent:<id>" from an agent's backup upload). Anything else was
+// uploaded deliberately, so an unrecognised issuer counts as operator-managed
+// rather than being quietly overridden.
+func (c *CentralCert) OperatorManaged() bool {
+	if c == nil {
+		return false
+	}
+	return !strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.Issuer)), "letsencrypt")
 }
 
 const (
@@ -88,7 +114,7 @@ func NewAgentCertSync(centralURL, apiKey string) *AgentCertSync {
 // (nil, nil) when central has no cert on file (typical case — the host
 // uses ACME). Returns (nil, err) only on transport / decoding errors so
 // callers can fall back to autocert without surfacing a 404 as an error.
-func (s *AgentCertSync) FetchCertificate(domain string) (*tls.Certificate, error) {
+func (s *AgentCertSync) FetchCertificate(domain string) (*CentralCert, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -137,7 +163,7 @@ func (s *AgentCertSync) FetchCertificate(domain string) (*tls.Certificate, error
 	return cert, nil
 }
 
-func (s *AgentCertSync) fetchOnce(domain string) (*tls.Certificate, error) {
+func (s *AgentCertSync) fetchOnce(domain string) (*CentralCert, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentCertTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "GET",
@@ -163,6 +189,7 @@ func (s *AgentCertSync) fetchOnce(domain string) (*tls.Certificate, error) {
 	var body struct {
 		CertPEM string `json:"cert_pem"`
 		KeyPEM  string `json:"key_pem"`
+		Issuer  string `json:"issuer"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
@@ -181,7 +208,22 @@ func (s *AgentCertSync) fetchOnce(domain string) (*tls.Certificate, error) {
 		slog.Warn("central cert is expired, ignoring", "domain", domain)
 		return nil, nil
 	}
-	return &cert, nil
+	return &CentralCert{Cert: &cert, Issuer: body.Issuer, PEM: certKeyPEM(body.KeyPEM, body.CertPEM)}, nil
+}
+
+// certKeyPEM assembles the blob autocert keeps in its cache: the private key
+// first, then the certificate chain. Seeding the local cache with this is what
+// hands ownership of an ACME certificate back to autocert, so its renewal
+// timer gets armed instead of the copy ageing out untouched.
+func certKeyPEM(keyPEM, certPEM string) []byte {
+	if keyPEM == "" || certPEM == "" {
+		return nil
+	}
+	out := make([]byte, 0, len(keyPEM)+len(certPEM)+1)
+	out = append(out, strings.TrimRight(keyPEM, "\n")...)
+	out = append(out, '\n')
+	out = append(out, certPEM...)
+	return out
 }
 
 // InvalidateCache clears all cached pulls. Called on every config_updated

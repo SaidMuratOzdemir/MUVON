@@ -129,6 +129,13 @@ func parseCIDRList(cidrs []string) *[]*net.IPNet {
 	return &out
 }
 
+// IsCloudflareIP reports whether an address belongs to Cloudflare's published
+// edge ranges. Exported for callers outside the proxy that have to tell a
+// misconfigured DNS record apart from a domain deliberately proxied through a
+// CDN — resolving to Cloudflare instead of the origin is a valid setup, not a
+// mistake.
+func IsCloudflareIP(host string) bool { return isCloudflareIP(host) }
+
 // isCloudflareIP reports whether host (an IP string, no port) falls within a
 // known Cloudflare edge range.
 func isCloudflareIP(host string) bool {
