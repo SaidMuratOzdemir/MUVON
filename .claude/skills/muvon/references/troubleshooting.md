@@ -92,7 +92,7 @@ ssh <agent-host> "getent hosts <central-domain>"
 - `GET /api/hosts/{id}/dns-status` → DNS A kaydı beklenen IP'ye dönüyor mu?
   - `unresolved` = DNS henüz yayılmamış, bekle veya kullanıcı DNS panel'inden A kaydı eklemedi.
   - `stale` = DNS yanlış IP'ye gidiyor (eski host'a).
-  - `no_target` = settings.public_ip set edilmemiş ve agent da yok — operatör eylemi gerek.
+  - `no_target` = central kendi public IP'sini tespit edememiş ve agent da yok. `settings.public_ip` diye bir ayar yok; central açılışta tespit eder, elle sabitlemek gerekirse `MUVON_PUBLIC_IP` env değişkeni kullanılır.
   - `wildcard` = `*.example.com` host'u, alt-domain başına ayrı doğrula.
 - `GET /api/hosts/{id}/tls-status` → cert durumu (valid / expiring / expired / missing / off).
 

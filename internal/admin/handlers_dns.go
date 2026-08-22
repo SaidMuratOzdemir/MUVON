@@ -20,8 +20,9 @@ import (
 // failure mode.
 //
 // Resolution is best-effort and cached in HTTP-response only — no DB
-// row, no scheduler. If a host edge-bound, target IPs come from the
-// agent's last_remote_addr; for central hosts, settings.public_ip.
+// row, no scheduler. For an edge-bound host the target IP comes from the
+// agent's self-reported public IP; for a central host it is the address
+// central detected for itself at startup, overridable with MUVON_PUBLIC_IP.
 
 type dnsStatusResponse struct {
 	Domain      string   `json:"domain"`
@@ -32,8 +33,8 @@ type dnsStatusResponse struct {
 	//           still pointing at the customer's old host).
 	//         "unresolved" — no DNS record exists yet.
 	//         "no_target" — central public IP not configured AND no
-	//           agent could provide a fallback. Operator must set
-	//           settings.public_ip before this check is meaningful.
+	//           agent could provide a fallback. Detection at startup is
+	//           the normal source; MUVON_PUBLIC_IP pins it by hand.
 	//         "error" — actual lookup failure (DNS server down, etc.).
 	Status        string `json:"status"`
 	Detail        string `json:"detail,omitempty"`
