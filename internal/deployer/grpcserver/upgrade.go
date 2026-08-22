@@ -1,6 +1,7 @@
 package grpcserver
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -82,14 +83,18 @@ func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerS
 	tag = strings.TrimPrefix(tag, "v")
 	emit("pre_check", "info", fmt.Sprintf("target tag: %s", tag), false)
 
-	// 3) Yedek
+	// 3) Yedek. Operatör yedek istediyse ve yedek alınamıyorsa upgrade durur:
+	//    ağsız bir yedekle devam etmek, yedek var sanılarak yükseltme yapmak
+	//    demek ve bu tam olarak bozuk dump'ların fark edilmemesine yol açtı.
 	if req.GetTakeBackup() {
 		emit("backup", "info", "running pg_dump -Fc...", false)
-		if path, err := s.runPGDump(ctx); err != nil {
-			emit("backup", "warn", fmt.Sprintf("backup skipped: %v", err), false)
-		} else {
-			emit("backup", "info", "backup written: "+path, false)
+		path, err := s.runPGDump(ctx, emit)
+		if err != nil {
+			emit("failed", "error", fmt.Sprintf("backup failed, upgrade aborted: %v "+
+				"(re-run with backup disabled to proceed without one)", err), true)
+			return nil
 		}
+		emit("backup", "info", "backup written and verified: "+path, false)
 	} else {
 		emit("backup", "info", "backup skipped (operator opted out)", false)
 	}
@@ -108,25 +113,197 @@ func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerS
 	return nil
 }
 
-// runPGDump postgres container'a exec edip pg_dump -Fc'yi tetikler ve
-// /var/lib/muvon/backups/ altına yazar. Compose servisi adı sabit:
-// "muvon-postgres". Çıktı dosya yolunu döner.
-func (s *Server) runPGDump(ctx context.Context) (string, error) {
+// backupDir is where the dump lands inside the deployer container; compose
+// binds the shared "backups" volume here.
+const backupDir = "/var/lib/muvon/backups"
+
+// postgresContainer is the compose service name of the database.
+const postgresContainer = "muvon-postgres"
+
+// runPGDump execs pg_dump -Fc inside the postgres container and streams its
+// stdout straight to disk.
+//
+// The output is a compressed binary archive, so it must never touch anything
+// line-oriented: an earlier version collected it through the container-log
+// demuxer, which splits on newlines and trims trailing CR/LF, and silently
+// deleted every 0x0A byte. Every dump written that way was unrestorable while
+// the upgrade reported "backup written". Streaming also keeps a multi-gigabyte
+// archive out of the deployer's heap.
+//
+// The file is written under a .part name and only renamed once it verifies, so
+// a failed attempt cannot be mistaken for a usable backup.
+func (s *Server) runPGDump(ctx context.Context, emit func(step, level, msg string, done bool)) (string, error) {
 	stamp := time.Now().UTC().Format("20060102-150405")
-	dir := "/var/lib/muvon/backups"
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
 		return "", err
 	}
-	outPath := filepath.Join(dir, "pgdata-"+stamp+".dump")
-	cmd := []string{"pg_dump", "-Fc", "-U", "muvon", "-d", "muvon"}
-	stdout, err := s.docker.ContainerExecCapture(ctx, "muvon-postgres", cmd)
+	outPath := filepath.Join(backupDir, "pgdata-"+stamp+".dump")
+	partPath := outPath + ".part"
+
+	f, err := os.OpenFile(partPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(outPath, stdout, 0o600); err != nil {
-		return "", err
+	w := bufio.NewWriterSize(f, 1<<20)
+
+	cmd := []string{"pg_dump", "-Fc", "-U", "muvon", "-d", "muvon"}
+	code, stderrTail, execErr := s.docker.ContainerExecStream(ctx, postgresContainer, cmd, w)
+
+	flushErr := w.Flush()
+	syncErr := f.Sync()
+	closeErr := f.Close()
+
+	fail := func(format string, args ...any) (string, error) {
+		os.Remove(partPath)
+		return "", fmt.Errorf(format, args...)
+	}
+	switch {
+	case execErr != nil:
+		return fail("pg_dump exec failed: %w (stderr: %s)", execErr, strings.TrimSpace(string(stderrTail)))
+	case code != 0:
+		return fail("pg_dump exited with code %d: %s", code, strings.TrimSpace(string(stderrTail)))
+	case flushErr != nil:
+		return fail("writing dump: %w", flushErr)
+	case syncErr != nil:
+		return fail("flushing dump to disk: %w", syncErr)
+	case closeErr != nil:
+		return fail("closing dump: %w", closeErr)
+	}
+
+	if err := verifyCustomDumpHeader(partPath); err != nil {
+		return fail("dump failed its header check: %w", err)
+	}
+	if err := s.verifyDumpRestorable(ctx, filepath.Base(partPath), emit); err != nil {
+		return fail("dump failed verification: %w", err)
+	}
+
+	if err := os.Rename(partPath, outPath); err != nil {
+		return fail("publishing dump: %w", err)
 	}
 	return outPath, nil
+}
+
+// verifyCustomDumpHeader checks the archive header pg_dump writes for -Fc.
+// Layout: "PGDMP" magic, then version major/minor/rev, the sizes of the
+// integer and offset fields, and the format byte (1 = custom). It costs one
+// read and rules out an empty, truncated or rewritten file even on hosts where
+// the pg_restore check below cannot run.
+func verifyCustomDumpHeader(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() < 64 {
+		return fmt.Errorf("archive is only %d bytes", info.Size())
+	}
+
+	head := make([]byte, 11)
+	if _, err := io.ReadFull(f, head); err != nil {
+		return fmt.Errorf("reading archive header: %w", err)
+	}
+	if string(head[:5]) != "PGDMP" {
+		return fmt.Errorf("missing PGDMP magic (got %q)", head[:5])
+	}
+	// head[5:8] is the version triple, head[8] the int size, head[9] the
+	// offset size, head[10] the format.
+	if intSize := head[8]; intSize == 0 || intSize > 32 {
+		return fmt.Errorf("implausible integer size %d in header", intSize)
+	}
+	if offSize := head[9]; offSize == 0 || offSize > 32 {
+		return fmt.Errorf("implausible offset size %d in header", offSize)
+	}
+	if format := head[10]; format != 1 {
+		return fmt.Errorf("archive format is %d, expected 1 (custom)", format)
+	}
+	return nil
+}
+
+// verifyDumpRestorable runs pg_restore -l over the finished file, which is the
+// only check that reads the whole archive rather than trusting its first
+// bytes. It runs in a throwaway container built from the postgres image the
+// database itself uses, with the same backups storage attached.
+//
+// When the storage cannot be located the check is skipped with a warning
+// rather than failing the upgrade: refusing to upgrade because we could not
+// introspect our own mounts would be a worse failure than an unverified
+// backup, and the header check has already run.
+func (s *Server) verifyDumpRestorable(ctx context.Context, fileName string, emit func(step, level, msg string, done bool)) error {
+	pg, err := s.docker.ContainerInspect(ctx, postgresContainer)
+	if err != nil {
+		emit("backup", "warn", fmt.Sprintf("skipping pg_restore check: cannot inspect %s: %v", postgresContainer, err), false)
+		return nil
+	}
+
+	bind, err := s.backupStorageBind(ctx)
+	if err != nil {
+		emit("backup", "warn", "skipping pg_restore check: "+err.Error(), false)
+		return nil
+	}
+
+	id, logs, wait, err := s.docker.RunHelperContainer(ctx, deployer.HelperContainerOpts{
+		Image:      pg.ImageRef,
+		Cmd:        []string{"pg_restore", "-l", "/verify/" + fileName},
+		Binds:      []string{bind},
+		AutoRemove: false,
+		Labels:     map[string]string{"muvon.helper.kind": "backup-verify"},
+	})
+	if err != nil {
+		emit("backup", "warn", fmt.Sprintf("skipping pg_restore check: %v", err), false)
+		return nil
+	}
+	defer func() {
+		_ = s.docker.ContainerRemove(context.Background(), id, true)
+	}()
+
+	var out strings.Builder
+	if logs != nil {
+		_, _ = io.Copy(&out, io.LimitReader(logs, 8*1024))
+		_, _ = io.Copy(io.Discard, logs)
+		logs.Close()
+	}
+	code, err := wait()
+	if err != nil {
+		emit("backup", "warn", fmt.Sprintf("skipping pg_restore check: %v", err), false)
+		return nil
+	}
+	if code != 0 {
+		return fmt.Errorf("pg_restore -l exited with %d: %s", code, strings.TrimSpace(out.String()))
+	}
+	emit("backup", "info", "pg_restore verified the archive", false)
+	return nil
+}
+
+// backupStorageBind returns a bind spec that gives another container the same
+// backup storage this one has, found by reading our own mount table.
+func (s *Server) backupStorageBind(ctx context.Context) (string, error) {
+	self, err := os.Hostname()
+	if err != nil {
+		return "", fmt.Errorf("cannot read own hostname: %w", err)
+	}
+	insp, err := s.docker.ContainerInspect(ctx, self)
+	if err != nil {
+		return "", fmt.Errorf("cannot inspect own container %q: %w", self, err)
+	}
+	for _, m := range insp.Mounts {
+		if m.Destination != backupDir {
+			continue
+		}
+		// A named volume is the normal case; mounting it by name lets Docker
+		// resolve the storage the same way it did for us.
+		if m.Name != "" {
+			return m.Name + ":/verify", nil
+		}
+		if m.Source != "" {
+			return m.Source + ":/verify", nil
+		}
+	}
+	return "", fmt.Errorf("no mount found at %s", backupDir)
 }
 
 // runUpgrader docker:cli helper container yaratır: compose dosyasını

@@ -453,6 +453,19 @@ type ContainerInspectResult struct {
 	// Docker assigns these at attach time and reuses freed addresses, so they
 	// are only meaningful when read live.
 	Networks map[string]string
+	// Mounts is what the container actually has attached. The upgrade flow
+	// reads its own mounts to find where the backups volume lives, so a
+	// verification container can be given the same storage.
+	Mounts []ContainerMount
+}
+
+// ContainerMount is one entry of a container's mount table. Name is set for
+// named volumes; Source is the host path Docker resolved it to.
+type ContainerMount struct {
+	Type        string
+	Name        string
+	Source      string
+	Destination string
 }
 
 func (c *DockerClient) ContainerInspect(ctx context.Context, id string) (ContainerInspectResult, error) {
@@ -486,9 +499,23 @@ func (c *DockerClient) ContainerInspect(ctx context.Context, id string) (Contain
 				IPAddress string `json:"IPAddress"`
 			} `json:"Networks"`
 		} `json:"NetworkSettings"`
+		Mounts []struct {
+			Type        string `json:"Type"`
+			Name        string `json:"Name"`
+			Source      string `json:"Source"`
+			Destination string `json:"Destination"`
+		} `json:"Mounts"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return out, err
+	}
+	for _, m := range raw.Mounts {
+		out.Mounts = append(out.Mounts, ContainerMount{
+			Type:        m.Type,
+			Name:        m.Name,
+			Source:      m.Source,
+			Destination: m.Destination,
+		})
 	}
 	if len(raw.NetworkSettings.Networks) > 0 {
 		out.Networks = make(map[string]string, len(raw.NetworkSettings.Networks))
