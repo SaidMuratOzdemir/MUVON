@@ -23,7 +23,50 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-Henüz birikme yok.
+Panelde görünen bir değerin gerçekte uygulanmadığı bir dizi hatanın
+düzeltmesi. Yedekleme kusuru veri kaybı riski taşıdığı için önce onu okuyun.
+
+### BUGFIXES
+
+- **Panelden alınan her PostgreSQL yedeği bozuktu.** Sistem yükseltmesi
+  sırasında çalışan `pg_dump -Fc`, çıktısını container log'ları için yazılmış
+  satır ayrıştırıcısından geçiriyordu. O ayrıştırıcı satır sonlarına göre
+  bölüp sondaki CR ve LF baytlarını kırpıyor, yani sıkıştırılmış ikili
+  arşivden **her `0x0A` baytını siliyordu**. Akış "yedek alındı" diyordu ama
+  ortaya çıkan dosyada `pg_restore` çöküyordu. Bir üretim sunucusunda bu
+  şekilde yazılmış 34 arşivin (4,1 GB) tamamı açılamaz durumdaydı ve
+  hiçbirinde tek bir satır sonu baytı kalmamıştı. Kurulum script'inin aldığı
+  yedekler bu koddan geçmediği için sağlamdır. Yedek artık ikili akış olarak
+  doğrudan diske yazılıyor, çerçeve ortasında kopan bir bağlantı hata
+  sayılıyor, dosya `.part` adıyla yazılıp yalnızca başlık kontrolünden ve
+  veritabanının kendi imajıyla çalıştırılan `pg_restore -l` doğrulamasından
+  geçerse yayınlanıyor. Yedek isteyip alamayan bir yükseltme artık sessizce
+  devam etmek yerine duruyor. **Elinizdeki eski `pgdata-*.dump` dosyalarına
+  güvenmeyin; `pg_restore -l` ile teker teker doğrulayın.**
+
+- **Ayarlardaki log saklama süresi hiçbir şeyi yönetmiyordu.** Panel
+  `log_retention_days` anahtarına yazıyordu, hiçbir kod o anahtarı okumuyordu
+  ve verinin ne kadar saklanacağını migration'a sabit yazılmış 30 günlük
+  TimescaleDB politikaları belirliyordu. Alan boşken bile dolu görünüyordu,
+  çünkü kaydedilmemiş her ayar için önerilen varsayılan gerçek değermiş gibi
+  gösteriliyordu. Artık `retention_days` ayarı beş hypertable'ın tamamında
+  gerçekten uygulanıyor (diaLOG değişiklikte ve beş dakikada bir uzlaştırıyor),
+  `0` "hiç silme" anlamına geliyor ve panel Timescale'in o an uyguladığı
+  değeri rozetlerle gösteriyor.
+
+- **Ayarlar sayfasındaki dört kontrol hiçbir yere bağlı değildi.** ACME
+  e-postası ve staging bayrağı okunmayan anahtarlara yazılıyordu, yani
+  Let's Encrypt hesabında iletişim adresi hiç oluşmuyordu; genel istek limiti
+  ve backend zaman aşımı alanları route bazlı ayarların kopyasıydı; partition
+  ön-oluşturma alanının karşılığı ise üründe hiç yoktu. Yanlış anahtara
+  yazılmış değerler migration ile doğru anahtara taşınıyor (silmeden önce
+  kopyalanıyor), karşılığı olmayan kontroller kaldırıldı. Saklama süresi
+  taşınırken pencere yalnızca büyütülüyor, asla küçültülmüyor: bir yükseltme
+  log silmeye karar vermemeli.
+
+- **Ayarların elle yeniden yüklenmesi gerektiği yazıyordu.** MUVON ve diaLOG
+  zaten birkaç saniyede bir config'i tazeliyor; Dashboard'daki düğme sadece
+  bunu hemen tetikliyor ve agent'lara gönderiyor.
 
 ---
 
