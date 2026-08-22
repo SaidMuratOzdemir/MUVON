@@ -128,6 +128,7 @@ func (s *Service) HandleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		ContainerID   string `json:"container_id"`
 		ContainerName string `json:"container_name"`
 		BackendURL    string `json:"backend_url"`
+		SpecHash      string `json:"spec_hash"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -137,7 +138,7 @@ func (s *Service) HandleCreateInstance(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "component is not owned by this agent"})
 		return
 	}
-	inst, err := s.db.CreateDeployInstance(r.Context(), req.ComponentID, req.ReleaseUUID, req.ContainerID, req.ContainerName, req.BackendURL)
+	inst, err := s.db.CreateDeployInstance(r.Context(), req.ComponentID, req.ReleaseUUID, req.ContainerID, req.ContainerName, req.BackendURL, req.SpecHash)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

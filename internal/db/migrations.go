@@ -1272,4 +1272,15 @@ WHERE key IN ('acme_email', 'acme_staging', 'log_retention_days',
               'proxy_timeout_seconds', 'partition_ahead_days',
               'rate_limit_rps', 'rate_limit_burst');`,
 	},
+	// spec_hash records which component spec a container was created from.
+	// env, networks, mounts and command are baked in at creation, so editing
+	// them changes nothing about a running container; without this column
+	// there is no way to tell that the panel is showing values the container
+	// never received. Existing rows keep '' and read as "unknown", not as
+	// drift, so upgrading does not light up every component at once.
+	{
+		name: "add_deploy_instances_spec_hash", product: "muvon",
+		sql: `ALTER TABLE deploy_instances
+		  ADD COLUMN IF NOT EXISTS spec_hash TEXT NOT NULL DEFAULT '';`,
+	},
 }

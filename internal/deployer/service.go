@@ -260,7 +260,7 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 		}
 
 		backendURL := fmt.Sprintf("http://%s:%d", containerName, component.InternalPort)
-		instance, err := s.state.CreateInstance(ctx, component.ID, plan.Release.ID, containerID, containerName, backendURL)
+		instance, err := s.state.CreateInstance(ctx, component.ID, plan.Release.ID, containerID, containerName, backendURL, component.SpecHash())
 		if err != nil {
 			return err
 		}

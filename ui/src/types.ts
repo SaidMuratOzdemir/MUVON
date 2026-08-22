@@ -341,6 +341,10 @@ export interface DeployComponent {
   health_command: string[];
   deploy_strategy: string;
   deploy_order: number;
+  // Fingerprint of the fields Docker bakes into a container (env, networks,
+  // mounts, command). Compare with an instance's spec_hash to tell whether it
+  // is running what this form shows. Computed server-side, never stored.
+  spec_hash?: string;
   created_at: string;
   updated_at: string;
 }
@@ -364,6 +368,9 @@ export interface DeployInstance {
   stopped_at?: string;
   created_at: string;
   updated_at: string;
+  // Fingerprint of the component spec this container was created from.
+  // Empty on containers started before the field existed.
+  spec_hash?: string;
 }
 
 export interface DeployProjectSummary {

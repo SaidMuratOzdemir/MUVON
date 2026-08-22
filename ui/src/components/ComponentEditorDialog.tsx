@@ -788,12 +788,21 @@ export function ComponentEditorDialog({
           </div>
         )}
 
-        <DialogFooter className="shrink-0 pt-2 border-t border-border">
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>İptal</Button>
-          <Button onClick={handleSubmit} disabled={submitting || loading}>
-            {submitting && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
-            {isCreate ? 'Oluştur' : 'Kaydet'}
-          </Button>
+        <DialogFooter className="shrink-0 pt-2 border-t border-border sm:justify-between gap-2">
+          {!isCreate && (
+            <p className="text-xs text-muted-foreground text-left max-w-sm">
+              env, ağlar, mount'lar ve komut container yaratılırken uygulanır. Kaydetmek
+              çalışan container'ı değiştirmez; yeni değerler bir sonraki deploy'da geçerli
+              olur ve o zamana kadar serviste "deploy bekliyor" rozeti görünür.
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={submitting}>İptal</Button>
+            <Button onClick={handleSubmit} disabled={submitting || loading}>
+              {submitting && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+              {isCreate ? 'Oluştur' : 'Kaydet'}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -44,6 +44,18 @@ düzeltmesi. Yedekleme kusuru veri kaybı riski taşıdığı için önce onu ok
   devam etmek yerine duruyor. **Elinizdeki eski `pgdata-*.dump` dosyalarına
   güvenmeyin; `pg_restore -l` ile teker teker doğrulayın.**
 
+- **Servis ayarlarını düzenlemek çalışan container'ı değiştirmiyordu, panel de
+  bunu söylemiyordu.** env değişkenleri, ağlar, mount'lar ve komut container
+  yaratılırken uygulanır. Kaydedince form yeni değeri gösteriyor, container ise
+  eskisiyle çalışmaya devam ediyordu; aradaki farkı görmenin hiçbir yolu yoktu.
+  Aynı desen daha önce ağ adı düzeltmesinde de yaşandı, servisler tek tek
+  yeniden deploy edilene kadar düzelme gelmemişti. Artık her container hangi
+  ayarlarla yaratıldığını taşıyor ve kayıtlı ayarlar farklıysa serviste
+  "deploy bekliyor" rozeti çıkıyor. Düzenleme formu da kaydetmenin çalışan
+  container'ı değiştirmediğini açıkça söylüyor. Yalnızca yeniden yaratmayı
+  gerektiren alanlar sayılıyor; sağlık kontrolü, drain süresi gibi bir sonraki
+  deploy'da zaten geçerli olan alanlar boşuna uyarı üretmiyor.
+
 - **Ayarlardaki log saklama süresi hiçbir şeyi yönetmiyordu.** Panel
   `log_retention_days` anahtarına yazıyordu, hiçbir kod o anahtarı okumuyordu
   ve verinin ne kadar saklanacağını migration'a sabit yazılmış 30 günlük

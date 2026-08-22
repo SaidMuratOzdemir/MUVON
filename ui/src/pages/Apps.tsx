@@ -313,6 +313,13 @@ function ProjectSettingsDialog({
                   const inst = (project.instances ?? []).find(i => i.component_id === c.id && i.state === 'active')
                   const secretCount = (c.env_secret_keys ?? []).length
                   const envCount = Object.keys(c.env ?? {}).length
+                  // env, ağlar, mount'lar ve komut container yaratılırken
+                  // uygulanır: kaydedilen değişiklik çalışan container'a
+                  // ulaşmaz. Boş spec_hash bu alandan önce başlatılmış
+                  // container demektir, onu "bilinmiyor" sayıp uyarmıyoruz.
+                  const configDrift = Boolean(
+                    inst?.spec_hash && c.spec_hash && inst.spec_hash !== c.spec_hash,
+                  )
                   return (
                     <div key={c.id} className="rounded-md border border-border bg-muted/10 p-3 space-y-1.5">
                       <div className="flex items-center gap-2">
@@ -324,6 +331,15 @@ function ProjectSettingsDialog({
                         {c.paused && (
                           <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-400/40">
                             duraklatıldı
+                          </Badge>
+                        )}
+                        {configDrift && (
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] text-yellow-400 border-yellow-400/40"
+                            title="Kayıtlı ayarlar çalışan container'dakinden farklı. env, ağ, mount ve komut yalnızca container yeniden yaratılırken uygulanır; deploy edene kadar eski değerler geçerli."
+                          >
+                            deploy bekliyor
                           </Badge>
                         )}
                         <div className="ml-auto flex items-center gap-1">

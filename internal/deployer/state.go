@@ -36,8 +36,10 @@ type State interface {
 
 	// CreateInstance records a freshly-started candidate container.
 	// State starts as 'warming'; the caller will Promote it once
-	// health checks pass.
-	CreateInstance(ctx context.Context, componentID int, releaseUUID, containerID, containerName, backendURL string) (db.DeployInstance, error)
+	// health checks pass. specHash pins the component spec the container
+	// was built from, so a later edit to env, networks, mounts or command
+	// is visible as drift instead of silently applying to nothing.
+	CreateInstance(ctx context.Context, componentID int, releaseUUID, containerID, containerName, backendURL, specHash string) (db.DeployInstance, error)
 
 	// MarkInstanceUnhealthy records why a candidate never reached
 	// healthy. Distinct from Fail — the deployment as a whole is failed
@@ -139,8 +141,8 @@ func (s *dbState) Fail(ctx context.Context, deploymentID, message string) error 
 	return s.db.FailDeployment(ctx, deploymentID, message)
 }
 
-func (s *dbState) CreateInstance(ctx context.Context, componentID int, releaseUUID, containerID, containerName, backendURL string) (db.DeployInstance, error) {
-	return s.db.CreateDeployInstance(ctx, componentID, releaseUUID, containerID, containerName, backendURL)
+func (s *dbState) CreateInstance(ctx context.Context, componentID int, releaseUUID, containerID, containerName, backendURL, specHash string) (db.DeployInstance, error) {
+	return s.db.CreateDeployInstance(ctx, componentID, releaseUUID, containerID, containerName, backendURL, specHash)
 }
 
 func (s *dbState) MarkInstanceUnhealthy(ctx context.Context, instanceID, message string) error {

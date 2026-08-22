@@ -126,13 +126,14 @@ func (s *APIState) Fail(ctx context.Context, deploymentID, message string) error
 	return err
 }
 
-func (s *APIState) CreateInstance(ctx context.Context, componentID int, releaseUUID, containerID, containerName, backendURL string) (db.DeployInstance, error) {
+func (s *APIState) CreateInstance(ctx context.Context, componentID int, releaseUUID, containerID, containerName, backendURL, specHash string) (db.DeployInstance, error) {
 	body := map[string]any{
 		"component_id":   componentID,
 		"release_uuid":   releaseUUID,
 		"container_id":   containerID,
 		"container_name": containerName,
 		"backend_url":    backendURL,
+		"spec_hash":      specHash,
 	}
 	var inst db.DeployInstance
 	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/instance", body, &inst)

@@ -162,6 +162,10 @@ type DeployInstance struct {
 	StoppedAt      *time.Time `json:"stopped_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
+	// SpecHash is the component fingerprint this container was created from.
+	// Empty on rows written before the column existed, which reads as unknown
+	// rather than as drift.
+	SpecHash string `json:"spec_hash,omitempty"`
 }
 
 type ManagedBackend struct {
@@ -1086,18 +1090,18 @@ func (d *DB) ListDeploymentEvents(ctx context.Context, deploymentID string) ([]D
 	return out, rows.Err()
 }
 
-func (d *DB) CreateDeployInstance(ctx context.Context, componentID int, releaseUUID, containerID, containerName, backendURL string) (DeployInstance, error) {
+func (d *DB) CreateDeployInstance(ctx context.Context, componentID int, releaseUUID, containerID, containerName, backendURL, specHash string) (DeployInstance, error) {
 	var inst DeployInstance
 	var releaseUUIDOut string
 	err := d.Pool.QueryRow(ctx,
-		`INSERT INTO deploy_instances (component_id, release_uuid, container_id, container_name, backend_url, state, health_status, started_at)
-		 VALUES ($1, $2, $3, $4, $5, 'warming', 'unknown', now())
+		`INSERT INTO deploy_instances (component_id, release_uuid, container_id, container_name, backend_url, spec_hash, state, health_status, started_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'warming', 'unknown', now())
 		 RETURNING id::text, component_id, release_uuid::text, container_id, container_name, backend_url, state, health_status,
-		           in_flight, last_error, started_at, drain_started_at, stopped_at, created_at, updated_at`,
-		componentID, releaseUUID, containerID, containerName, backendURL,
+		           in_flight, last_error, started_at, drain_started_at, stopped_at, created_at, updated_at, spec_hash`,
+		componentID, releaseUUID, containerID, containerName, backendURL, specHash,
 	).Scan(&inst.ID, &inst.ComponentID, &releaseUUIDOut, &inst.ContainerID, &inst.ContainerName, &inst.BackendURL,
 		&inst.State, &inst.HealthStatus, &inst.InFlight, &inst.LastError, &inst.StartedAt, &inst.DrainStartedAt,
-		&inst.StoppedAt, &inst.CreatedAt, &inst.UpdatedAt)
+		&inst.StoppedAt, &inst.CreatedAt, &inst.UpdatedAt, &inst.SpecHash)
 	if err != nil {
 		return inst, fmt.Errorf("create deploy instance: %w", err)
 	}
@@ -1237,7 +1241,8 @@ func (d *DB) ListDrainableDeployInstancesForAgent(ctx context.Context, agentID s
 	rows, err := d.Pool.Query(ctx,
 		`SELECT i.id::text, i.component_id, p.slug, c.slug, COALESCE(i.release_uuid::text, ''), COALESCE(r.release_id, ''),
 		        i.container_id, i.container_name, i.backend_url, i.state, i.health_status, i.in_flight,
-		        i.last_error, i.started_at, i.drain_started_at, i.stopped_at, i.created_at, i.updated_at
+		        i.last_error, i.started_at, i.drain_started_at, i.stopped_at, i.created_at, i.updated_at,
+		        i.spec_hash
 		 FROM deploy_instances i
 		 JOIN deploy_components c ON c.id = i.component_id
 		 JOIN deploy_projects p ON p.id = c.project_id
@@ -1288,7 +1293,8 @@ func (d *DB) DrainActiveInstancesForComponent(ctx context.Context, componentID i
 		 )
 		 SELECT i.id::text, i.component_id, p.slug, c.slug, COALESCE(i.release_uuid::text, ''), COALESCE(r.release_id, ''),
 		        i.container_id, i.container_name, i.backend_url, i.state, i.health_status, i.in_flight,
-		        i.last_error, i.started_at, i.drain_started_at, i.stopped_at, i.created_at, i.updated_at
+		        i.last_error, i.started_at, i.drain_started_at, i.stopped_at, i.created_at, i.updated_at,
+		        i.spec_hash
 		 FROM drained i
 		 JOIN deploy_components c ON c.id = i.component_id
 		 JOIN deploy_projects p ON p.id = c.project_id
@@ -1497,7 +1503,8 @@ func (d *DB) ListDeployInstancesByProject(ctx context.Context, projectID int) ([
 	rows, err := d.Pool.Query(ctx,
 		`SELECT i.id::text, i.component_id, p.slug, c.slug, COALESCE(i.release_uuid::text, ''), COALESCE(r.release_id, ''),
 		        i.container_id, i.container_name, i.backend_url, i.state, i.health_status, i.in_flight,
-		        i.last_error, i.started_at, i.drain_started_at, i.stopped_at, i.created_at, i.updated_at
+		        i.last_error, i.started_at, i.drain_started_at, i.stopped_at, i.created_at, i.updated_at,
+		        i.spec_hash
 		 FROM deploy_instances i
 		 JOIN deploy_components c ON c.id = i.component_id
 		 JOIN deploy_projects p ON p.id = c.project_id
@@ -1519,7 +1526,7 @@ func scanDeployInstances(rows pgx.Rows) ([]DeployInstance, error) {
 		if err := rows.Scan(&inst.ID, &inst.ComponentID, &inst.ProjectSlug, &inst.ComponentSlug, &releaseUUID,
 			&inst.ReleaseID, &inst.ContainerID, &inst.ContainerName, &inst.BackendURL, &inst.State,
 			&inst.HealthStatus, &inst.InFlight, &inst.LastError, &inst.StartedAt, &inst.DrainStartedAt,
-			&inst.StoppedAt, &inst.CreatedAt, &inst.UpdatedAt); err != nil {
+			&inst.StoppedAt, &inst.CreatedAt, &inst.UpdatedAt, &inst.SpecHash); err != nil {
 			return nil, fmt.Errorf("scan deploy instances: %w", err)
 		}
 		if releaseUUID != "" {
