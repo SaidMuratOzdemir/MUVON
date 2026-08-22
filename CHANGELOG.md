@@ -23,8 +23,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+Henüz birikme yok.
+
+---
+
+## [0.1.52] - 2026-08-22
+
 Panelde görünen bir değerin gerçekte uygulanmadığı bir dizi hatanın
 düzeltmesi. Yedekleme kusuru veri kaybı riski taşıdığı için önce onu okuyun.
+İki şema migration'ı var, ikisi de eklemeli.
 
 ### BUGFIXES
 
@@ -107,6 +114,41 @@ düzeltmesi. Yedekleme kusuru veri kaybı riski taşıdığı için önce onu ok
   `rum_sample_rate` ve `rum_max_batch_bytes` kod tarafından okunuyor,
   tarayıcılara sunuluyor ve agent'lara gönderiliyordu, ama panelde kontrolleri
   yoktu; değiştirmenin tek yolu doğrudan API çağrısıydı.
+
+### Upgrade notları
+
+**Mevcut yedeklerinizi doğrulayın.** Panelin sistem yükseltmesiyle alınmış her
+`pgdata-*.dump` dosyası bozuk; bu sürümden önce yazılmış olanlar kurtarılamaz.
+Elinizde başka yedek yoksa yükseltmeden önce bir tane alın:
+
+```bash
+docker exec muvon-postgres pg_dump -Fc -U muvon -d muvon > muvon-$(date +%Y%m%d).dump
+pg_restore -l muvon-$(date +%Y%m%d).dump | head   # doğrulayın, boş çıkmamalı
+```
+
+Bu sürümden sonra panelden alınan yedekler `pg_restore -l` ile otomatik
+doğrulanır ve doğrulama başarısızsa yükseltme durur. Yedek isteyip
+alamayacağınız bir durumda yükseltmeye devam etmek isterseniz yedek kutusunu
+işaretlemeden çalıştırın.
+
+İki migration eklemeli çalışır: `deploy_instances`'a `spec_hash` kolonu eklenir
+(mevcut satırlar boş kalır, "bilinmiyor" sayılır) ve okunmayan anahtarlara
+yazılmış ayarlar doğru anahtarlara taşınıp artık kayıtlar silinir. ACME e-postanızı
+panelden girdiyseniz bu migration onu `letsencrypt_email` alanına taşır, yani
+Let's Encrypt hesabınızda ilk kez gerçek bir iletişim adresi oluşur.
+
+Log saklama süresi artık `retention_days` ayarından yönetiliyor ve varsayılan
+30 gün olarak uygulanmaya devam eder. Daha uzun saklamak istiyorsanız
+yükseltmeden sonra Ayarlar → Log Retention'dan değiştirin; küçültmek
+kapsam dışındaki chunk'ları bir gün içinde kalıcı olarak siler.
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.1.52
+
+# Agent:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.1.52
+```
 
 ---
 
