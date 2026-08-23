@@ -3,6 +3,8 @@ package admin
 import (
 	"context"
 	"net/http"
+
+	"muvon/internal/db"
 )
 
 type contextKey string
@@ -29,10 +31,30 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired session"})
 			return
 		}
+		// A valid signature only proves the token was issued by us, not that
+		// it should still be honoured. The account may have been disabled, or
+		// its sessions revoked by a password change, since it was signed.
+		// Comparing token_version here is what makes revocation take effect on
+		// the next request instead of after the access token's 15 minute TTL.
+		user, err := s.db.GetAdminByID(r.Context(), claims.UserID)
+		if err != nil || !sessionAccepted(user, claims) {
+			clearAuthCookies(w)
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "session revoked"})
+			return
+		}
 		ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
 		ctx = context.WithValue(ctx, usernameKey, claims.Username)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// sessionAccepted reports whether a correctly signed access token should still
+// be honoured. Kept separate from the middleware so the rule can be tested
+// without a database: "the signature is valid" and "the session is still
+// alive" are different questions, and conflating them is what let a revoked
+// session keep working until its TTL ran out.
+func sessionAccepted(user db.AdminUser, claims *Claims) bool {
+	return user.IsActive && user.TokenVersion == claims.TokenVersion
 }
 
 // corsMiddleware allows credentialed requests from the admin panel. The panel

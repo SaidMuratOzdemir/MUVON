@@ -112,6 +112,9 @@ func (s *Server) Handler() http.Handler {
 	// sub-mux would make it unreachable (shadowed by authMux, 404). Wrap it
 	// in the auth middleware so the access cookie is validated.
 	authMux.Handle("GET /api/auth/me", s.authMiddleware(http.HandlerFunc(s.handleMe)))
+	// Same reason for living here, and deliberately not CSRF-exempt: it is
+	// state-changing and the caller already holds a session.
+	authMux.Handle("POST /api/auth/password", s.authMiddleware(http.HandlerFunc(s.handleChangePassword)))
 	mux.Handle("/api/auth/", rl.Middleware(csrfMW(authMux)))
 
 	// Deploy webhook — HMAC-authenticated by project secret, no admin JWT.
@@ -271,7 +274,8 @@ func (s *Server) Handler() http.Handler {
 	// Health endpoint — JWT gerektirmez
 	mux.HandleFunc("GET /health", s.handleHealth)
 
-	// Frontend (embed.FS) — SPA fallback: dosya yoksa index.html dön
+	// Frontend (embed.FS) with SPA fallback: serve index.html when the file
+	// does not exist.
 	if s.frontendFS != nil {
 		fsHandler := http.FileServerFS(s.frontendFS)
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

@@ -253,6 +253,19 @@ export async function me(): Promise<AdminUser> {
   return request<AdminUser>("GET", "/api/auth/me");
 }
 
+// Changing the password ends every other session: their access tokens stop
+// validating on the next request and their refresh tokens are revoked. This
+// caller keeps working because the server hands back fresh cookies.
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ user: AdminUser }> {
+  return request<{ user: AdminUser }>("POST", "/api/auth/password", {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Hosts
 // ---------------------------------------------------------------------------
@@ -443,7 +456,7 @@ export async function getBackendHealth(): Promise<Record<string, string>> {
 
 // ---------------------------------------------------------------------------
 // DNS status — lazy lookup, no caching server-side. Used by the host
-// detail UI to surface "DNS A kaydını şu IP'ye yönlendir" feedback.
+// detail UI to tell the operator which IP the DNS A record should point at.
 export interface DNSStatus {
   domain: string
   resolved_ips: string[]

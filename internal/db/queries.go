@@ -789,6 +789,24 @@ func (d *DB) CreateAdmin(ctx context.Context, username, passwordHash string) (Ad
 	return u, nil
 }
 
+// UpdateAdminPassword stores a new hash and bumps token_version in the same
+// statement. The bump is what makes revocation immediate: authMiddleware
+// compares the version in the access token against this column, so every
+// token issued before the change stops validating on its next request
+// instead of living out its 15 minute TTL.
+func (d *DB) UpdateAdminPassword(ctx context.Context, id int, passwordHash string) (AdminUser, error) {
+	u, err := scanAdminUser(d.Pool.QueryRow(ctx,
+		`UPDATE admin_users
+		    SET password_hash = $2, token_version = token_version + 1
+		  WHERE id = $1
+		  RETURNING `+adminUserCols,
+		id, passwordHash).Scan)
+	if err != nil {
+		return u, fmt.Errorf("update admin password: %w", err)
+	}
+	return u, nil
+}
+
 func (d *DB) AdminExists(ctx context.Context) (bool, error) {
 	var count int
 	err := d.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM admin_users WHERE is_active = true`).Scan(&count)

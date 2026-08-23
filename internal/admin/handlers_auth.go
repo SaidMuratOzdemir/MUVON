@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"muvon/internal/db"
@@ -24,9 +25,18 @@ import (
 // presented again we treat it as theft and revoke the whole family at once
 // (enterprise pattern, same as Auth0).
 
+// minPasswordLen is the floor for admin passwords, applied at setup and at
+// every change.
+const minPasswordLen = 8
+
 type loginReq struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+type changePasswordReq struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
 }
 
 type authResponse struct {
@@ -71,7 +81,7 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	if req.Username == "" || len(req.Password) < 8 {
+	if req.Username == "" || len(req.Password) < minPasswordLen {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "username required, password min 8 chars"})
 		return
 	}
@@ -162,6 +172,66 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	clearAuthCookies(w)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleChangePassword updates the caller's own password. It is the path that
+// bumps token_version, which is what ends every other session: their access
+// tokens stop validating on the next request rather than living out the 15
+// minute TTL, and their refresh rows are revoked so they cannot mint new ones.
+// The caller gets a fresh session, so the page they are on keeps working.
+func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID, _ := r.Context().Value(userIDKey).(int)
+
+	var req changePasswordReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if len(req.NewPassword) < minPasswordLen {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "new password must be at least 8 characters"})
+		return
+	}
+	if req.NewPassword == req.CurrentPassword {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "new password must differ from the current one"})
+		return
+	}
+
+	user, err := s.db.GetAdminByID(r.Context(), userID)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "user not found"})
+		return
+	}
+	// The current password is required even though the caller already holds a
+	// session: a stolen cookie should not be enough to lock the owner out.
+	if !CheckPassword(user.PasswordHash, req.CurrentPassword) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "current password is incorrect"})
+		return
+	}
+
+	hash, err := HashPassword(req.NewPassword)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password hashing failed"})
+		return
+	}
+	updated, err := s.db.UpdateAdminPassword(r.Context(), userID, hash)
+	if err != nil {
+		slog.Error("password change: update failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password change failed"})
+		return
+	}
+	if err := s.db.RevokeUserRefreshTokens(r.Context(), userID); err != nil {
+		// The password is already changed and the version bumped, so every
+		// other session is dead at its next request either way. Log and carry
+		// on rather than failing a change that has taken effect.
+		slog.Warn("password change: revoking refresh tokens failed", "error", err, "user_id", userID)
+	}
+	if err := s.issueSession(w, r, updated, ""); err != nil {
+		slog.Error("password change: issue session failed", "error", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "password changed but session could not be renewed; sign in again"})
+		return
+	}
+	s.auditLog(r, "auth.password_change", "admin_user", strconv.Itoa(userID), nil)
+	writeJSON(w, http.StatusOK, authResponse{User: updated})
 }
 
 // handleMe returns the currently authenticated user.

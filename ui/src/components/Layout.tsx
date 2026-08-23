@@ -4,13 +4,14 @@ import {
   LayoutDashboard, Server, FileText, Settings, Shield,
   LogOut, Menu, X, Activity, ChevronRight, ClipboardList,
   Cpu, Route, Rocket, Satellite,
-  Bell, Terminal, MousePointerClick, Clock,
+  Bell, Terminal, MousePointerClick, Clock, KeyRound,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { Toaster } from '@/components/ui/sonner'
 import { ServiceBanner } from '@/components/ServiceBanner'
+import { ChangePasswordDialog } from '@/components/ChangePasswordDialog'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
 import { useAuth } from '@/context/useAuth'
 
@@ -35,6 +36,7 @@ export default function Layout() {
   const navigate = useNavigate()
   const auth = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [passwordOpen, setPasswordOpen] = useState(false)
   const { logOnline } = useServiceHealth()
 
   async function logout() {
@@ -121,6 +123,15 @@ export default function Layout() {
             <Button
               variant="ghost"
               size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+              onClick={() => setPasswordOpen(true)}
+              title="Parolayı değiştir"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
               onClick={logout}
               title="Logout"
@@ -153,6 +164,7 @@ export default function Layout() {
         </main>
       </div>
 
+      <ChangePasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
       <Toaster richColors position="top-right" />
     </div>
   )
