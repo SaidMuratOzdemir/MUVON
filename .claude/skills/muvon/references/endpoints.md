@@ -1,63 +1,75 @@
-# Endpoint envanteri ve response biçimleri
+# Endpoint inventory and response shapes
 
-Kaynak: `internal/admin/server.go` (route tablosu). Buradan bir şey eksik veya yanlış geliyorsa **kaynağa bak** — `grep -n "HandleFunc" internal/admin/server.go`.
+Source of truth: `internal/admin/server.go`, which registers every route. If something here is missing or looks wrong, **read the source**: `grep -n "HandleFunc" internal/admin/server.go`.
 
 ## Auth
 
-| Method | Path | Auth | CSRF | Not |
+| Method | Path | Auth | CSRF | Note |
 |---|---|---|---|---|
-| POST | `/api/auth/setup` | yok | bypass | İlk kurulum, 409 sonra |
-| POST | `/api/auth/login` | yok | bypass | Rate limited |
-| POST | `/api/auth/refresh` | refresh cookie | bypass | Tek kullanımlık rotation |
-| POST | `/api/auth/logout` | access | **gerekli** | 3 cookie'yi siler |
+| POST | `/api/auth/setup` | none | exempt | First install only, 409 afterwards |
+| POST | `/api/auth/login` | none | exempt | Rate limited |
+| POST | `/api/auth/refresh` | refresh cookie | exempt | Single-use rotation |
+| POST | `/api/auth/logout` | access | **required** | Clears all three cookies |
+| GET | `/api/auth/me` | access | not applicable | Current user |
+| POST | `/api/auth/password` | access | **required** | Body `{current_password, new_password}`. Bumps `token_version` and revokes every refresh row, so **all other sessions end**. The caller gets fresh cookies |
+
+Every authenticated request re-reads the user row and compares `token_version`, so a revoked session fails on its next call with 401 `session revoked`. Refreshing does not help; log in again.
 
 ## Hosts
 
-| Method | Path | Yıkıcı? |
+| Method | Path | Destructive? |
 |---|---|---|
-| GET | `/api/hosts` | ✗ |
+| GET | `/api/hosts` | no |
 | POST | `/api/hosts` | mutating |
-| GET | `/api/hosts/{id}` | ✗ |
-| PUT | `/api/hosts/{id}` | mutating (özellikle `tls_mode` değişiklikleri ACME davranışını anında değiştirir) |
-| **DELETE** | **`/api/hosts/{id}`** | **YIKICI** — bağlı route'lar yetim kalır |
-| GET | `/api/hosts/{id}/dns-status` | ✗ — domain'i resolve eder, beklenen IP'lerle (central `public_ip` + agent'ların last-seen IP'leri) kıyaslar |
-| GET | `/api/hosts/{id}/tls-status` | ✗ — sertifika geçerli mi, kaç gün kaldı, issuer ne |
+| GET | `/api/hosts/{id}` | no |
+| PUT | `/api/hosts/{id}` | mutating (a `tls_mode` change alters ACME behaviour immediately) |
+| **DELETE** | **`/api/hosts/{id}`** | **destructive**, attached routes are orphaned |
+| GET | `/api/hosts/{id}/dns-status` | no; resolves the domain and compares against the expected IPs (central `public_ip` plus each agent's last-seen IP) |
+| GET | `/api/hosts/{id}/tls-status` | no; certificate validity, days remaining, issuer |
 
-`tls_mode` değerleri: `off` (HTTP-only), `redirect` (HTTP→HTTPS 301), `auto` (Let's Encrypt), `manual` (sadece yüklenmiş cert). `off` veya `manual` host'lar için ACME challenge **denenmez**.
+`tls_mode` values: `off` (HTTP only), `redirect` (301 to HTTPS), `auto` (Let's Encrypt), `manual` (uploaded cert only). ACME challenges are **not attempted** for `off` or `manual` hosts.
 
 ## Routes
 
-| Method | Path | Yıkıcı? |
+| Method | Path | Destructive? |
 |---|---|---|
-| GET | `/api/hosts/{id}/routes` | ✗ |
+| GET | `/api/hosts/{id}/routes` | no |
 | POST | `/api/hosts/{id}/routes` | mutating |
-| GET | `/api/routes/{id}` | ✗ |
+| GET | `/api/routes/{id}` | no |
 | PUT | `/api/routes/{id}` | mutating |
-| **DELETE** | **`/api/routes/{id}`** | **YIKICI** |
+| **DELETE** | **`/api/routes/{id}`** | **destructive** |
 
 ## Logs (HTTP)
 
-| Method | Path | Not |
+| Method | Path | Note |
 |---|---|---|
-| GET | `/api/logs` | Filtre query params: `host`, `status`, `method`, `path`, `q` (BM25), `since`, `until`, `limit`, `cursor` |
+| GET | `/api/logs` | Filters: `host`, `status`, `method`, `path`, `q` (free text, trigram `ILIKE`), `since`, `until`, `limit`, `cursor` |
 | GET | `/api/logs/stats` | Aggregations |
-| GET | `/api/logs/stream` | **SSE** — `text/event-stream`. EventSource veya `curl -N` ile |
-| GET | `/api/logs/{id}` | Tek log detayı (body dahil) |
-| PUT | `/api/logs/{id}/note` | Operatör notu |
-| POST | `/api/logs/{id}/star` | Star toggle |
-| GET | `/api/logs/{id}/jwt` | JWT identity claim'leri |
+| GET | `/api/logs/stream` | **SSE**, `text/event-stream`. Use EventSource or `curl -N` |
+| GET | `/api/logs/{id}` | One log with bodies |
+| PUT | `/api/logs/{id}/note` | Operator note |
+| POST | `/api/logs/{id}/star` | Toggle star |
+| GET | `/api/logs/{id}/jwt` | Raw JWT (audit-logged) |
 
-**Tip**: `/api/logs?limit=10&status=500&since=1h` gibi pratik query'ler.
+Handy queries look like `/api/logs?limit=10&status=500&since=1h`.
 
 ## Container logs
 
-| Method | Path | Not |
+| Method | Path | Note |
 |---|---|---|
-| GET | `/api/containers` | Yönetilen container listesi |
-| GET | `/api/containers/{id}` | Detay + status |
+| GET | `/api/containers` | Managed container list |
+| GET | `/api/containers/{id}` | Detail and status |
 | GET | `/api/containers/{id}/logs/stream` | SSE live tail |
-| GET | `/api/container-logs` | Geçmiş arama (post-deploy crash analizi) |
-| GET | `/api/container-logs/{id}/context` | Bir log etrafında ±N satır |
+| GET | `/api/container-logs` | History search (post-deploy crash analysis) |
+| GET | `/api/container-logs/{id}/context` | Surrounding lines around one entry |
+
+## Client events (RUM)
+
+| Method | Path | Note |
+|---|---|---|
+| GET | `/api/client-events` | Browser telemetry search, filter by `trace_id`, `session_id`, `app`, `event_name`, cursor. Proxied to diaLOG |
+
+The ingest side lives on the proxied host, not on the admin API: `POST /__muvon/rum`, `GET /__muvon/rum/config`, `GET /__muvon/rum.js`, all gated on the host's `rum_enabled`.
 
 ## Alerts
 
@@ -66,138 +78,150 @@ Kaynak: `internal/admin/server.go` (route tablosu). Buradan bir şey eksik veya 
 | GET | `/api/alerts` |
 | GET | `/api/alerts/stats` |
 | GET | `/api/alerts/{id}` |
-| POST | `/api/alerts/{id}/acknowledge` (yan etki: alert "ack'lı" işaretlenir, geri alınmaz) |
+| POST | `/api/alerts/{id}/acknowledge` (side effect: the alert is marked acknowledged, not reversible) |
 
 ## Settings
 
-| Method | Path | Not |
+| Method | Path | Note |
 |---|---|---|
-| GET | `/api/settings` | Secret alanlar maskelenir (boş string olarak döner!) |
-| PUT | `/api/settings/{key}` | **YIKICI**: özellikle `muvon_jwt_secret`, `muvon_encryption_key` |
+| GET | `/api/settings` | Secret keys come back as the literal `********`, never the value |
+| PUT | `/api/settings/{key}` | **Destructive** for `muvon_jwt_secret` and `muvon_encryption_key` in particular |
+
+Sending `********` back for a secret key is rejected, so a masked read cannot be written over the real value by accident.
 
 ## TLS
 
 | Method | Path |
 |---|---|
 | GET | `/api/tls/certificates` |
-| POST | `/api/tls/certificates` (cert override) |
+| POST | `/api/tls/certificates` (certificate override) |
 | **DELETE** | **`/api/tls/certificates/{id}`** |
-
-## Agents
-
-| Method | Path |
-|---|---|
-| GET | `/api/agents` |
-| POST | `/api/agents` (yeni agent enroll) |
-| **DELETE** | **`/api/agents/{id}`** |
 
 ## System
 
-| Method | Path | Not |
+| Method | Path | Note |
 |---|---|---|
-| GET | `/api/system/health` | Servis sağlık özeti |
-| GET | `/api/system/stats` | Go runtime + uptime + counters |
+| GET | `/health` | **The only unauthenticated endpoint.** DB and log health. This is what `install.sh` and the upgrade flow poll on `127.0.0.1:9443` |
+| GET | `/api/system/health` | Same payload, JWT required |
+| GET | `/api/system/stats` | Go runtime, uptime, counters |
 | GET | `/api/system/health/backends` | Backend health (managed components) |
-| GET | `/api/system/health/ingest` | Log ingest pipeline durumu |
-| POST | `/api/system/reload` | **Yan etki**: config holder yenile + SSE push agent'lara |
-| GET | `/api/system/version` | Çalışan binary'nin sürümü + image digest (Settings → Sistem paneli buradan okur) |
-| GET | `/api/system/version/latest` | GHCR `:latest` manifest digest (5 dk cache); anonim manifest HEAD |
-| **POST** | **`/api/system/upgrade`** | **YIKICI** — body `{target_tag, take_backup}`. Deployer helper container'ı `docker compose pull && up -d --wait` çalıştırır. Eşzamanlı isteğe 409. Encryption key boşsa 503 |
-| GET | `/api/system/upgrade/stream` | **SSE** — `pull` / `restart` / `post_check` event'leri canlı yayılır. Helper kendisini de recreate ettiği için stream EOF olunca "done" yorumlanır |
+| GET | `/api/system/health/ingest` | Log ingest pipeline state |
+| GET | `/api/system/retention` | Live retention policies read from the Timescale job catalog, not from the migration |
+| POST | `/api/system/reload` | **Side effect**: rehydrates the config holder and pushes over SSE to agents. A snapshot identical to the current one is a no-op |
+| GET | `/api/system/version` | Running binary version and image digest |
+| GET | `/api/system/version/latest` | GHCR `:latest` manifest digest, anonymous HEAD, 5 minute cache |
+| POST | `/api/system/backup` | Takes a verified `pg_dump -Fc` now. 409 while an upgrade or another backup holds the lock |
+| GET | `/api/system/backups` | Lists the dumps on disk (the last 5 are kept) |
+| **POST** | **`/api/system/upgrade`** | **Destructive**, body `{target_tag, take_backup}`. A helper container runs `docker compose pull && up -d --wait`. 409 on a concurrent request |
+| GET | `/api/system/upgrade/stream` | **SSE**, live `pull` / `restart` / `post_check` events. The stream EOFs because the helper recreates the deployer; the handler then polls `127.0.0.1:9443/health` before reporting success |
 
-## Agents (admin) + komut kanalı
+## Agents and the command channel
 
-| Method | Path | Not |
+| Method | Path | Note |
 |---|---|---|
-| GET | `/api/agents` | List (plaintext `api_key` artık YOK; bkz. pitfalls #21) |
-| POST | `/api/agents` | Create — yanıt `{agent, api_key}`, plaintext key sadece burada bir kez döner |
-| **DELETE** | **`/api/agents/{id}`** | **YIKICI** — agent disconnect |
-| **POST** | **`/api/agents/{id}/commands`** | Body `{kind, payload}`. `kind` ∈ `agent.cache_flush` / `agent.set_log_level` / `cert.renew` / `agent.drain` / `agent.restart` / `agent.self_upgrade` / `agent.revoke` / `container.restart`. HMAC imzası central tarafında otomatik takılır. **`agent.revoke` ve `agent.restart` ve `agent.self_upgrade` YIKICI** (bkz. destructive-ops.md) |
-| GET | `/api/agents/{id}/commands` | Son N komut + state (`pending`/`dispatched`/`succeeded`/`failed`/`expired`). UI'daki `AgentCommandHistory` bunu çeker |
+| GET | `/api/agents` | List. The plaintext `api_key` is **not** returned, not even masked |
+| POST | `/api/agents` | Create. The response `{agent, api_key}` carries the plaintext key **once** |
+| **DELETE** | **`/api/agents/{id}`** | **Destructive**, the agent disconnects |
+| PATCH | `/api/agents/{id}/mounts` | Update the agent's extra mounts |
+| PATCH | `/api/agents/{id}/deployer-addr` | Set the address central dials for live container tail |
+| **POST** | **`/api/agents/{id}/commands`** | Body `{kind, payload}` with `kind` in `agent.cache_flush` / `agent.set_log_level` / `cert.renew` / `agent.drain` / `agent.restart` / `agent.self_upgrade` / `agent.revoke` / `container.restart`. Central attaches the HMAC signature. **`agent.revoke`, `agent.restart` and `agent.self_upgrade` are destructive** (see `destructive-ops.md`) |
+| GET | `/api/agents/{id}/commands` | Recent commands and state (`pending` / `dispatched` / `succeeded` / `failed` / `expired`). The UI's `AgentCommandHistory` reads this |
 
-Komut state makinesi: `pending → dispatched → succeeded|failed|expired`. Sweeper goroutine 30 sn'de bir stale satırları expired'a çevirir (default TTL = 5 dk). Encryption key boşsa endpoint sessizce 503 — komutlar **asla yanlış imza ile** dağıtılmaz.
+Command state machine: `pending → dispatched → succeeded|failed|expired`. A sweeper goroutine expires stale rows every 30 seconds (default TTL 5 minutes). The signing key is derived from `MUVON_ENCRYPTION_KEY`, which the binary requires, so the channel is always armed.
 
 ## Audit
 
-| Method | Path | Not |
+| Method | Path | Note |
 |---|---|---|
 | GET | `/api/audit` | `?limit=N&cursor=...` |
 
-**UYARI**: Audit log şu anda agent ve human admin arasında ayrım yapmıyor (`admin_user: admin` her ikisi için). Bkz. SKILL.md "Her yıkıcı çağrı öncesi disiplin".
+**Warning**: the audit log does not currently distinguish an agent from a human admin (`admin_user: admin` for both). See the discipline section in SKILL.md.
 
 ## Deploy
 
-| Method | Path | Not |
+| Method | Path | Note |
 |---|---|---|
-| GET | `/api/deploy/projects` | Project + components + instances ağacı |
-| POST | `/api/deploy/projects` | Yeni app yarat (slug, name, source_repo, webhook_secret) |
-| PUT | `/api/deploy/projects/{slug}` | App ayarları (name, source_repo, webhook_secret rotate) |
-| **DELETE** | **`/api/deploy/projects/{slug}`** | **YIKICI** — tüm servisler, release'ler, instance'lar cascade siler |
-| GET | `/api/deploy/projects/{slug}/secret` | HMAC secret (webhook için) |
-| POST | `/api/deploy/projects/{slug}/components` | Servis yarat (`slug`, `name`, `image_repo`, `internal_port`, `agent_id`, `env`, `env_secret_keys`, vb.) |
-| GET | `/api/deploy/projects/{slug}/components/{component}` | Servis detay (secret env'ler `********` ile maskeli) |
-| PUT | `/api/deploy/projects/{slug}/components/{component}` | Servisi güncelle; **`agent_id` güncellenemez** (yok sayılır), `paused` güncellenebilir |
-| **DELETE** | **`/api/deploy/projects/{slug}/components/{component}`** | **YIKICI** — instance'lar drain edilir |
-| GET | `/api/deploy/deployments` | Geçmiş deploy'lar |
-| GET | `/api/deploy/deployments/{id}/events` | Deploy lifecycle event'leri |
-| POST | `/api/deploy/deployments/{id}/rerun` | Bir deploy'u yeniden çalıştır |
-| **POST** | **`/api/deploy/projects/{slug}/deploy`** | **YIKICI** — production'a yeni image |
-| **POST** | **`/api/deploy/projects/{slug}/rollback`** | **YIKICI** — önceki succeeded release'in image_ref'leri ile yeni deployment kuyruğa eklenir |
-| POST | `/api/deploy/webhook` | HMAC ile imzalı, JWT bypass — auth yok |
+| GET | `/api/deploy/projects` | The project, component and instance tree |
+| POST | `/api/deploy/projects` | Create an app (slug, name, source_repo, webhook_secret) |
+| PUT | `/api/deploy/projects/{slug}` | App settings (name, source_repo, rotate webhook_secret) |
+| **DELETE** | **`/api/deploy/projects/{slug}`** | **Destructive**, cascades to services, releases and instances |
+| GET | `/api/deploy/projects/{slug}/secret` | The HMAC secret used by the webhook |
+| POST | `/api/deploy/projects/{slug}/components` | Create a service (`slug`, `name`, `image_repo`, `internal_port`, `agent_id`, `env`, `env_secret_keys`, and so on) |
+| GET | `/api/deploy/projects/{slug}/components/{component}` | Service detail, secret env values masked with `********` |
+| PUT | `/api/deploy/projects/{slug}/components/{component}` | Update. **`agent_id` cannot be changed** (it is ignored); `paused` can |
+| **DELETE** | **`/api/deploy/projects/{slug}/components/{component}`** | **Destructive**, instances drain |
+| GET | `/api/deploy/deployments` | Deployment history |
+| GET | `/api/deploy/deployments/{id}/events` | Lifecycle events |
+| POST | `/api/deploy/deployments/{id}/rerun` | Re-run a deployment |
+| **POST** | **`/api/deploy/projects/{slug}/deploy`** | **Destructive**, a new image goes to production |
+| **POST** | **`/api/deploy/projects/{slug}/rollback`** | **Destructive**, queues a deployment with the previous succeeded release's image refs |
+| POST | `/api/deploy/webhook` | HMAC-signed, bypasses JWT |
 
-**Env vars + secrets.** Servis create/update payload'ında `env: {KEY: value}` map + `env_secret_keys: [KEY1, KEY2]` listesi. Listedekilerin value'ları AES-256-GCM ile şifreli saklanır. GET yanıtında `********` döner. Update sırasında `********` geri gönderilirse mevcut ciphertext korunur — secret'ı rotate etmek için yeni plaintext gönder.
+**Env vars and secrets.** Create and update payloads carry an `env: {KEY: value}` map plus `env_secret_keys: [KEY1, KEY2]`. Values for the listed keys are stored AES-256-GCM encrypted and come back as `********`. Sending `********` back on update keeps the stored ciphertext; to rotate a secret, send new plaintext.
 
-**Cross-host straddle yasak.** Bir deploy'un tüm component'leri aynı `agent_id`'de olmalı. Aksi halde enqueue `components straddle hosts` ile reddedilir.
+**No cross-host straddle.** Every component in one deployment must share the same `agent_id`, or enqueue fails with `components straddle hosts`.
 
-## Alerting test
+## Scheduled jobs
 
-| Method | Path | Not |
+| Method | Path | Note |
 |---|---|---|
-| POST | `/api/alerting/test/slack` | **Gerçek Slack mesajı gider** |
-| POST | `/api/alerting/test/smtp` | **Gerçek email gider** |
+| GET / POST | `/api/deploy/projects/{slug}/jobs` | List and create component-bound cron jobs |
+| GET / PUT / DELETE | `/api/deploy/projects/{slug}/jobs/{job}` | Read, update, remove |
+| POST | `/api/deploy/projects/{slug}/jobs/{job}/enable` | Enable or disable without deleting |
+| POST | `/api/deploy/projects/{slug}/jobs/{job}/run` | Trigger a run now |
+| GET | `/api/deploy/projects/{slug}/jobs/{job}/runs` | Run history with exit code and output tail |
 
-## Agent API (edge agent için, admin değil)
+A job borrows its component's image, env, secrets, networks and mounts. `exec_mode` is `run` (a fresh one-off container) or `exec` (inside the active instance). `concurrency_policy='forbid'` records a `skipped` run when a previous one is still going.
 
-`/api/v1/agent/...` — JWT yerine `X-Api-Key: <agent-key>` header. Sadece edge VPS'lerdeki `agent` binary'sini ilgilendirir. Skill'in operatör akışında **kullanılmaz**, sadece teşhis için bilgi:
+## Alerting tests
 
-| Method | Path | Not |
+| Method | Path | Note |
 |---|---|---|
-| GET | `/api/v1/agent/config` | Agent kendi config snapshot'ını çeker |
-| GET | `/api/v1/agent/watch` | SSE — central config değiştiğinde push alır |
-| GET / POST | `/api/v1/agent/cert/{domain}` | Cert pull (admin upload) / push (agent'ın ACME'sinin backup'ı) |
-| POST | `/api/v1/agent/deployer/claim` | Embedded edge deployer kendi `agent_id`'sine ait pending deploy'u çeker |
-| GET | `/api/v1/agent/deployer/plan/{id}` | Deploy planı (proje, release, component'ler) |
-| POST | `/api/v1/agent/deployer/event` | Lifecycle event ekle |
-| POST | `/api/v1/agent/deployer/fail` | Deployment'ı `failed` işaretle |
-| POST | `/api/v1/agent/deployer/instance` | Yeni candidate container instance kaydı |
-| POST | `/api/v1/agent/deployer/instance/unhealthy` | Instance'ı `unhealthy` işaretle |
-| POST | `/api/v1/agent/deployer/instance/stopped` | Instance'ı `stopped` işaretle |
-| POST | `/api/v1/agent/deployer/promote` | Atomic promote (eski active drain, candidate active) |
-| POST | `/api/v1/agent/deployer/reset-stale` | Crash sonrası `running` stuck deployment'ları `pending`'e geri al |
-| POST | `/api/v1/agent/deployer/cleanup-warming` | Biten deployment'a ait kalmış warming instance'ları temizle |
-| GET | `/api/v1/agent/deployer/drainable` | Drain'i tamamlanan instance'ları listele |
-| GET | `/api/v1/agent/deployer/live-containers` | Central'ın hâlâ canlı saydığı container ID'leri (orphan reconcile için) |
-| GET | `/api/v1/agent/commands?wait=25s` | **Long-poll** — sıradaki imzalı komutu çek. Agent uyandığında veya wait dolduğunda 200 + komut payload'u; boşsa 204 |
-| POST | `/api/v1/agent/commands/{id}/result` | Terminal report: `{state: succeeded|failed, output?, error?}`. At-least-once teslim, handler idempotent olmalı |
+| POST | `/api/alerting/test/slack` | **Sends a real Slack message** |
+| POST | `/api/alerting/test/smtp` | **Sends a real email** |
 
-Hepsi `X-Api-Key`-auth + ownership filter — agent yalnız kendi `agent_id`'sine ait kayıtları görür/değiştirir.
+## Agent API (for the edge agent, not the admin)
 
-## Response biçimleri — TUTARSIZ, dikkat
+`/api/v1/agent/...` uses `X-Api-Key: <agent-key>` instead of a JWT. It concerns the `agent` binary on edge VPSs only, and is **not part of the operator flow**. Listed here for diagnosis:
 
-| Endpoint örnekleri | Biçim |
+| Method | Path | Note |
+|---|---|---|
+| GET | `/api/v1/agent/config` | The agent pulls its config snapshot |
+| GET | `/api/v1/agent/watch` | SSE, pushed when central config changes |
+| GET / POST | `/api/v1/agent/cert/{domain}` | Pull a cert (operator upload) or push one (a backup of the agent's own ACME cert) |
+| POST | `/api/v1/agent/deployer/claim` | The embedded edge deployer claims a pending deploy for its own `agent_id` |
+| GET | `/api/v1/agent/deployer/plan/{id}` | The deploy plan (project, release, components) |
+| POST | `/api/v1/agent/deployer/event` | Append a lifecycle event |
+| POST | `/api/v1/agent/deployer/fail` | Mark the deployment failed |
+| POST | `/api/v1/agent/deployer/instance` | Record a new candidate container instance |
+| POST | `/api/v1/agent/deployer/instance/unhealthy` | Mark an instance unhealthy |
+| POST | `/api/v1/agent/deployer/instance/stopped` | Mark an instance stopped |
+| POST | `/api/v1/agent/deployer/promote` | Atomic promote (old active drains, candidate becomes active) |
+| POST | `/api/v1/agent/deployer/reset-stale` | After a crash, return stuck `running` deployments to `pending` |
+| POST | `/api/v1/agent/deployer/cleanup-warming` | Clean up warming instances left over from a finished deployment |
+| GET | `/api/v1/agent/deployer/drainable` | Instances whose drain has completed |
+| GET | `/api/v1/agent/deployer/live-containers` | Container IDs central still considers live (for orphan reconciliation) |
+| GET | `/api/v1/agent/commands?wait=25s` | **Long poll** for the next signed command. 200 with the payload when one arrives or the wait ends, 204 when empty |
+| POST | `/api/v1/agent/commands/{id}/result` | Terminal report `{state: succeeded|failed, output?, error?}`. Delivery is at-least-once, so handlers must be idempotent |
+
+All of these are `X-Api-Key` authenticated with an ownership filter: an agent only sees and changes rows belonging to its own `agent_id`.
+
+## Response shapes are inconsistent, watch out
+
+| Example endpoints | Shape |
 |---|---|
-| `/api/hosts`, `/api/hosts/{id}/routes`, `/api/agents`, `/api/deploy/projects` | **Doğrudan array** `[ {...}, {...} ]` |
-| `/api/logs`, `/api/audit`, `/api/alerts`, `/api/container-logs`, `/api/containers` | **Zarflı** `{"data":[ ... ], ...}` |
-| `/api/system/stats`, `/api/system/health`, `/api/settings` | Object |
+| `/api/hosts`, `/api/hosts/{id}/routes`, `/api/agents`, `/api/deploy/projects` | **A bare array**: `[ {...}, {...} ]` |
+| `/api/logs`, `/api/audit`, `/api/alerts`, `/api/container-logs`, `/api/containers` | **Enveloped**: `{"data":[ ... ], ...}` |
+| `/api/system/stats`, `/api/system/health`, `/api/settings` | An object |
 | 401/403/500 | `{"error":"..."}` |
-| **404** | **`404 page not found`** (plain text — JSON DEĞİL!) |
-| Yeni kaynak yaratma (POST 201) | Yaratılan kaynak objesi (zarfsız) |
+| **404** | **`404 page not found`** as plain text, **not JSON** |
+| Resource creation (POST 201) | The created object, no envelope |
 
-Agent: response'tan veri çıkarmadan önce `jq -e` veya benzeri ile yapıyı doğrula.
+Validate the shape with `jq -e` or similar before extracting anything.
 
-## SSE örneği (`/api/logs/stream`)
+## SSE example (`/api/logs/stream`)
 
-macOS'ta `timeout` yok; alternatifler:
+macOS has no `timeout`; alternatives:
 
 ```bash
 # Linux:
@@ -206,19 +230,20 @@ timeout 5 curl -sS -N -b "$CJ" "$BASE/api/logs/stream?host=foo.com"
 # macOS:
 ( curl -sS -N -b "$CJ" "$BASE/api/logs/stream?host=foo.com" & PID=$!; sleep 5; kill $PID ) 2>/dev/null
 
-# Veya:
-gtimeout 5 curl ...  # coreutils kuruluysa
+# Or, with coreutils installed:
+gtimeout 5 curl ...
 ```
 
-SSE event biçimi: `data: {...}\n\n`. Stream uzun süreli; bağlantı kopması normaldir (idle 60s sonra), reconnect gerekirse `Last-Event-ID` header.
+Event format is `data: {...}\n\n`. Streams are long-lived and disconnects are normal (idle after 60s); reconnect with a `Last-Event-ID` header if needed.
 
-## Path param kullanımı
+## Path parameters
 
-Sayısal ID (`{id}`) veya slug (`{slug}`):
+Numeric ids (`{id}`) or slugs (`{slug}`):
+
 ```bash
 muvon_api GET "/api/hosts/2/routes"
 muvon_api GET "/api/deploy/projects/<slug>"
 muvon_api GET "/api/deploy/projects/<slug>/secret"
 ```
 
-URL-encode etmek gerek değil (slug'lar zaten safe). Domain isimleri ID değil — host endpoint'leri ID-based.
+No URL encoding needed, since slugs are already safe. Domain names are not ids: host endpoints are id-based.

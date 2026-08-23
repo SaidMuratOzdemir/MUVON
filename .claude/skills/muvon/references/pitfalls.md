@@ -1,388 +1,351 @@
-# Sürprizler, dikkat noktaları — agent burada takılır
+# Surprises and traps: where an agent gets stuck
 
-Bu liste **gerçek probe sonucu** elde edildi. Skill burada her bir tuzağı bilirse, agent ilk denemede gereksiz cycle harcamaz.
+This list came out of **real probing**. Knowing each trap up front saves wasted cycles on the first attempt.
 
-## 1) Bearer header desteği **YOK**
+## 1) There is **no** Bearer header support
 
-`internal/admin/middleware.go:16-19` yorumu net: *"Cookie-only: the old Authorization: Bearer header path is gone."*
+The comment in `internal/admin/middleware.go` is explicit: cookie-only, the old `Authorization: Bearer` path is gone.
 
-Yanlış: `curl -H "Authorization: Bearer <token>" ...` → her zaman **401**.
-Doğru: cookie jar tabanlı flow (`references/auth.md`).
+Wrong: `curl -H "Authorization: Bearer <token>" ...` always returns **401**.
+Right: the cookie jar flow in `references/auth.md`.
 
-## 2) Refresh token **tek kullanımlık** (rotation)
+## 2) Refresh tokens are **single use** (rotation)
 
-`POST /api/auth/refresh` her çağrıda yeni cookie set eder. Cookie jar'ı **mutlaka** `-c` ile güncelle. Aynı refresh token'ı ikinci kez kullanırsan → 401 + tüm cookie'ler `Max-Age=0` ile silinir → tekrar login lazım.
+Every `POST /api/auth/refresh` sets new cookies. Always update the jar with `-c`. Using the same refresh token twice returns 401 and clears every cookie with `Max-Age=0`, so you must log in again.
 
-Pratikte gözlemlenen:
-```
-POST /api/auth/refresh   (1. çağrı)  → 200, yeni cookies
-POST /api/auth/refresh   (2. çağrı, aynı refresh)  → 401 + silinmiş cookies
-```
-
-## 3) 404 **plain text** döner, JSON değil
-
-`curl ... /api/this-does-not-exist` → response body: `404 page not found`. Diğer hatalar (`401`, `403`, `500`) JSON döner. Agent response'u parse ederken `Content-Type: text/plain` veya HTTP code'a göre dallanma yapmalı.
-
-## 4) Response zarfı **tutarsız**
+Observed in practice:
 
 ```
-/api/hosts           → [...]              # doğrudan array
-/api/logs            → {"data": [...]}    # zarflı
+POST /api/auth/refresh   (first call)                 → 200, new cookies
+POST /api/auth/refresh   (second call, same token)    → 401 + cleared cookies
+```
+
+## 3) 404 is **plain text**, not JSON
+
+`curl ... /api/this-does-not-exist` returns the body `404 page not found`. Other errors (401, 403, 500) are JSON. Branch on the status code or `Content-Type` before parsing.
+
+## 4) The response envelope is **inconsistent**
+
+```
+/api/hosts           → [...]              # bare array
+/api/logs            → {"data": [...]}    # enveloped
 /api/system/stats    → {...}              # object
 ```
 
-Agent `response.data` varsayarsa hosts'da boşa çıkar; `response[0]` varsayarsa logs'da boşa çıkar. Her endpoint için biçimi `references/endpoints.md`'den teyit et.
+Assuming `response.data` breaks on hosts; assuming `response[0]` breaks on logs. Confirm the shape per endpoint in `references/endpoints.md`.
 
-## 5) Secret masking = **boş string**, `***` değil
+## 5) Secret masking is the literal `********`
+
+`GET /api/settings` returns `"********"` for every secret key, whether or not a value is set. It is **not** an empty string, and it does not tell you whether the secret exists.
+
+Consequences:
+
+- You cannot verify "is this secret still set?" through the API. To answer that, read `/opt/muvon/.env` over SSH and report only set or empty.
+- Writing `********` back is rejected, so a masked read cannot overwrite the real value by accident.
+
+Treat settings writes as set-and-forget.
+
+## 6) The audit log **does not distinguish agent from human**
+
+`/api/audit` shows `admin_user: admin` for both. Nothing in the audit says "an agent triggered this deploy".
+
+Discipline: print an **AGENT_ACTION** line to stdout before every destructive call (see SKILL.md). The user reading the transcript fills in what the audit log cannot.
+
+## 7) The access cookie lasts only **15 minutes**
+
+`__Host-muvon_access` has `Max-Age=899`. Long scripts outlive it. Use the `muvon_api()` wrapper in `references/auth.md`, which refreshes on a 401.
+
+## 8) The `__Host-` cookie prefix
+
+The cookie is named `__Host-muvon_access`, with a leading double underscore and a hyphen. Mind the quoting in bash:
 
 ```bash
-$ curl ... /api/settings
-{
-  "alerting_smtp_password": "",
-  "alerting_smtp_host": "",
-  ...
-}
-```
-
-Boş string **iki anlam** taşır: (a) hiç set edilmemiş, (b) set edilmiş ama maskeli. Agent ayırt edemez. Disiplin: settings yazma işlemini "set-and-forget" yap; "secret hala set mi?" diye verify etme.
-
-CLAUDE.md notu: *"Secret settings are write-only in the API — GET /api/settings returns masked placeholders."*
-
-## 6) Audit log **agent ↔ insan ayrımı yapmıyor**
-
-`/api/audit` çıktısında `admin_user: admin` her iki tür için aynı. Yani audit'te "agent bu deploy'u tetikledi" yazmaz.
-
-Disiplin: her yıkıcı çağrı öncesi stdout'a **AGENT_ACTION** damgası bas (bkz. SKILL.md). Kullanıcı transcript okurken audit'in eksik tarafını oradan tamamlar.
-
-## 7) Access cookie sadece **15 dakika**
-
-`__Host-muvon_access` Max-Age=899s. Uzun script'lerde access expire olur. `references/auth.md`'deki `muvon_api()` wrapper'ı 401 görünce auto-refresh yapıyor — bu pattern'i kullan.
-
-## 8) `__Host-` prefix cookie
-
-Cookie ismi `__Host-muvon_access` — başında underscore + tire. Bash'te tırnaklara dikkat:
-```bash
-# OK
+# fine
 awk '$6 == "__Host-muvon_access" {print $7}' cookies.txt
-# Curl otomatik halleder — manuel header yazmaya gerek yok
+# curl handles it automatically; no manual header needed
 ```
 
-## 9) macOS'ta `timeout` komutu **yok**
+## 9) macOS has no `timeout`
 
-`timeout 5 curl ...` macOS'ta `command not found`. SSE testlerinde dikkat. Alternatifler:
+`timeout 5 curl ...` is `command not found` on macOS, which matters for SSE tests:
+
 ```bash
-( curl & sleep 5; kill $! ) 2>/dev/null    # POSIX, her yerde çalışır
-gtimeout 5 curl ...                          # coreutils kuruluysa
+( curl & sleep 5; kill $! ) 2>/dev/null    # POSIX, works everywhere
+gtimeout 5 curl ...                        # if coreutils is installed
 ```
 
-## 10) `POST /api/deploy/webhook` JWT bypass
+## 10) `POST /api/deploy/webhook` bypasses JWT
 
-Bu endpoint admin auth'unu **bypass eder**, HMAC-SHA256 ile imzalı. Header: `X-Muvon-Signature-256`. Agent normalde bu endpoint'e dokunmaz — webhook çağırmak deploy tetikler. `POST /api/deploy/projects/{slug}/deploy` daha doğru API.
+It skips admin auth and is authenticated by an HMAC-SHA256 signature in `X-Muvon-Signature-256`. An agent normally does not touch it: calling it triggers a deploy. `POST /api/deploy/projects/{slug}/deploy` is the right API.
 
-## 11) `POST /api/system/reload` zararsız ama yan etkili
+## 11) `POST /api/system/reload` is harmless but not side-effect free
 
-Proxy traffic'i etkilemez ama:
-- Connected edge agent'lara SSE push gönderir.
-- Her config değişikliği sonrası **gerekli** — yoksa atomic.Value snapshot eski kalır.
+It does not disturb proxy traffic, but it does push over SSE to connected edge agents, and it is required after any change made outside the API. Handlers already call the holder's reload themselves, so an agent does not need to call it after an API write. A reload whose snapshot matches the current one is a deliberate no-op.
 
-Agent **API yazımı yaptıktan sonra** çağırmaz (handler'lar zaten kendi sonunda holder.Reload() çağırıyor); ama **manuel SQL yazıldıysa** (yasak — bkz. SKILL.md) reload çağırmak şart. Yasaklı senaryoyu hiç deneme.
+## 12) Login is rate limited
 
-## 12) Login rate-limit
+`POST /api/auth/login` sits behind a rate limiter. On a 429, wait a few seconds and retry.
 
-`POST /api/auth/login` rate-limited (`internal/admin/server.go:95`). 429 alırsan birkaç saniye bekle, tekrar dene.
+## 13) `POST /api/alerting/test/*` **sends a real message**
 
-## 13) `POST /api/alerting/test/*` **gerçek mesaj gönderir**
+Even the test path reaches the outside world: a Slack channel, someone's inbox. Never call it without explicit approval.
 
-Test bile dış dünyaya gider — Slack channel'a, email kutusuna. Kullanıcıdan açık onay alınmadan çağrılmamalı.
+## 14) Logout **requires CSRF**
 
-## 14) Logout **CSRF gerektirir**
+Login is exempt; logout is not. Without the header you get 403. Neither is `POST /api/auth/password` exempt.
 
-Login bypass listesinde, logout değil. CSRF dance gerekli yoksa 403 alırsın.
+## 15) SSE endpoints return `text/event-stream`
 
-## 15) SSE endpoint'lerinde Content-Type **`text/event-stream`**
+`curl -sS` piped into `jq` will fail. Read with `curl -N` and parse manually.
 
-`curl -sS` JSON beklerse `jq` patlar. `curl -N` ile streaming oku, manuel parse.
+## 16) `__Host-` prefixed cookies confuse some tooling
 
-## 16) `Set-Cookie` `__Host-` ile başlayan attribute'lar
+Bash and curl are fine. Some older libraries (Python's `http.cookiejar`, for instance) mishandle the prefix during attribute parsing. Worth remembering in another language.
 
-Cookie attribute parse'ında bazı tool'lar (eski Python `http.cookiejar`) `__Host-` prefix'i ile karışıyor. Bash + curl sorunsuz; başka dil/tool kullanıyorsan unutma.
-
-## 17) Settings tablosu — boolean string olarak gelir
+## 17) Settings values are typed
 
 ```json
 "alerting_enabled": false,
 "correlation_anomaly_enabled": true,
 ```
-Bunlar gerçek boolean. Ama bazı settings (`alerting_smtp_port: 587`) sayı, bazıları string. `PUT /api/settings/{key}` body'sinde her zaman `{"value": ...}` formatı kullanılır — değer tipini koru.
 
-## 18) `force_https` host alanı
+Those are real booleans, while `alerting_smtp_port: 587` is a number and others are strings. `PUT /api/settings/{key}` always takes `{"value": ...}`; preserve the type.
 
-`/api/hosts` çıktısında `force_https: true` görürsen, o host HTTP isteklerini 301'le HTTPS'e yönlendiriyor. Test ederken `https://` ile çağır yoksa redirect zinciri.
+## 18) The `force_https` host field
 
-## 19) `trusted_proxies` boş array `[]`
+`force_https: true` in `/api/hosts` means that host 301-redirects HTTP to HTTPS. Test with `https://` or you will chase redirects.
 
-Default. Eğer MUVON CDN/load balancer arkasındaysa, gerçek client IP bu listeye eklenmiş proxy'lerden alınır. Boş list = `X-Forwarded-For` güvenilmez sayılır, RemoteAddr kullanılır.
+## 19) `trusted_proxies` defaults to an empty array
 
-## 20) `jwt_identity_enabled` host bazlı
+An empty list means `X-Forwarded-For` is not believed and `RemoteAddr` is used. Behind a CDN or load balancer, the real client IP comes only from peers listed here (or through the separate Cloudflare secret gate).
 
-Her host JWT identity extraction'ı bağımsız aç/kapa. `jwt_identity_mode`: `verify` (signature doğrula, public_key gerek) veya `extract` (sadece decode et). Log'da `identity` alanı bunun sonucunda dolar.
+## 20) `jwt_identity_enabled` is per host
 
-## 21) Agent API key list yanıtında **artık YOK**
+Each host toggles JWT identity extraction independently. `jwt_identity_mode` is `verify` (check the signature, which needs the secret) or decode-only enrichment. The log's `identity` field is populated from that. Decode-only claims are observational and must not be used for authorisation.
 
-`GET /api/agents` artık `api_key` alanı döndürmez (SHA-256 hash'lendiği için). Plaintext key sadece **create yanıtında bir kez** döner: `POST /api/agents` → `{"agent": {...}, "api_key": "abc123..."}`. Bu key kullanıcıya gösterilmeli, sonra kaybolmuş kabul edilmeli. Operatör kaybederse yeni agent enroll etmek gerek.
+## 21) The agent API key is **no longer in the list response**
 
-Eski (Mart 2026 öncesi) `api_key` plaintext kolonu hâlâ DB'de, geçiş için. Auth middleware ilk başarılı login'de hash'i doldurur — kullanıcı için tamamen transparan.
+`GET /api/agents` does not return `api_key`, because it is stored SHA-256 hashed. The plaintext key comes back **once**, in the create response: `POST /api/agents` → `{"agent": {...}, "api_key": "abc123..."}`. Show it to the user and then treat it as gone. If the operator loses it, enroll a new agent.
 
-## 22) `tls_mode=off` host **:443 dinlemez**
+The legacy plaintext `api_key` column still exists in the table for migration purposes. The auth middleware fills in the hash on the first successful call, which is transparent to the user.
 
-`hosts.tls_mode='off'` set ettiğinde MUVON o host için HTTPS terminate etmez, ACME challenge denemez. Browser HTTPS ile erişmeye çalışırsa cert hatası alır. Test ederken `http://`'la dene veya `tls_mode='auto'` çevir.
+## 22) A host with `tls_mode=off` does **not** serve :443
 
-## 23) Component `agent_id` **sabit**
+With `hosts.tls_mode='off'`, MUVON neither terminates HTTPS for that host nor attempts an ACME challenge. A browser using HTTPS gets a certificate error. Test with `http://`, or switch the mode to `auto`.
 
-Servis create'te `agent_id` belirlenir (NULL = central, value = o agent edge). Sonradan değiştirilemez — `PUT /api/deploy/projects/{slug}/components/{component}` `agent_id`'yi yok sayar. Sebep: değiştirmek eski host'ta orphan container bırakır. Taşımak istiyorsan: servisi sil, yeniden yarat (env, mounts dahil her şey yeniden girilir).
+## 23) A component's `agent_id` is **fixed**
 
-## 24) Cross-host deploy straddle **reddedilir**
+It is chosen at creation (NULL means central, a value means that edge agent) and cannot be changed afterwards: `PUT /api/deploy/projects/{slug}/components/{component}` ignores the field. Changing it would leave an orphan container on the old host. To move a component: delete it and re-create it, re-entering everything including env and mounts.
 
-Bir uygulamanın iki servisi farklı `agent_id`'lerdeyse, deploy enqueue zamanı `enqueue deployment: components straddle hosts` ile reddedilir. Tüm servisleri aynı host'ta tut (hepsi central, ya da hepsi aynı agent).
+## 24) Cross-host straddle is **rejected**
 
-## 25) `paused` = durdur (deploy engelle + çalışan instance'ları drain et)
+If two services of one app sit on different `agent_id`s, enqueue fails with `enqueue deployment: components straddle hosts`. Keep all of an app's services on one host: all central, or all on the same agent.
 
-`PUT .../components/<x>` body'sinde `{"paused": true}`:
-- Yeni deploy denemeleri (webhook / manual / rollback) `component X is paused; resume it before deploying` ile **reddedilir**.
-- Component'in **çalışan active instance'ları draining'e alınır**; sahibi deployer (central veya edge agent) bir sonraki tick'te container'ları durdurup kaldırır, proxy de trafiği hemen keser (yalnız `active` instance'lar route edilir). Yani pause gerçek bir "durdur"dur, sadece deploy kilidi değil.
+## 25) `paused` really stops the service
 
-`paused` API alanı **PUT ve POST body'sinden okunur** (pointer alan: göndermezsen mevcut değer korunur). Uyarı: yeterince eski bir MUVON sürümünde `componentRequest` struct'ında bu alan hiç yoktu, dolayısıyla `paused` API'den set edilemiyor, DB'de default `false` kalıyordu. Beklediğin gibi durmuyorsa çalışan sürümde alanın işlendiğini doğrula (`grep -n '"'"'json:"paused"'"'"' internal/admin/handlers_deploy_components.go`).
+`PUT .../components/<x>` with `{"paused": true}`:
 
-**Devam ettirme (resume):** `{"paused": false}` yeni deploy'lara izin verir ama çalışan instance'ı geri getirmez (pause onları drain etmişti). Ayağa kaldırmak için bir deploy gerekir: son başarılı release için `POST .../rollback`, ya da CI webhook / manual deploy.
+- New deploy attempts (webhook, manual, rollback) are **rejected** with `component X is paused; resume it before deploying`.
+- The component's **active instances are moved to draining**. The owning deployer stops and removes the containers on its next tick, and the proxy cuts traffic immediately, because only `active` instances are routed. Pause is a real stop, not just a deploy lock.
 
-Durdurmak için artık DELETE gerekmez; DELETE component'i kalıcı siler (spec kaybolur), pause ise config'i koruyup yalnız çalışmayı durdurur.
+The field is read from both PUT and POST bodies as a pointer, so omitting it preserves the current value.
 
-## 26) `MUVON_ENCRYPTION_KEY` ↔ `AGENT_ENCRYPTION_KEY` **eşleşmek zorunda**
+**Resume** with `{"paused": false}` allows deploys again but does **not** bring the instance back, since pausing drained it. Getting it running takes a deploy: `POST .../rollback` for the last succeeded release, or a CI webhook or manual deploy.
 
-Component secret env vars central'da AES-256-GCM şifreli saklanır. Container başlatırken deployer (central veya agent) decrypt eder. Üç noktada aynı key olmalı:
+Stopping no longer requires DELETE. DELETE removes the component permanently, taking its spec with it, while pause keeps the configuration and only stops the running.
+
+## 26) `MUVON_ENCRYPTION_KEY` and `AGENT_ENCRYPTION_KEY` **must match**
+
+Component secret env values are stored AES-256-GCM encrypted and decrypted by the deployer at container start. Three places need the same key:
 
 | Binary | Env var |
 |---|---|
 | `muvon` (central admin) | `MUVON_ENCRYPTION_KEY` |
 | `muvon-deployer` | `MUVON_ENCRYPTION_KEY` |
-| `agent` (edge, deployer aktifse) | `AGENT_ENCRYPTION_KEY` |
+| `agent` (edge, with the deployer enabled) | `AGENT_ENCRYPTION_KEY` |
 
-Birinde değişip ötekiler unutulursa: encrypt edilmiş env decrypt edilemez, container başlamaz. Symptom: deploy "running" sonra "failed", event'te `decrypt env <KEY> for component <slug>: ...`.
+Change one and forget the others and encrypted env cannot be decrypted, so the container never starts. Symptom: a deployment goes `running` then `failed`, with an event reading `decrypt env <KEY> for component <slug>: ...`.
 
-## 27) Embedded edge deployer Docker socket gerektirir
+## 27) The embedded edge deployer needs the Docker socket
 
-Agent'ta `AGENT_DEPLOYER_ENABLED=true` set edersen ama `AGENT_DOCKER_SOCKET` ulaşılamazsa deployer **sessizce devre dışı kalır**, log'da `deployer: enabled but docker socket unreachable; staying disabled`. Agent diğer işlevlerine devam eder ama o agent'a atanmış component'ler hiç deploy olmaz. Operatör symptom: deployment "pending" durumunda asılı kalır.
+With `AGENT_DEPLOYER_ENABLED=true` but an unreachable `AGENT_DOCKER_SOCKET`, the deployer **stays silently disabled** and logs `deployer: enabled but docker socket unreachable; staying disabled`. The agent keeps doing everything else, but components assigned to it never deploy. Operator symptom: the deployment hangs in `pending`.
 
-## 28) DNS status `no_target` cevabı
+Note the contrast with the encryption key, which is fatal rather than silent: with the deployer enabled and `AGENT_ENCRYPTION_KEY` empty, the agent exits at startup with a clear message.
 
-`GET /api/hosts/{id}/dns-status` `status: "no_target"` dönüyorsa: ne central `public_ip` setting'i var, ne de hiç agent kayıtlı. Settings'ten `public_ip`'i set et ya da bir agent enroll et — yoksa badge faydasız.
+## 28) A `no_target` DNS status
 
-## 29) `MUVON_ENCRYPTION_KEY` artık agent command HMAC için de kullanılıyor
+`GET /api/hosts/{id}/dns-status` returns `status: "no_target"` when central could not determine its own public address and no agent is registered either.
 
-Key boşsa **iki şey sessizce kapanır**:
-- Secret env vars + secret settings decrypt edilemez (zaten önceden böyleydi).
-- **Agent command channel devre dışı** — `POST /api/agents/{id}/commands` 503 döner, hiçbir komut dağıtılmaz. UI'da AgentActionMenu çalışmaz, system upgrade tetiklenemez.
+There is **no `public_ip` row in `settings`** to fix this with. Central detects its address at startup and `MUVON_PUBLIC_IP` (or `-public-ip`) pins it. The `public_ip` column that does exist belongs to `muvon.agents` and is what each agent self-reports about itself.
 
-İmzalama anahtarı HKDF (`label="muvon-agent-command-v1"`) ile türetilir; key rotate edersen tüm `pending`/`dispatched` komutlar bir sonraki agent doğrulamasında reddedilir (imza mismatch). Bu yüzden key **gerçekten stabil** olmalı.
+## 29) `MUVON_ENCRYPTION_KEY` also derives the agent command HMAC key
 
-## 30) Agent command teslim **at-least-once**
+The signing key is `HKDF(MUVON_ENCRYPTION_KEY, label="muvon-agent-command-v1")`.
 
-Komut handler'ları `cmd/agent/commands.go`'da idempotent yazılır. Aynı komut ID'si iki kez gelirse `Registry.markSeen` (LRU 1000 entry) dedup yapar. Yine de **operatör side dikkat**:
-- Aynı komutu UI'dan iki kez göndermek = `agent_commands` tablosunda iki ayrı row (farklı UUIDv7'lar). Dedup sadece **aynı ID**'nin tekrar teslim edilmesine karşı.
-- `agent.restart` veya `agent.revoke` gibi yıkıcı komutları **birden fazla kez göndermeyin** — history kirlenir, supervisor restart loop'a girer gibi yanıltıcı görünüm.
+The key is **required for the binary to start at all**, so there is no "key missing, channel quietly disabled" state to diagnose any more. What remains true is that rotating it breaks things: every `pending` and `dispatched` command fails signature verification at the agent, and everything the old key encrypted becomes unreadable. The key must be genuinely stable.
 
-## 31) System upgrade eşzamanlılığı 409 ile bloke
+## 30) Command delivery is **at-least-once**
 
-Process-wide `upgradeBroker` aktif tek upgrade'e izin verir. İkinci `POST /api/system/upgrade` çağrısı 409 alır. SSE stream (`GET /api/system/upgrade/stream`) late-joining listener'lar için event history replay'i yapar — yani upgrade başladıktan sonra bağlanan UI ilk event'leri kaçırmaz.
+Handlers in `cmd/agent/commands.go` are written to be idempotent, and `Registry.markSeen` (an LRU of 1000 entries) drops a repeated ID. Operator-side care is still needed:
 
-**v0.1.4'ten itibaren** helper container kademeli recreate yapar (muvon + dialog-siem önce, muvon-deployer en son) — deployer'ın spawn'ı yaptığı helper, kendi recreate sırasında muvon zaten Healthy olduğu için. Plus admin handler stream EOF'unu körü körüne "done" sayma yerine `:9443/api/health`'i 60 sn poll eder; başarısızsa `failed` event'i yayar. v0.1.0–v0.1.3 arası bu davranış yoktu, yarım kalan upgrade'ler UI'da yeşil tik gösteriyordu.
+- Sending the same command twice from the UI creates two rows with different UUIDv7s. The dedup only protects against the **same ID** being delivered twice.
+- Do not send destructive commands such as `agent.restart` or `agent.revoke` more than once: the history gets noisy and the supervisor's behaviour starts to look like a restart loop.
 
-## 32) `keep_releases` çok düşük = rollback yolu kapanır
+## 31) Concurrent system upgrades are blocked with 409
 
-`deploy_components.keep_releases` (default 3) son N başarılı release'in image'ını host'ta tutar. **1'e düşürürsen rollback `POST /api/deploy/projects/{slug}/rollback` çağrısı image_pull başarısız olabilir** — eski tag GHCR'da varsa pull yeniden yapar, ama public olmayan registry'de auth sorunu çıkabilir. 50 üst sınır; 10+ büyük image'la (1 GB+) disk hızlı dolar.
+A process-wide mutex allows one upgrade at a time, so a second `POST /api/system/upgrade` gets 409. The SSE stream replays event history for late joiners, so a UI that connects mid-upgrade does not miss the beginning.
 
-Pratik öneriler:
-- Üretim: 3 (current + 2 rollback hedefi).
-- Büyük image (>1 GB) ve sık deploy: 2 (sadece bir önceki tutulur — disk öncelikli).
-- Geliştirme: 1 (her promote eskisini siler — minimum disk).
+The helper container recreates services in stages (muvon and dialog-siem first, muvon-deployer last), because the deployer is the helper's own spawner. The admin handler does not treat the resulting stream EOF as success: it polls `127.0.0.1:9443/health` for 60 seconds and emits `failed` if health never returns.
 
-UI: `ComponentEditorDialog` "Gelişmiş" sekmesi → "Tutulan release sayısı". DB CHECK ≥ 1, yani 0 set edilemez.
+## 32) A very low `keep_releases` closes the rollback path
 
-## 33) Image prune sırasında 409 = sessiz pas
+`deploy_components.keep_releases` (default 3) keeps the images of the last N succeeded releases on the host. **Drop it to 1 and a rollback may fail at image pull**: the old tag can be re-pulled from a public registry, but a private one can fail auth. The upper bound is 50, and 10 or more large images (over 1 GB) fills a disk quickly.
 
-`pruneImagesAfterPromote` her image_ref için `docker rmi` çağırır. Docker hâlâ kullanan bir container varsa 409 döner; kod 409'u **success** olarak yutar (loglanmaz). Bu doğru davranış — SQL `in_use` filter tutamadığı bir use-case'i (ör. başka bir component aynı image'ı paylaşıyor) Docker refcount yakalar. Symptom: image silinmesini bekledin, hâlâ var → muhtemelen başka bir container kullanıyor (`docker ps -a --filter ancestor=<ref>`).
+Practical guidance:
 
-## 34) Reconcile orphan'ları `ContainerListAll(all=1)` ile bulur
+- Production: 3 (current plus two rollback targets).
+- Large images and frequent deploys: 2 (only the previous one is kept; disk wins).
+- Development: 1 (each promote deletes the last).
 
-Eskiden `ContainerList` (running-only) kullanılıyordu, bu yüzden exited orphan'lar (failed migration, crashed candidate) görünmüyordu. v0.1.0 itibarıyla `ContainerListAll` ile tüm state'ler taranır. Bu da demektir ki: `muvon.managed=true` label'lı **DB'de olmayan** her container'a (state ne olursa olsun) `ContainerStop` + `ContainerRemove(force=true)` uygulanır. Manuel `docker run` ile `muvon.managed=true` label vermek = bir sonraki tick'te silinir.
+In the UI: `ComponentEditorDialog`, the "Gelişmiş" tab, "Tutulan release sayısı". A DB CHECK enforces at least 1.
 
-## 35) `agent.revoke` clean shutdown, crashloop değil
+## 33) A 409 during image prune is a deliberate no-op
 
-`POST /api/agents/{id}/commands` body `{"kind":"agent.revoke"}` agent'ı **kalıcı durdurur**:
-1. Central tarafında `agents.is_active=false` set edilir.
-2. Komut agent'a teslim edilir; handler `os.Exit(1)` yapar.
-3. Supervisor agent'ı yeniden başlatmaya çalışırsa central auth'u reddeder (`is_active=false`), agent immediately çıkar — crashloop'a girer gibi görünür, ama bu beklenen davranış.
+`pruneImagesAfterPromote` calls `docker rmi` per image ref. If a container still uses it, Docker returns 409 and the code swallows it as success without logging. That is correct: Docker's refcount catches a case the SQL `in_use` filter cannot, such as another component sharing the same image. Symptom: you expected an image to disappear and it is still there. Check `docker ps -a --filter ancestor=<ref>`.
 
-Geri alma: yeni agent enroll (`POST /api/agents`); eski kayıt sırasıyla silinir (`DELETE /api/agents/{id}`). Plaintext API key bir kez döner — kaybedersen tekrar enroll.
+## 34) Orphan reconciliation uses `ContainerListAll(all=1)`
 
-## 36) Docker subnet'i ve agent container IP'si kurulumdan kuruluma DEĞİŞİR
+It used to list running containers only, so exited orphans (a failed migration, a crashed candidate) were invisible. Now every state is scanned, which means **any container labelled `muvon.managed=true` that the DB does not know about** is stopped and force-removed, whatever its state. Hand-running `docker run` with that label means it disappears on the next tick.
 
-Agent host'unda tipik olarak iki ağ olur: agent'ın paylaşımlı proxy ağı (`muvon-agent_default`) ve
-uygulamanın DB ağı. Docker bunlara subnet'i **yaratılma sırasına** göre dağıtır. Uygulamanın DB
-compose'u önce ayağa kalktıysa `172.18.0.0/16`'yı o kapar ve agent ağı `172.19.0.0/16` olur; sıra
-tersse tam tersi. Aynı ürünün iki kurulumunda bu iki farklı çıkabilir.
+## 35) `agent.revoke` is a clean shutdown, not a crash loop
 
-Sonuçları:
-- Bir install şablonuna, doküman örneğine veya uygulama env'ine **sabit subnet ya da sabit agent IP
-  yazma**. Bir host'ta doğru olan diğerinde sessizce yanlış olur.
-- `ipv4_address` ile pin atmak istiyorsan compose'da ağı açık `ipam.config.subnet` ile de tanımlaman
-  gerekir; bu da o subnet'in her host'ta boş olduğu varsayımını yapar (başka bir ağ kapmışsa ağ
-  oluşturma çakışır).
-- Agent'ın son okteti pratikte `.2` çıkma eğiliminde (compose'da ilk yaratılan container), ama bu bir
-  garanti değil: agent silinip yeniden yaratılırken araya bir deploy girerse yeni uygulama
-  container'ı boşalan adresi kapar.
+`POST /api/agents/{id}/commands` with `{"kind":"agent.revoke"}` stops the agent permanently:
 
-Doğru yaklaşım: adresi **çalışma anında** öğren (`docker network inspect <ağ>`), konfigürasyona gömme.
+1. Central sets `agents.is_active=false`.
+2. The command reaches the agent and its handler exits 1.
+3. If a supervisor restarts it, central rejects its auth and it exits immediately. It looks like a crash loop, and that is the expected shape.
 
-## 37) Gerçek istemci IP'si: uygulama tarafı ayarlanmazsa SESSİZCE yanlış olur
+To undo: enroll a new agent (`POST /api/agents`) and delete the old record (`DELETE /api/agents/{id}`). The plaintext key is returned once.
 
-MUVON edge'i `X-Forwarded-For` gönderir, ama arkadaki uygulama sunucusu bu header'a **varsayılan
-olarak güvenmez**. Güvenmediğinde istemci IP'si diye kaydettiği şey **edge container'ının IP'si**
-olur. Hiçbir şey patlamaz: site açılır, istekler çalışır, sadece log/audit/rate-limit kayıtlarındaki
-IP yanlıştır. Bu yüzden aylarca fark edilmeden kalabilir.
+## 36) Docker subnets and the agent's container IP **differ per installation**
 
-Sunucuya göre ayar:
+An agent host typically has two networks: the agent's shared proxy network (`muvon-agent_default`) and the application's DB network. Docker assigns subnets **in creation order**. If the application's DB compose came up first, it takes `172.18.0.0/16` and the agent network becomes `172.19.0.0/16`; the other way round if the order was reversed. Two installations of the same product can differ.
 
-| Sunucu | Ayar | Varsayılan |
-|---|---|---|
-| gunicorn | `FORWARDED_ALLOW_IPS` env veya `--forwarded-allow-ips` | `127.0.0.1` (edge'e güvenmez) |
-| uvicorn | `--proxy-headers --forwarded-allow-ips` | proxy header'ları kapalı |
-| Django | `SECURE_PROXY_SSL_HEADER` (yalnız şema için), IP'yi WSGI sunucusu belirler | yok |
-| nginx (SPA/statik) | `set_real_ip_from` + `real_ip_header` | yok |
+Consequences:
 
-İki tuzak:
-- **gunicorn'da CLI argümanı env'i ezer.** `FORWARDED_ALLOW_IPS` env'ini düzeltip komut satırında
-  eski değer kalırsa hiçbir şey değişmez. Her ikisini de kontrol et:
-  `docker inspect <container> --format '{{json .Config.Cmd}}'` ve `docker exec <container> env | grep -i forwarded`.
-- **gunicorn CIDR desteklemez.** `gunicorn/http/message.py` içinde eşleştirme
-  `peer_addr[0] in cfg.forwarded_allow_ips`, yani düz liste üyeliği. `172.18.0.0/16` yazarsan hiçbir
-  adrese uymaz ve sessizce "güvenme" moduna düşer. Seçenekler: tam IP ya da `*`.
+- **Never write a fixed subnet or a fixed agent IP** into an install template, a documentation example or an application's env. What is right on one host is silently wrong on another.
+- Pinning with `ipv4_address` requires declaring the network with an explicit `ipam.config.subnet`, which assumes that subnet is free on every host; if another network took it, creation conflicts.
+- The agent's last octet tends to be `.2` in practice, being the first container compose creates, but that is not a guarantee: if a deploy lands between the agent being removed and recreated, a new application container takes the freed address.
 
-**Doğru ayar: adresi elle yazma, `${MUVON_EDGE_IP}` kullan.** Deployer container'ı yaratırken
-edge proxy'nin o component'in ağındaki güncel adresini bulur, `MUVON_EDGE_IP` olarak env'e koyar ve
-component env değerlerindeki `${MUVON_EDGE_IP}` token'ını onunla değiştirir. Yani:
+The right approach is to learn the address **at runtime** (`docker network inspect <network>`) rather than baking it into configuration.
+
+## 37) The real client IP is **silently wrong** unless the application does its part
+
+MUVON writes two headers on every proxied request: `X-Real-IP` carries the client address the edge resolved, and `X-Forwarded-For` carries the hop chain. The application behind it does not trust either by default, and when it does not, the address it records is **the edge container's IP**. Nothing breaks: the site loads, requests succeed, only the logged, audited and rate-limited address is wrong. That is why it survives for months.
+
+**The contract is `X-Real-IP`, gated on `MUVON_EDGE_IP`.** The deployer resolves the edge proxy's current address on the component's network, injects it as `MUVON_EDGE_IP`, and substitutes the literal `${MUVON_EDGE_IP}` token in env values and command arguments. The application trusts `X-Real-IP` only when the peer is that address:
 
 ```
-FORWARDED_ALLOW_IPS=${MUVON_EDGE_IP}
+if peer == MUVON_EDGE_IP:   # did this really come from the edge
+    client_ip = X-Real-IP   # then take the authoritative answer
+else:
+    client_ip = peer
 ```
 
-Bu değer her deploy'da yeniden çözülür, dolayısıyla Docker adresi değiştirdiğinde (bkz. #36) ayar
-kendiliğinden doğru kalır. Değişim **birebir token değişimidir**, kabuk tarzı genişletme değil, o
-yüzden içinde `$` geçen secret değerler bozulmaz.
+`docs/client-ip.md` carries the full contract with ready middleware for ASGI, Django and nginx.
 
-Edge adresi çözülemezse token **olduğu gibi bırakılır**: boş bir allow-list yazıp güveni sessizce
-kapatmaktansa görünür bir hata bırakmak tercih edilir. Central'da proxy ile deployer ayrı
-container'lar olduğu için proxy `muvon.role=edge` etiketinden bulunur; agent host'unda deployer zaten
-proxy'nin içinde çalıştığı için kendi container'ına bakar.
+**Do not enable the application server's own forwarded-header handling** (`--proxy-headers`, `--forwarded-allow-ips`, `FORWARDED_ALLOW_IPS`). Those implementations walk the `X-Forwarded-For` chain and take the rightmost entry that is not in their trusted list. Behind a CDN, MUVON emits `client, cdn-edge`, so with only the edge trusted the rightmost untrusted entry is the CDN and the application records the CDN as the visitor. Making it correct would mean trusting the CDN's entire address ranges and keeping that list current forever. The server layer also runs before application middleware, so when it is active it wins and the middleware never gets a chance.
 
-Teşhis: `dialog.http_logs`'ta `client_ip` dağılımına bak. Tek bir private adres baskınsa
-(özellikle edge'in container IP'si) trust ayarı yok demektir:
+Two related traps:
+
+- **A command-line flag overrides the environment.** Fixing an env var while a stale flag remains in the command changes nothing. Check both: `docker inspect <container> --format '{{json .Config.Cmd}}'` and `docker exec <container> env | grep -i forwarded`.
+- **Hardcoded addresses go stale.** The edge container's IP changes when it is recreated (see #36), and a stale gate simply stops matching, silently. That is what `${MUVON_EDGE_IP}` exists to prevent; substitution is a literal token replace, not shell expansion, so secrets containing `$` are not mangled. If the edge address cannot be resolved, the token is deliberately left in place and the deployment fails with a clear reason, rather than collapsing into an empty allow-list that quietly trusts no one.
+
+Diagnosis: look at the `client_ip` distribution in `dialog.http_logs`. One private address dominating, especially the edge's container IP, means the trust configuration is missing:
+
 ```sql
 SELECT client_ip, count(*) FROM dialog.http_logs
 WHERE timestamp > now() - interval '1 hour'
 GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
 ```
 
-## 38) Host firewall'ı gerçek maruziyeti göstermez
+## 38) A host firewall does not show real exposure
 
-`ufw inactive` ve `iptables INPUT ACCEPT` görmek "bu port dünyaya açık" demek DEĞİLDİR. Sağlayıcı
-seviyesinde (cloud firewall, security group, VPC ACL) bir katman olabilir ve host'un içinden
-görünmez. Tersi de doğru: ufw açık olsa bile provider katmanı beklenmedik bir portu açabilir.
+Seeing `ufw inactive` and `iptables INPUT ACCEPT` does **not** mean a port is open to the world. There may be a provider-level layer (cloud firewall, security group, VPC ACL) that is invisible from inside the host. The reverse is also true: even with ufw enabled, a provider layer can open something unexpected.
 
-`ss -tlnp`'nin `0.0.0.0` göstermesi yalnız **process'in** tüm arayüzleri dinlediğini söyler, o
-paketin dışarıdan gelebildiğini değil.
+`ss -tlnp` showing `0.0.0.0` only says the **process** listens on all interfaces, not that packets can reach it from outside.
 
-Hüküm vermeden önce **dışarıdan ölç**:
+Measure from outside before concluding:
+
 ```bash
-nc -z -G 4 -w 4 <public-ip> <port> && echo acik || echo kapali/filtreli
+nc -z -G 4 -w 4 <public-ip> <port> && echo open || echo closed/filtered
 ```
-Kontrol için bilinen açık bir portu (443) da test et; ikisi de kapalı çıkıyorsa ölçüm yolun bozuktur.
 
-## 39) Self-upgrade helper container'ları ve eski image'lar birikir
+Test a known-open port (443) as a control. If both come back closed, your measurement path is broken.
 
-`agent.self_upgrade` ve sistem upgrade akışı kısa ömürlü bir `docker:*-cli` helper container'ı
-başlatır. Bu container `--rm` ile silinmez, `Exited(0)` olarak kalır. Uzun süredir ayakta olan
-kurulumlarda onlarca birikir. Aynı şekilde eski sürüm image'ları da temizlenmez;
-`pruneImagesAfterPromote` yalnız **managed component** image'larını kapsar, MUVON'un kendi
-image'larını değil.
+## 39) Helper containers and old images accumulate
 
-İşlevsel zarar yok ama `docker ps -a` okunmaz hale gelir ve disk şişer. Kontrol:
+`agent.self_upgrade` and the system upgrade flow start a short-lived `docker:*-cli` helper container. It is not removed with `--rm`, so it stays as `Exited(0)`. On a long-lived installation dozens pile up. Old version images are not cleaned either: `pruneImagesAfterPromote` covers **managed component** images, not MUVON's own.
+
+Nothing breaks, but `docker ps -a` becomes unreadable and the disk grows:
+
 ```bash
 docker ps -a --filter "status=exited" --filter "ancestor=docker:27-cli"
 docker system df
 ```
-Temizlik yıkıcı bir işlemdir, operatör onayıyla yapılır (bkz. `destructive-ops.md`).
 
-## 40) Agent'lar `:latest` kullanır, filo tek tip DEĞİLDİR
+Cleaning up is a destructive operation and needs operator approval (see `destructive-ops.md`).
 
-Agent compose'u genelde `VERSION=latest` ile gelir ve her host kendi upgrade'ini kendi zamanında
-alır. Bir host'ta düzeltilmiş bir bug diğerinde hâlâ canlı olabilir. "Sürümü yükselttik" demek
-**tüm** agent'ların yükseldiği anlamına gelmez.
+## 40) Agents track `:latest`, so the fleet is **not uniform**
 
-Filo genelinde sürümü doğrula:
+Agent compose usually ships with `VERSION=latest`, and each host upgrades on its own schedule. A bug fixed on one host can still be live on another. "We upgraded" does not mean **every** agent upgraded.
+
+Verify per host:
+
 ```bash
-# her agent host'unda
 docker inspect <agent-container> --format '{{index .Config.Labels "org.opencontainers.image.version"}}'
 ```
-`:latest` tag'i yalnız yeni bir sürüm tag'i yayınlandığında hareket eder; agent'ın onu alması için
-ayrıca `agent.self_upgrade` komutu (veya compose pull) gerekir.
 
-## 41) Component silinince route'un bağı kopar (taşımalarda ana tuzak)
+Also note that `:latest` moves only when a new `v*` tag is published, and an agent still needs `agent.self_upgrade` (or a compose pull) to actually take it.
 
-`agent_id` değiştirilemediği için bir component'i başka host'a taşımanın tek yolu silip yeniden
-yaratmaktır (bkz. #23). Yeni component **yeni bir id alır**, oysa `routes.managed_component_id`
-eskisini işaret ediyordu. DELETE sırasında bu alan `NULL`'a düşer ve route hiçbir backend'e
-bağlı kalmaz.
+## 41) Deleting a component breaks its route binding (the main trap in a move)
 
-Belirti son derece yanıltıcı: container'lar `healthy`, `/api/deploy/projects` çıktısında
-instance'lar `active`, `GET /api/system/health/backends` hepsini `open` gösterir, ama **tüm
-domainler 502 döner**. Backend sağlıklı olduğu için hata deployer'da veya uygulamada aranır;
-oysa sorun route katmanındadır.
+Because `agent_id` cannot be changed, moving a component to another host means delete and re-create (see #23). The new component gets a **new id**, while `routes.managed_component_id` pointed at the old one. The DELETE sets that field to `NULL` and the route ends up bound to no backend.
 
-Taşıma sonrası mutlaka kontrol et:
+The symptom is thoroughly misleading: containers are `healthy`, instances show `active` in `/api/deploy/projects`, `GET /api/system/health/backends` reports everything `open`, and yet **every domain returns 502**. Since the backend looks healthy, people hunt in the deployer or the application, while the problem is at the route layer.
+
+Always check after a move:
+
 ```sql
 SELECT h.domain, r.path_prefix, COALESCE(r.managed_component_id::text,'NULL') AS comp
 FROM muvon.routes r JOIN muvon.hosts h ON h.id = r.host_id
-WHERE h.domain LIKE '%<proje>%' ORDER BY 1;
+WHERE h.domain LIKE '%<project>%' ORDER BY 1;
 ```
-`NULL` görünen her proxy route'u yeni component id'sine bağla. `PUT /api/routes/{id}`
-gövdesi **tam route objesi** ister (pointer alan yok), bu yüzden önce `GET /api/routes/{id}`
-ile oku, yalnız `managed_component_id`'yi değiştir, geri yaz.
 
-Ayrıca **bir route tamamen kaybolabilir**: gerçek bir taşımada `form.tatilji.online`'ın tek
-route'u silindi ve o domain 404 vermeye başladı. Taşıma öncesi ve sonrası route sayısını
-karşılaştır, eksik olanı `POST /api/hosts/{id}/routes` ile geri ekle.
+Rebind every proxy route showing `NULL` to the new component id. `PUT /api/routes/{id}` wants the **complete route object** (no pointer fields), so `GET /api/routes/{id}` first, change only `managed_component_id`, and write it back.
 
-## 42) Aynı host'ta iki proje aynı slug'ı kullanırsa Docker ağ adı çakışır
+A route can also **disappear entirely**: in one real move a domain's only route was deleted and it started returning 404. Compare the route count before and after, and restore anything missing with `POST /api/hosts/{id}/routes`.
 
-Deployer container'ı ağa component slug'ıyla bağlar. Tek projeli host'ta sorun yok, ama çok
-projeli bir host'ta iki projenin de `api` adlı component'i varsa **iki container aynı adı
-paylaşımlı proxy ağında talep eder**. Docker DNS bu durumda round-robin yapar:
-`http://api:8000` isteği rastgele bir projenin servisine düşer.
+## 42) Two projects on one host sharing a component slug collide in Docker DNS
 
-Gerçek bir kurulumda dört container `api`, dört container `landing`, iki container `admin`
-adını paylaşıyordu. Hiçbir şey hata vermez, sadece yanlış projenin verisi servis edilir.
-Özellikle SSR yapan landing'lerin `SERVER_API_URL=http://api:8000` ayarı bundan etkilenir.
+The deployer attaches a container to the network under its component slug. On a single-project host that is fine, but on a multi-project host where two projects each have a component named `api`, **both containers claim the same name on the shared proxy network**. Docker DNS round-robins, so a request to `http://api:8000` lands on an arbitrary project's service.
 
-Kontrol:
+In one real installation four containers shared the name `api`, four shared `landing` and two shared `admin`. Nothing errors; the wrong project's data is simply served. Server-side rendering that points at `SERVER_API_URL=http://api:8000` is especially exposed.
+
+Check:
+
 ```bash
 for c in $(docker network inspect muvon-agent_default --format '{{range .Containers}}{{.Name}}{{println}}{{end}}'); do
   docker inspect "$c" --format '{{.Name}} {{range $k,$v := .NetworkSettings.Networks}}{{if eq $k "muvon-agent_default"}}{{$v.Aliases}}{{end}}{{end}}'
 done | sort -k2
 ```
-Aynı ad birden fazla satırda görünüyorsa çakışma var.
 
-Çözüm: bu sürümden itibaren container'lar ek olarak `<proje>-<component>` adını da taşır.
-Çok projeli host'larda component'ler arası çağrıları bu uzun ada çevir
-(`SERVER_API_URL=http://tatilji-api:8000`). Kısa ad geriye uyumluluk için duruyor, ama çok
-projeli bir host'ta ona güvenme.
+A name appearing on more than one line is a collision.
+
+Fix: containers now also carry a `<project>-<component>` alias. On multi-project hosts, point cross-component calls at the long name (`SERVER_API_URL=http://<project>-api:8000`). The short alias remains for backwards compatibility, but do not rely on it where projects share a host. Aliases are assigned at container creation, so upgrading the version is not enough: each component has to be redeployed.
+
+## 43) Secrets are fail-closed now, and a startup exit is the symptom
+
+`MUVON_ENCRYPTION_KEY` and `MUVON_JWT_SECRET` are both required and have no defaults. A container that exits immediately after an update, complaining about one of them, is configured rather than broken: `install.sh` generates both, but a hand-written `.env` may be missing one.
+
+The strictness is deliberate: `GET` masks secret keys unconditionally, so a build that accepted a missing key could store a value unencrypted and still show `********` for it. On an installation that predates the requirement, treat secrets written without a key as unencrypted and rewrite them through the API once one is configured.

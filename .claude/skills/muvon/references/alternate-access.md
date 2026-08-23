@@ -1,50 +1,47 @@
-# API'nin dışındaki erişim yolları
+# Access paths outside the API
 
-API'den hata mesajı belirsiz, endpoint yoksa veya **derin teşhis** gerekiyorsa: DB'yi doğrudan oku, kaynak kodu oku. Bunlar **opsiyonel** — kullanıcının SSH erişimi yoksa, sadece API yeter.
+When an API error is vague, an endpoint does not exist, or a **deep diagnosis** is needed: read the database directly, read the source. These are **optional**. Without SSH access, the API is enough.
 
-## 1) SSH ile uzak makineye bağlanma
+## 1) Reaching the remote machine over SSH
 
-Skill `ssh` yapmaz. Kullanıcı bilgisayarındaki `~/.ssh/config` zaten varsayılır. Kontrol et:
+This skill does not manage SSH. It assumes the user's `~/.ssh/config` already works. Check:
+
 ```bash
 ssh -o BatchMode=yes -o ConnectTimeout=3 <alias> "true" 2>&1
 ```
 
-Çıkış 0 = alias hazır. Hata = kullanıcıdan alias sor: "MUVON sunucusuna nasıl ssh ediyorsun? alias?"
+Exit 0 means the alias is ready. On error, ask: "How do you ssh to the MUVON server? Which alias?"
 
-## 2) DB doğrudan okuma — SADECE READ
+## 2) Reading the database directly, READ ONLY
 
-Production VPS'inde:
+On the production VPS:
+
 ```bash
 ssh <alias> "docker exec muvon-postgres psql -U muvon -d muvon -tAc \"<SELECT>\""
 ```
 
-`-tA` flag'i: tuples-only + unaligned → CSV-vari çıktı, parse kolay.
+`-tA` gives tuples-only, unaligned output, which is easy to parse.
 
-### Şemalar
+### Schemas
 
-- **`muvon.*`** — admin/edge state:
-  - `hosts` (`tls_mode`: off/redirect/auto/manual, `force_https`, `trusted_proxies`, JWT identity per-host).
-    **`target_kind`** (`central` | `agent`) + **`target_agent_id`** → domain'in kendisi de bir agent'a
-    bağlanır, sadece component'ler değil. Bir kurulumda tüm host'lar edge'de olabilir ve central'da
-    hiç trafik olmayabilir; "hangi domain nerede" sorusunu bu iki kolon cevaplar.
-  - `routes` (`managed_component_id` ile bir component'e bağlanabilir)
-  - `agents` (`api_key_hash` BYTEA; eski `api_key` plaintext geçişte hâlâ var)
-  - `tls_certificates` (issuer: `manual` / `letsencrypt` / `letsencrypt:agent:<id>`)
-  - `settings`, `admin_users`, `admin_refresh_tokens`, `admin_audit_log`
-  - `deploy_projects`, `deploy_components` (`agent_id` nullable, `paused`, `env` JSONB, `env_secret_keys` text[])
-  - `deploy_releases`, `deploy_release_components`, `deploy_instances`
-  - `deployments` (`agent_id` nullable — null = central, set = edge agent)
+- **`muvon.*`**, admin and edge state:
+  - `hosts` (`tls_mode`: off/redirect/auto/manual, `force_https`, `trusted_proxies`, per-host JWT identity settings). **`target_kind`** (`central` or `agent`) plus **`target_agent_id`** answer "which domain is served where": the domain itself binds to an agent, not just its components. In some installations every host is on the edge and central carries no traffic at all.
+  - `routes` (can bind to a component through `managed_component_id`)
+  - `agents` (`api_key_hash`)
+  - `tls_certificates` (issuer: `manual`, `letsencrypt`, `letsencrypt:agent:<id>`)
+  - `settings`, `acme_cache`, `admin_users`, `admin_refresh_tokens`, `admin_audit_log`
+  - `deploy_projects`, `deploy_components` (`agent_id` nullable, `paused`, `env` JSONB, `env_secret_keys` text[], `keep_releases`)
+  - `deploy_releases`, `deploy_release_components`, `deploy_instances` (`spec_hash`)
+  - `deployments` (`agent_id` nullable: null means central, set means an edge agent)
   - `deployment_events`
-  - `agent_commands` (UUIDv7 PK, `agent_id`, `kind`, `payload` JSONB, `signature` BYTEA, `nonce` BYTEA, `state`, `result` JSONB, `expires_at`, `dispatched_at`, `finished_at`)
-  - `scheduled_jobs`, `scheduled_job_runs` (component'e bağlı periyodik işler; cron `next_run_at`,
-    `concurrency_policy`, run geçmişi + exit code + çıktı kuyruğu)
-- **`dialog.*`** (SIEM): `http_logs`, `http_log_bodies`, `alerts`, `container_logs`, `containers`,
-  `client_events` (RUM / tarayıcı telemetrisi; `trace_id` + `session_id` ile http_logs'a join edilir).
+  - `agent_commands` (UUIDv7 PK, `agent_id`, `kind`, `payload` JSONB, `signature`, `nonce`, `state`, `result` JSONB, `expires_at`, `dispatched_at`, `finished_at`)
+  - `scheduled_jobs`, `scheduled_job_runs` (component-bound periodic work: cron `next_run_at`, `concurrency_policy`, run history with exit code and output tail)
+- **`dialog.*`**, the SIEM: `http_logs`, `http_log_bodies`, `alerts`, `container_logs`, `containers`, `client_events` (browser RUM, joined to `http_logs` by `trace_id` and `session_id`).
 
-### Pratik sorgular
+### Useful queries
 
 ```sql
--- Hangi servis hangi host'ta (central vs edge agent)?
+-- Which service runs where (central vs edge agent)?
 SELECT p.slug AS project, c.slug AS component,
        COALESCE(a.name, 'central') AS host,
        c.paused, array_length(c.env_secret_keys, 1) AS secret_count
@@ -52,36 +49,37 @@ FROM muvon.deploy_components c
 JOIN muvon.deploy_projects p ON p.id = c.project_id
 LEFT JOIN muvon.agents a ON a.id = c.agent_id;
 
--- Hangi domain nerede servis ediliyor (host'lar da agent'a bağlanır)?
-SELECT COALESCE(a.name, '(central)') AS yer, h.target_kind, count(*) AS host_sayisi
+-- Which domain is served where (hosts bind to agents too)?
+SELECT COALESCE(a.name, '(central)') AS location, h.target_kind, count(*) AS host_count
 FROM muvon.hosts h
 LEFT JOIN muvon.agents a ON a.id = h.target_agent_id
 GROUP BY 1, 2 ORDER BY 3 DESC;
 
--- Filo envanteri: agent'lar, en son ne zaman görüldü, central'a nereden bağlandı
+-- Fleet inventory: agents, when last seen, where they connected from
 SELECT name, is_active, last_seen_at, last_remote_addr, config_version
 FROM muvon.agents ORDER BY name;
 
--- İstemci IP sağlığı: private/tek adres baskınlığı trust ayarının eksik olduğunu gösterir
+-- Client IP health: a dominant private or single address means the trust
+-- configuration is missing somewhere
 SELECT client_ip, count(*) FROM dialog.http_logs
 WHERE timestamp > now() - interval '1 hour'
 GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
 
--- Son 1 saat 5xx top path
+-- Top 5xx paths in the last hour
 SELECT host, path, count(*)
 FROM dialog.http_logs
 WHERE response_status >= 500
   AND timestamp > now() - interval '1 hour'
 GROUP BY host, path ORDER BY 3 DESC LIMIT 10;
 
--- En çok rate-limited olan IP
+-- Most rate-limited IPs
 SELECT client_ip, count(*)
 FROM dialog.http_logs
 WHERE response_status = 429
   AND timestamp > now() - interval '24 hours'
 GROUP BY client_ip ORDER BY 2 DESC LIMIT 10;
 
--- En son deploy'lar (host kategorisi dahil)
+-- Recent deployments, including which host ran them
 SELECT d.id, p.slug AS project, d.release_id, d.trigger,
        COALESCE(a.name, 'central') AS host,
        d.status, d.started_at, d.finished_at
@@ -90,13 +88,13 @@ JOIN muvon.deploy_projects p ON p.id = d.project_id
 LEFT JOIN muvon.agents a ON a.id = d.agent_id
 ORDER BY d.created_at DESC LIMIT 5;
 
--- Hot endpoint son N dakika
+-- Hot endpoints over the last N minutes
 SELECT host, path, count(*), percentile_cont(0.95) WITHIN GROUP (ORDER BY response_time_ms)
 FROM dialog.http_logs
 WHERE timestamp > now() - interval '15 minutes'
 GROUP BY host, path ORDER BY 3 DESC LIMIT 20;
 
--- Agent command kuyruğunda neyin nerede durduğunu gör
+-- Where commands are stuck in the queue
 SELECT c.id, a.name AS agent, c.kind, c.state,
        c.created_at, c.dispatched_at, c.finished_at,
        c.expires_at,
@@ -106,14 +104,14 @@ JOIN muvon.agents a ON a.id = c.agent_id
 WHERE c.created_at > now() - interval '1 hour'
 ORDER BY c.created_at DESC LIMIT 50;
 
--- Bir agent'a son N komut (history)
+-- Recent command history for one agent
 SELECT kind, state, created_at, finished_at,
        coalesce(result->>'output', result->>'error', '') AS detail
 FROM muvon.agent_commands
 WHERE agent_id = '<agent-uuid>'
 ORDER BY created_at DESC LIMIT 20;
 
--- "Pending kalan" komutları say (sweeper henüz expire etmedi ama agent çekmedi)
+-- Commands left pending (not yet expired by the sweeper, not yet claimed)
 SELECT a.name, count(*)
 FROM muvon.agent_commands c
 JOIN muvon.agents a ON a.id = c.agent_id
@@ -121,16 +119,17 @@ WHERE c.state = 'pending' AND c.created_at < now() - interval '1 minute'
 GROUP BY a.name ORDER BY 2 DESC;
 ```
 
-### Asla — DB'ye yazma
+### Never write to the database
 
-API katmanını atlatır:
-- Audit log'a düşmez
-- Secret box şifreleme atlanır (secrets plaintext kalır)
-- Config holder yeniden hidrasyon yapmaz → yeni değer ayağa kalkmaz
+A direct write bypasses the API layer:
 
-DB write işleri **her zaman API** üzerinden.
+- It does not reach the audit log.
+- It skips the secret box, so secrets stay plaintext.
+- The config holder does not rehydrate, so the new value never takes effect.
 
-## 3) Dosya okuma — config + compose
+Database writes always go **through the API**.
+
+## 3) Reading files: config and compose
 
 ```bash
 ssh <alias> "cat /opt/muvon/.env"
@@ -139,134 +138,136 @@ ssh <alias> "docker compose -f /opt/muvon/docker-compose.yml ps"
 ssh <alias> "docker compose -f /opt/muvon/docker-compose.yml logs --tail=200 muvon"
 ```
 
-`/opt/muvon/.env` içinde:
-- `POSTGRES_PASSWORD` — secret
-- `MUVON_JWT_SECRET` — secret
-- `MUVON_ENCRYPTION_KEY` — secret (kayıp = encrypted settings VE component secret env'leri okunamaz; deployer ve edge agent ile aynı olmalı)
-- `MUVON_ADMIN_DOMAIN`, `LOG_LEVEL` — public
+Inside `/opt/muvon/.env`:
 
-Edge agent host'larında kurulum dizini genelde **`/opt/muvon-agent/`**: `docker-compose.agent.yml`
-+ `.env`. Agent systemd servisi değildir, compose ile çalışır (container adı `muvon-agent-agent-1`):
+- `POSTGRES_PASSWORD`: secret
+- `MUVON_JWT_SECRET`: secret, required, at least 32 characters, no default. muvon refuses to start without it
+- `MUVON_ENCRYPTION_KEY`: secret, required. muvon, dialog-siem and muvon-deployer all refuse to start without it, and it must match the edge agents' `AGENT_ENCRYPTION_KEY`. Losing it means encrypted settings and component secret env values become unreadable
+- `MUVON_ADMIN_DOMAIN`, `LOG_LEVEL`: not secret
+
+On an edge agent host the install directory is usually **`/opt/muvon-agent/`**, holding `docker-compose.agent.yml` and `.env`. The agent is not a systemd service; it runs under compose (container name `muvon-agent-agent-1`):
+
 ```bash
 ssh <agent-host> "docker compose -f /opt/muvon-agent/docker-compose.agent.yml ps"
 ssh <agent-host> "docker logs muvon-agent-agent-1 --tail 200"
 ```
 
-`.env` içinde tipik anahtarlar:
-- `AGENT_API_KEY` — secret
-- `AGENT_ENCRYPTION_KEY` — secret (central'ın `MUVON_ENCRYPTION_KEY`'i ile aynı olmak zorunda)
-- `AGENT_CLOUDFLARE_IP_SECRET` / `AGENT_CLOUDFLARE_IP_HEADER`: secret + public. CDN arkasındaki
-  gerçek istemci IP güveni bunlarla açılır, boşsa CDN başlıklarına güvenilmez
-- `AGENT_CENTRAL_URL`, `AGENT_LOG_ADDR`: public. Central'a ve diaLOG'a nereden gidileceği
-- `AGENT_DEPLOYER_ENABLED`, `AGENT_DEPLOYER_POLL_MS`, `AGENT_DEPLOYER_TCP_BIND`: public.
-  `TCP_BIND` boşsa 9100 tüm arayüzlerde dinler, iç ağ adresine bind etmek tercih edilir
-- `AGENT_DOCKERWATCH_ENABLED`, `AGENT_DOCKERWATCH_MANAGED_ONLY`: public
-- `AGENT_PUBLIC_IP`, `AGENT_HOST_ID`, `AGENT_EXTRA_MOUNTS`, `MUVON_AGENT_DIR`: public
+Typical keys in that `.env`:
 
-Agent container'ının bind mount'ları: docker socket (rw, embedded deployer için), registry auth
-dosyası (ro), operatör env dosyaları dizini (ro, genelde `/opt/envfiles`), artı `tls_cache` /
-`logship` / `config_cache` named volume'ları.
+- `AGENT_API_KEY`: secret
+- `AGENT_ENCRYPTION_KEY`: secret, must equal central's `MUVON_ENCRYPTION_KEY`. Required when `AGENT_DEPLOYER_ENABLED=true`, and the agent exits at startup without it
+- `AGENT_CLOUDFLARE_IP_SECRET` and `AGENT_CLOUDFLARE_IP_HEADER`: one secret, one not. They enable trust in a CDN's client-IP header; empty means CDN headers are not believed
+- `AGENT_CENTRAL_URL`, `AGENT_LOG_ADDR`: not secret. Where central and diaLOG are reached. The central URL is the admin domain over HTTPS, without a port: `:9443` is plain HTTP and compose binds it to loopback
+- `AGENT_DEPLOYER_ENABLED`, `AGENT_DEPLOYER_POLL_MS`, `AGENT_DEPLOYER_TCP_LISTEN`: not secret. `AGENT_DEPLOYER_TCP_BIND` is a compose-level variable for the host-side port mapping, while `AGENT_DEPLOYER_TCP_LISTEN` is what the binary reads. Binding to an internal address is preferred over listening on all interfaces
+- `AGENT_DOCKERWATCH_ENABLED`, `AGENT_DOCKERWATCH_MANAGED_ONLY`: not secret
+- `AGENT_PUBLIC_IP`, `AGENT_HOST_ID`, `AGENT_EXTRA_MOUNTS`, `MUVON_AGENT_DIR`: not secret
 
-Component'lerin env'i iki kaynaktan gelir ve **component env map, env dosyasını ezer**:
-`env_file_path` ile gösterilen dosya (agent'a ro mount edilmiş dizinde) + `deploy_components.env`
-JSONB. Bir değerin nereden geldiğini ararken ikisine de bak.
+The agent container's bind mounts: the Docker socket (rw, for the embedded deployer), the registry auth file (ro), the operator's env file directory (ro, usually `/opt/envfiles`), plus the `tls_cache`, `logship` and `config_cache` named volumes.
 
-**Stdout'a secret yansıtma** — sadece "set/empty" kontrol et:
+A component's env comes from two places, and **the component env map wins over the env file**: the file named by `env_file_path` (in the directory mounted read-only into the agent) and `deploy_components.env` JSONB. When tracing where a value came from, check both.
+
+**Never echo a secret.** Check only whether it is set:
+
 ```bash
 ssh <alias> "test -n \"\$(grep ^MUVON_JWT_SECRET /opt/muvon/.env | cut -d= -f2-)\" && echo 'set' || echo 'empty'"
 ```
 
-## 4) Container logs (Docker üzerinden)
+## 4) Container logs through Docker
 
-Eğer container log shipping (`muvon-deployer logship`) düşmüşse veya geçmişe gitmek istiyorsan:
+If container log shipping (`muvon-deployer logship`) is down, or you need to go further back:
+
 ```bash
 ssh <alias> "docker logs <container-name> --tail 200 --timestamps"
 ssh <alias> "docker logs <container-name> --since 1h"
 ```
 
-Normalde container log'lar `dialog.container_logs` tablosunda — API'den (`/api/container-logs`) erişilebilir.
+Normally container logs live in `dialog.container_logs` and are reachable from the API (`/api/container-logs`).
 
-## 5) MUVON kaynak kodu okuma
+## 5) Reading MUVON source
 
-Production binary'de kaynak yok. Kaynak şuralarda:
+The production binary carries no source. Find it here:
 
-### (a) Kullanıcının lokal repo'sunda
+### (a) The user's local repo
 
-Kullanıcı `~/PycharmProjects/muvon`, `~/work/muvon` gibi bir yerde repo'yu clone'lamış olabilir. Önce sor:
+Ask the user where the repo is checked out rather than guessing a path. If the session is already running inside it:
+
 ```bash
-ls -d ~/*/muvon ~/PycharmProjects/muvon ~/work/muvon 2>/dev/null
+git rev-parse --show-toplevel 2>/dev/null
 ```
 
-Bulduysan: `Read`, `Grep` doğrudan kullan.
+With a path in hand, use `Read` and `Grep` directly.
 
-### (b) GitHub raw (public repo varsayımı)
+### (b) GitHub raw (assuming the repo is public)
 
 ```bash
-# Tek dosya:
+# One file:
 curl -s https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/internal/admin/server.go | less
 
-# Klasör listesi:
+# Directory listing:
 gh api repos/SaidMuratOzdemir/MUVON/contents/internal/admin?ref=main | jq -r '.[].name'
 
-# Dosya içeriği base64-decode:
+# File content, base64 decoded:
 gh api repos/SaidMuratOzdemir/MUVON/contents/internal/admin/server.go?ref=main | jq -r '.content' | base64 -d
 ```
 
-Repo private ise `gh auth login` gerek.
+A private repo needs `gh auth login`.
 
-### (c) Hangi sürüm çalışıyor?
+### (c) Which version is running?
 
 ```bash
 ssh <alias> "docker compose -f /opt/muvon/docker-compose.yml ps --format json" | jq -r '.[] | "\(.Service): \(.Image)"'
 ```
 
-Image tag yazıyorsa (`:v1.2.3` veya commit hash) o ref ile raw fetch yap. `:latest` ise `git log` ile main'in HEAD'ine bak.
+If the image carries a tag (`:v1.2.3` or a commit hash), fetch raw files at that ref. With `:latest`, check main's HEAD, remembering that `:latest` moves only on a `v*` tag push.
 
-## 6) Endpoint kaynaklarına hızlı erişim
+## 6) Fast paths into endpoint source
 
 ```bash
-# Tüm route'ları listele:
+# Every route:
 grep -nE 'HandleFunc\("(GET|POST|PUT|DELETE)' internal/admin/server.go
 
-# Belirli handler'ı bul:
+# A specific handler:
 grep -rn 'handleSearchLogs' internal/admin/
 
-# DB migrations:
+# Migrations:
 less internal/db/migrations.go
 ```
 
-## 7) Mevcut olmayan veriyi sorgulama (DB'de var ama API'de yok)
+## 7) Data that exists in the DB but not in the API
 
-Bazı tabloların admin API'sinde karşılığı olmayabilir (`muvon.managed_instances`, `muvon.deployments_events` vs.). DB doğrudan sorgu — okumadan ne olduğunu anlamak için kaynak şemasını oku:
+Some tables have no admin API surface. Query the DB directly, and read the schema before interpreting it:
+
 ```bash
-ssh <alias> "docker exec muvon-postgres psql -U muvon -d muvon -c '\d+ muvon.deployments_events'"
+ssh <alias> "docker exec muvon-postgres psql -U muvon -d muvon -c '\d+ muvon.deployment_events'"
 ```
 
-## 8) Lokal MUVON çalıştırarak test etmek
+## 8) Running MUVON locally to try something
 
-Kullanıcı isterse skill'i lokalde dener. Kuruluş:
 ```bash
-cd ~/PycharmProjects/muvon
+cd <path-to-clone>
 cp .env.example .env
-# .env'i doldur, sonra:
+# Fill in .env (POSTGRES_PASSWORD, MUVON_JWT_SECRET, MUVON_ENCRYPTION_KEY and
+# MUVON_ADMIN_DOMAIN are all required; compose refuses to start otherwise), then:
 docker compose up -d
-# Admin paneli: http://127.0.0.1:9443 (compose'da local-only)
+# Admin panel: http://127.0.0.1:9443 (compose publishes it on loopback only)
 ```
 
-İlk admin: `POST http://127.0.0.1:9443/api/auth/setup`. Sonrası skill'in normal akışı.
+First admin: `POST http://127.0.0.1:9443/api/auth/setup`. After that, the skill's normal flow applies.
 
-## Hangi yolu seç — karar şeması
+## Choosing a path
 
 ```
-İhtiyaç                          → Birinci yol     → İkinci yol
-─────────────────────────────────────────────────────────────────
-state/list/detail okuma          → API GET         → DB SELECT (SSH varsa)
-log arama (BM25)                 → API /api/logs   → DB dialog.http_logs
-audit log                        → API /api/audit  → DB muvon.audit_log
-secret kontrol (set mi?)         → API /api/settings (boş = ?)  → /opt/muvon/.env (set/empty)
-container live log               → API SSE stream  → ssh + docker logs -f
-managed component image         → API /api/containers  → docker compose ps
-endpoint bulamadın               → kaynağa bak                  → -
-auth/CSRF/middleware iç işleyiş  → internal/admin/*.go         → -
-deploy lifecycle iç işleyiş      → internal/deployer/*.go      → -
+Need                              → First choice      → Fallback
+──────────────────────────────────────────────────────────────────────
+read state / list / detail        → API GET           → DB SELECT (if SSH)
+log search                        → API /api/logs     → DB dialog.http_logs
+audit log                         → API /api/audit    → DB muvon.admin_audit_log
+is a secret set?                  → /opt/muvon/.env (set/empty)  → -
+live container log                → API SSE stream    → ssh + docker logs -f
+managed component image           → API /api/containers → docker compose ps
+endpoint not found                → read the source   → -
+auth/CSRF/middleware internals    → internal/admin/*.go  → -
+deploy lifecycle internals        → internal/deployer/*.go → -
 ```
+
+Note that `GET /api/settings` cannot answer "is this secret set": it returns `********` for every secret key regardless. Check the `.env` file instead.

@@ -3,79 +3,79 @@ name: muvon
 description: Operate the MUVON edge gateway and diaLOG SIEM remotely via the admin API. Read hosts, routes, HTTP/container logs, alerts, deployments, managed components, agents, audit, settings and system health. Debug production issues, investigate 5xx spikes, check deploy status, inspect configuration. Use this skill whenever the user mentions MUVON, diaLOG, an edge gateway, a host/route/deploy/agent/alert/container, asks to investigate logs, troubleshoot a 5xx, examine a configuration, or take an action against a MUVON deployment.
 ---
 
-# MUVON operatör skill'i
+# MUVON operator skill
 
-MUVON, dört Go servisinden oluşan bir edge gateway + SIEM + managed-deploy platformudur (bkz. `references/architecture.md`). Bu skill, Claude'un canlı bir MUVON kurulumuna uzaktan bağlanarak **durum okuması yapması, olay incelemesi yapması ve dikkatli mutasyon aksiyonları alması** için yazılmıştır.
+MUVON is an edge gateway, SIEM and managed-deploy platform built from four Go services (see `references/architecture.md`). This skill is for connecting to a live MUVON installation to **read state, investigate incidents, and take carefully gated mutating actions**.
 
-## İlk hareket — her oturumda yapılacaklar
+## First moves, every session
 
-1. **Bağlam (context) doğrula**. Kullanıcı hangi MUVON kurulumundan bahsediyor? URL, admin kullanıcı adı, şifre nerede saklanıyor? Bunları **kullanıcıdan al** — bu skill credentials saklamaz.
-2. **Login ol** ve cookie jar oluştur. `references/auth.md` adım adım anlatıyor.
-3. Sorulan işi yapmadan önce hangi reference dosyasının ilgili olduğuna karar ver.
+1. **Establish which installation.** Which MUVON is the user talking about? What is the URL, the admin username, and where is the password kept? **Ask the user.** This skill stores no credentials.
+2. **Log in** and create a cookie jar. `references/auth.md` walks through it.
+3. Decide which reference file covers the task before starting it.
 
-## Reference dosyaları
+## Reference files
 
-| Konu | Dosya |
+| Topic | File |
 |---|---|
-| Mimari, servisler, şemalar | `references/architecture.md` |
-| Login + cookie + CSRF dance + refresh rotation | `references/auth.md` |
-| Endpoint envanteri, response formatları, SSE | `references/endpoints.md` |
-| **Sürprizler ve dikkat noktaları** | `references/pitfalls.md` |
-| Yıkıcı endpoint listesi + onay protokolü | `references/destructive-ops.md` |
-| SSH + psql ile DB doğrudan oku, kaynak kod oku | `references/alternate-access.md` |
-| Teşhis pattern'leri (5xx, deploy, agent, TLS) | `references/troubleshooting.md` |
+| Architecture, services, schemas | `references/architecture.md` |
+| Login, cookies, the CSRF dance, refresh rotation | `references/auth.md` |
+| Endpoint inventory, response shapes, SSE | `references/endpoints.md` |
+| **Surprises and traps** | `references/pitfalls.md` |
+| Destructive endpoints and the confirmation protocol | `references/destructive-ops.md` |
+| Reading the DB directly over SSH + psql, reading source | `references/alternate-access.md` |
+| Diagnostic patterns (5xx, deploy, agent, TLS) | `references/troubleshooting.md` |
 
-Bu dosyaları **gerektiğinde** `Read` ile aç. Hepsini başta yükleme — token harcaması olur.
+Open these with `Read` **when they are needed**. Do not load them all up front; that is wasted context.
 
-## Asla yapma listesi (kullanıcıdan açık onay almadıkça)
+## Never without explicit user approval
 
-- DELETE içeren herhangi bir endpoint (`/api/hosts/{id}`, `/api/routes/{id}`, `/api/tls/certificates/{id}`, `/api/agents/{id}`, `/api/deploy/projects/{slug}`, `/api/deploy/projects/{slug}/components/{component}`).
-- `POST /api/deploy/projects/{slug}/deploy` — production'a yeni image deploy eder.
-- `POST /api/deploy/projects/{slug}/rollback` — yeni bir deployment kuyruğa eklenir, önceki başarılı release'i tekrar yayar.
-- `POST /api/tls/certificates` — cert override.
-- `PUT /api/settings/{key}` — özellikle `muvon_jwt_secret`, `muvon_encryption_key`, SMTP credentials.
-- `PUT /api/deploy/projects/{slug}/components/{component}` ile `paused: true`: servisin çalışan instance'ları drain'e geçer, yeni deploy bloklanır.
-- `POST /api/alerting/test/slack` / `POST /api/alerting/test/smtp` — gerçek Slack/email mesajı gider.
-- `POST /api/system/upgrade` — tüm stack `docker compose pull && up -d` ile yeniden yaratılır; admin paneli ve proxy kısaca düşer.
-- `POST /api/agents/{id}/commands` özellikle `kind` = `agent.restart` / `agent.revoke` / `agent.drain` / `agent.self_upgrade` — uzak edge'i durdurur, drain eder, kalıcı revoke eder veya image değiştirir.
-- DB'ye doğrudan **yazma** (`INSERT`, `UPDATE`, `DELETE`). DB yazma audit'i, secret encryption'ı, config holder reload'unu atlar. Yazma her zaman API üzerinden.
-- Secret değerleri (`.env`, `MUVON_JWT_SECRET`, `MUVON_ENCRYPTION_KEY`, `AGENT_ENCRYPTION_KEY`, SMTP password, agent API key'leri, component env secret'ları) **stdout veya kullanıcıya yansıtma**. Sadece "set/empty" durumunu söyle. Agent API anahtarı zaten sadece create response'unda bir kere döner — list'te artık masked bile değil, hiç yok.
+- Any endpoint with DELETE (`/api/hosts/{id}`, `/api/routes/{id}`, `/api/tls/certificates/{id}`, `/api/agents/{id}`, `/api/deploy/projects/{slug}`, `/api/deploy/projects/{slug}/components/{component}`).
+- `POST /api/deploy/projects/{slug}/deploy`, which ships a new image to production.
+- `POST /api/deploy/projects/{slug}/rollback`, which queues a fresh deployment of the previous succeeded release.
+- `POST /api/tls/certificates`, a certificate override.
+- `PUT /api/settings/{key}`, especially `muvon_jwt_secret`, `muvon_encryption_key` and SMTP credentials.
+- `PUT /api/deploy/projects/{slug}/components/{component}` with `paused: true`: the service's running instances drain and new deploys are blocked.
+- `POST /api/alerting/test/slack` and `POST /api/alerting/test/smtp`, which send a real Slack or email message.
+- `POST /api/system/upgrade`, which recreates the whole stack with `docker compose pull && up -d`; the admin panel and the proxy go down briefly.
+- `POST /api/agents/{id}/commands`, especially `kind` = `agent.restart` / `agent.revoke` / `agent.drain` / `agent.self_upgrade`, which stop, drain, permanently revoke or re-image a remote edge.
+- Writing to the database directly (`INSERT`, `UPDATE`, `DELETE`). A direct write bypasses the audit log, secret encryption and the config holder's reload. Writes always go through the API.
+- Echoing secret values (`.env`, `MUVON_JWT_SECRET`, `MUVON_ENCRYPTION_KEY`, `AGENT_ENCRYPTION_KEY`, the SMTP password, agent API keys, component env secrets) to stdout or to the user. Report only whether they are set or empty. An agent API key is returned once, in the create response; the list endpoint does not carry it at all, not even masked.
 
-Tam liste ve onay protokolü için → `references/destructive-ops.md`.
+Full list and confirmation protocol: `references/destructive-ops.md`.
 
-## Her yıkıcı çağrı öncesi disiplin
+## Discipline before every mutating call
 
-MUVON audit log'u **şu an** agent ve insan admin'i ayırt edemez (`admin_user: admin` her ikisi için aynı görünür). Bu nedenle:
+The MUVON audit log **cannot currently tell an agent apart from a human admin** (`admin_user: admin` looks identical for both). So:
 
-1. Çağrı öncesi **stdout'a tek satır AGENT_ACTION damgası bas**:
+1. Print a single AGENT_ACTION line to stdout before the call:
    ```
    AGENT_ACTION: POST /api/deploy/projects/<slug>/deploy {"image_tag":"<tag>"}
    ```
-2. Kullanıcıdan **açık "evet"** al.
-3. Çağrıyı yap.
-4. Sonucu özetle (kaç satır etkilendi, dönen status code).
+2. Get an explicit "yes" from the user.
+3. Make the call.
+4. Summarise the result: what was affected, what status code came back.
 
-Bu disiplini **her** mutasyon çağrısında uygula. Audit log koddan düzeltilene kadar tek izlenebilirlik bu.
+Apply this to **every** mutating call. Until the audit log is fixed in code, this line is the only traceability there is.
 
-## Kendi başına çözme — "kaynağa bak" prensibi
+## Work it out yourself: read the source
 
-API'den hata mesajı belirsizse, endpoint bulamadıysan, response yapısı beklenmedikse → **kaynağa bak**. MUVON kod tabanı self-documenting:
+When an API error is vague, an endpoint cannot be found, or a response shape is unexpected, **read the source**. The MUVON codebase is self-documenting:
 
-- Lokalde repo varsa (`~/PycharmProjects/muvon` veya benzeri): `Read`/`Grep` doğrudan.
-- Yoksa: `gh api repos/SaidMuratOzdemir/MUVON/contents/<path>?ref=main` veya `curl https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/<path>`.
-- Endpoint listesi tek dosyada: `internal/admin/server.go`. Bir handler arıyorsan: `grep -n "handle<Name>" internal/admin/*.go`.
+- If a local clone is available, use `Read` and `Grep` directly. Ask the user where it is rather than guessing a path.
+- Otherwise: `gh api repos/SaidMuratOzdemir/MUVON/contents/<path>?ref=main` or `curl https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/<path>`.
+- Every endpoint is registered in one file: `internal/admin/server.go`. To find a handler: `grep -n "handle<Name>" internal/admin/*.go`.
 
-Detay → `references/alternate-access.md`.
+Details: `references/alternate-access.md`.
 
-## Çıktı tarzı
+## Output style
 
-- **Kısa.** Çıktı oraganize, gereksiz tekrar yok.
-- Tablolar, başlıklar ve `code` bloklarını kullan — kullanıcı tarayarak okur.
-- Bulguları yansıtırken **kaynak göster**: hangi endpoint, hangi sorgu, hangi log timestamp.
-- Yan etki/hata varsa son satıra "**Sonraki adım önerisi:**" diye somut bir hareket öner.
+- **Short.** Organised, no repetition.
+- Use tables, headings and `code` blocks; the user scans rather than reads.
+- Cite the source of every finding: which endpoint, which query, which log timestamp.
+- If there is a side effect or an error, end with a concrete "**Next step:**" suggestion.
 
-## Kısıtlamalar
+## Limits
 
-- Bu skill **sadece okuma + dikkatli yazma** için. Otonom 24/7 izleme/aksiyon değil — kullanıcı çağırınca devreye gir.
-- SSH erişimi varsayma. Kullanıcı `ssh <alias>` çalışıyor mu önce sor. Yoksa API yeter.
-- Şifre, agent token, secret içerik dosyaya yazma. Kullanıcı promptunda gelen credentials sadece o oturumun cookie jar'ına işle.
+- This skill is for **reading and carefully gated writing**. It is not autonomous monitoring; it acts when the user asks.
+- Do not assume SSH access. Ask whether `ssh <alias>` works before relying on it. The API is usually enough.
+- Never write passwords, agent tokens or secret contents to a file. Credentials that arrive in the user's prompt belong in that session's cookie jar and nowhere else.

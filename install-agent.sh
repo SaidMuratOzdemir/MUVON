@@ -157,7 +157,7 @@ _enable_envfiles_mount() {
 # dizini agent'a tanıtmak için. State .env'de tutulur, her install-agent.sh
 # çalıştığında compose'a yeniden uygulanır.
 #
-# $1: boşluklu host yolları listesi (örn "/opt/tatilji /opt/another")
+# $1: boşluklu host yolları listesi (örn "/opt/example-app /opt/another")
 _apply_extra_mounts() {
   local paths="$1"
   [ -z "$paths" ] && return 0
@@ -216,7 +216,7 @@ DEPLOYER_ENABLED="false"
 ENC_KEY=""
 
 if [ "$MODE" = "install" ]; then
-  _read "    Merkezi MUVON URL'si (ör: https://muvon.example.com:9443): " CENTRAL_URL
+  _read "    Merkezi MUVON URL'si (ör: https://muvon.example.com): " CENTRAL_URL
   [ -z "$CENTRAL_URL" ] && fail "AGENT_CENTRAL_URL boş bırakılamaz."
 
   _read "    Agent API Key (admin panelinden): " API_KEY
@@ -264,7 +264,7 @@ if [ "$MODE" = "install" ]; then
     done
 
     # Ek host mount yolları — operatörün kendi yapısı /opt/envfiles
-    # convention'ı dışında bir yerdeyse (örn /opt/tatilji/secrets). agent
+    # convention'ı dışında bir yerdeyse (örn /opt/example-app/secrets). agent
     # container bu yolları ro mount eder ki embedded deployer
     # env_file_path veya mounts referansı açabilsin.
     if [ -n "$EXTRA_MOUNTS_ARG" ]; then
@@ -274,7 +274,7 @@ if [ "$MODE" = "install" ]; then
       echo "  Ek host yollarını agent'a mount edebilirsin (env_file_path veya"
       echo "  managed component mounts için). Boşluklu liste, boş bırakırsan"
       echo "  yalnız /opt/envfiles convention mount'u açık olur."
-      _read "  Ek mount yolları (örn '/opt/tatilji /opt/another'): " EXTRA_MOUNTS
+      _read "  Ek mount yolları (örn '/opt/example-app /opt/another'): " EXTRA_MOUNTS
     fi
 
     # Canlı container log tail — central bu portu (gRPC) çağırarak
@@ -331,7 +331,8 @@ if [ "$MODE" = "install" ]; then
   else
     echo ""
     echo "UYARI: Merkezi sunucuya bağlanılamadı."
-    echo "       URL ve API Key'i kontrol edin, veya sunucunun :9443 portunu açın."
+    echo "       URL ve API Key'i kontrol edin. URL merkezin MUVON_ADMIN_DOMAIN'i"
+    echo "       olmalı (https, port yok); :9443 düz HTTP'dir ve dışarı açılmaz."
     if ! _yn "       Yine de devam edeyim mi? [y/N]: "; then
       fail "Kurulum iptal edildi."
     fi

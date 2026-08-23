@@ -230,6 +230,22 @@ the client address from the chain by picking an end of it, which is the ambiguit
 this contract exists to avoid. The server layer runs before your middleware, so if
 it is active it wins, and your middleware never gets a chance.
 
+This is concrete, not theoretical. Uvicorn's `ProxyHeadersMiddleware` first
+requires the peer to be in its trusted list, then walks `X-Forwarded-For` from
+the right and takes the first entry that is *not* trusted. Behind a CDN, MUVON
+emits the chain `client, cdn-edge`. If the trusted list holds only MUVON's
+address, the rightmost untrusted entry is the CDN edge, so the application
+records the CDN as the visitor. Every request looks fine and every address is
+wrong. Making it correct would mean trusting MUVON's address plus all of the
+CDN's ranges, and keeping that list current forever, which is exactly the burden
+`X-Real-IP` removes.
+
+The same reasoning is why a CDN tells you to prefer its single-valued header
+over the chain, and why nginx solves this with `real_ip_header` plus an explicit
+`set_real_ip_from` rather than with hop counting. MUVON's `X-Real-IP` and the
+`MUVON_EDGE_IP` gate are that pattern: one authoritative value, trusted from one
+known peer.
+
 Note that gunicorn reads `FORWARDED_ALLOW_IPS` from the environment even when no
 command line flag is present, and passes it to uvicorn when running
 `UvicornWorker`. Setting it in an env file is enough to re-enable the behaviour by
