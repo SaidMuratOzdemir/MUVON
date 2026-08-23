@@ -24,6 +24,23 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # embed.go embeds frontend/dist, which is generated rather than
+      # committed. The build job gets it from the Dockerfile's UI stage, so a
+      # job running Go directly on the runner has to produce it the same way:
+      # without it every Go command fails on the embed pattern before it can
+      # look at a line of Go. Building it here also means vet and the tests
+      # see the binary that actually ships.
+      - name: Build UI
+        run: |
+          npm --prefix ui ci --prefer-offline
+          make ui-build
+
       - name: go vet
         run: go vet ./...
 
