@@ -23,6 +23,8 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-23
+
 ### BREAKING
 
 - **`MUVON_ENCRYPTION_KEY` artık zorunlu.** `muvon`, `dialog-siem` ve
@@ -64,7 +66,29 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 - **CI güvenlik kapısı.** `release.yml` içine `verify` işi eklendi:
   `go vet`, `go test -race -count=1 ./...` ve `govulncheck`. Build bu işe
-  bağlı, yani kapı kırmızıyken imaj yayınlanmıyor.
+  bağlı, yani kapı kırmızıyken imaj yayınlanmıyor. İş, Go komutlarından
+  önce UI'ı derliyor: `embed.go` üretilmiş `frontend/dist` dizinini
+  gömdüğü için, o dizin olmadan hiçbir Go komutu tek satır Go'ya bile
+  ulaşamıyor.
+
+- **Zafiyetli bağımlılıklar güncellendi, proje Go 1.25'e taşındı.**
+  `govulncheck` koddan erişilebilen beş modülde kayıt buldu:
+  `golang-jwt/jwt/v5` v5.2.1, `jackc/pgx/v5` v5.7.2, `golang.org/x/net`
+  v0.48.0, `golang.org/x/text` v0.32.0 ve `google.golang.org/grpc`
+  v1.79.3. Düzeltilmiş sürümlerin dördü `go 1.25.0` bildirdiği için
+  kayıtları kapatmak modülü Go 1.25'e taşıdı; `Dockerfile` ve README
+  önkoşulu aynı zemine çekildi.
+
+  `go.mod` ayrıca `toolchain go1.25.13` sabitliyor. `govulncheck`
+  raporunu, derlemeyi yapan toolchain'in standart kütüphanesine göre
+  üretir; yalnız `go` direktifi bırakıldığında CI'ın kuracağı yama
+  seviyesi yoruma açık kalır ve kapı her ortamda aynı şeyi ölçmez.
+  Sabitleme ile tarama sıfır zafiyet raporluyor.
+
+  **Yükseltme notu:** resmi imajları kullanan kurulumlarda ek işlem yok.
+  Kaynaktan derleyenlerin Go 1.25 kurması gerekiyor; `go.mod`'daki
+  toolchain satırı sayesinde Go 1.21 ve üzeri sürümler doğru derleyiciyi
+  kendisi indirir.
 
 ### FEATURES
 
