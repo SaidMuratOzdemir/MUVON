@@ -876,6 +876,12 @@ type LogBody struct {
 	IsResponseTruncated bool    `json:"is_response_truncated"`
 }
 
+// SearchCountCap bounds the row count a search reports. Past this many
+// matches the exact number stops being useful to a pager and starts costing
+// more than the page itself, so the count query stops here and the API
+// reports SearchCountCap+1 to mean "at least this many".
+const SearchCountCap = 10000
+
 func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int, error) {
 	if p.Limit <= 0 || p.Limit > 500 {
 		p.Limit = 100
@@ -1001,16 +1007,25 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		argIdx += 3
 	}
 
-	// Count query uses http_logs aliased as l
+	// The count is capped. An exact COUNT(*) has to visit every matching row,
+	// so it costs at least as much as the page query itself and grows with
+	// retention: on a wide filter it is the slowest part of a search. The
+	// pager only needs "roughly how many pages", so counting stops at
+	// SearchCountCap and the caller renders anything at the cap as "N+".
 	var total int
-	countQuery := "SELECT COUNT(*) FROM http_logs l " + baseWhere
+	countQuery := fmt.Sprintf(
+		"SELECT count(*) FROM (SELECT 1 FROM http_logs l %s LIMIT %d) capped",
+		baseWhere, SearchCountCap+1)
 	if err := d.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("search logs count: %w", err)
 	}
 
+	// Headers and bodies are deliberately absent: the caller turns each row
+	// into a LogSummary, which carries neither, and both are JSONB wide enough
+	// to dominate the read. The detail endpoint fetches them for one row.
 	query := fmt.Sprintf(
 		`SELECT l.id::text, l.timestamp, l.host, l.client_ip, l.method, l.path, l.query_string,
-		        l.request_headers, l.response_status, l.response_headers, l.response_time_ms,
+		        l.response_status, l.response_time_ms,
 		        l.request_size, l.response_size, l.user_agent, l.error,
 		        l.is_starred, n.note, l.country, l.city, l.user_identity
 		 FROM http_logs l
@@ -1029,7 +1044,7 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 	for rows.Next() {
 		var e LogEntry
 		if err := rows.Scan(&e.ID, &e.Timestamp, &e.Host, &e.ClientIP, &e.Method, &e.Path,
-			&e.QueryString, &e.RequestHeaders, &e.ResponseStatus, &e.ResponseHeaders,
+			&e.QueryString, &e.ResponseStatus,
 			&e.ResponseTimeMs, &e.RequestSize, &e.ResponseSize, &e.UserAgent, &e.Error,
 			&e.IsStarred, &e.Note, &e.Country, &e.City,
 			&e.UserIdentity); err != nil {
