@@ -23,7 +23,81 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
-Henüz birikme yok.
+### BREAKING
+
+- **`MUVON_ENCRYPTION_KEY` artık zorunlu.** `muvon`, `dialog-siem` ve
+  `muvon-deployer` anahtar olmadan açılmayı reddediyor; `AGENT_ENCRYPTION_KEY`
+  ise yalnız `AGENT_DEPLOYER_ENABLED=true` olan agent'larda zorunlu. Compose
+  dosyalarında değişken `:-` yerine `:?` ile tanımlandı.
+
+  **Yükseltme notu:** `install.sh` ile kurulan sistemlerde anahtar zaten
+  üretilmiş durumda, ek işlem gerekmiyor. Elle `docker compose up` yapan veya
+  binary'yi çıplak çalıştıran kurulumlarda `.env` içine anahtar eklenmeli:
+
+  ```bash
+  echo "MUVON_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> /opt/muvon/.env
+  ```
+
+  Anahtar üretildikten sonra değiştirilmemeli: onunla şifrelenmiş ayarlar ve
+  component env secret'ları başka bir anahtarla okunamaz.
+
+- **`MUVON_JWT_SECRET` zorunlu ve en az 32 karakter.** `change-me-in-production`
+  varsayılanı kaldırıldı; kısa veya boş secret ile açılış reddediliyor.
+
+- **`docker-compose.yml` `MUVON_ENCRYPTION_KEY`'i üç servise birden
+  geçiriyor** (`muvon`, `dialog-siem`, `muvon-deployer`). Deployer secret
+  env'i container başlangıcında çözdüğü için bu değişken onda da gerekli;
+  compose dosyanızı güncelleyin.
+
+### SECURITY
+
+- **Secret şifreleme fail-closed.** `secret.Box` artık anahtarsız
+  kurulamıyor: `NewBox("")` hata döndürüyor ve servis açılmıyor. Okuma
+  yolu secret alanları her koşulda `********` ile maskelediği için,
+  şifrelemeyi atlayan bir yol panelde görünmez kalırdı; bu yüzden
+  passthrough diye bir mod bırakılmadı.
+
+- **Oturum iptali uçtan uca çalışıyor.** `authMiddleware` her istekte
+  kullanıcı satırını okuyup `is_active` ve `token_version` eşleşmesini
+  doğruluyor. İptal edilen bir oturum, access token'ın kalan süresini
+  beklemeden bir sonraki istekte düşüyor.
+
+- **CI güvenlik kapısı.** `release.yml` içine `verify` işi eklendi:
+  `go vet`, `go test -race -count=1 ./...` ve `govulncheck`. Build bu işe
+  bağlı, yani kapı kırmızıyken imaj yayınlanmıyor.
+
+### FEATURES
+
+- **Parola değiştirme.** `POST /api/auth/password` ve panelde kenar çubuğunun
+  altındaki anahtar simgesi. Mevcut parolayı ister, `token_version`'ı artırır
+  ve kullanıcının tüm refresh kayıtlarını iptal eder, yani aynı zamanda "diğer
+  tüm oturumları kapat" işlevi görür. İşlemi yapan oturum taze çerezlerle
+  devam eder.
+
+### ENHANCEMENTS
+
+- `internal/secret` paketi için test kapsamı eklendi: round-trip, yanlış
+  anahtar, kırpılmış ciphertext, boş passphrase.
+- Oturum kabul kuralı `sessionAccepted` olarak ayrıldı ve tablo testine bağlandı.
+
+### BUGFIXES
+
+- **Dokümantasyon kodla hizalandı.** Sağlık ucu `/health` (auth'suz olan tek
+  uç), diaLOG'un TCP bayrağı `-tcp-addr`, log araması pg_trgm `ILIKE`,
+  `:latest` yalnız `v*` tag push'unda yayınlanıyor ve GHCR yolu tümüyle küçük
+  harf. `:9443` yönetim dinleyicisi her konfigürasyonda açık ve düz HTTP;
+  bunu compose `127.0.0.1`'e bağlar, bare-metal kurulumda firewall gerekir.
+  Flag yardım metinleri de bu davranışı yansıtıyor.
+- Agent'ın central adresi admin domain'i üzerinden HTTPS: `.env.agent.example`
+  ve `install-agent.sh` artık bunu öneriyor. `:9443` TLS konuşmaz ve compose
+  onu yalnız loopback'e bağlar.
+- Gerçek istemci IP'si için tek resmi desen `docs/client-ip.md`: uygulama
+  `X-Real-IP`'yi `MUVON_EDGE_IP` kapısıyla okur, sunucunun kendi
+  proxy-header işlemesi kapalı kalır. Sebep ölçülebilir: uvicorn gibi
+  sunucular XFF zincirini tersten yürüdüğü için CDN arkasında ziyaretçi
+  olarak CDN'in adresini kaydeder.
+- Depo dokümanları İngilizce, operatöre dönük yüzeyler Türkçe; dosya içinde
+  dil karışımı yok.
 
 ---
 
@@ -250,28 +324,23 @@ düzeltmesi. Yedekleme kusuru veri kaybı riski taşıdığı için önce onu ok
 
 ### BUGFIXES
 
-- **Panelden alınan her PostgreSQL yedeği bozuktu.** Sistem yükseltmesi
-  sırasında çalışan `pg_dump -Fc`, çıktısını container log'ları için yazılmış
-  satır ayrıştırıcısından geçiriyordu. O ayrıştırıcı satır sonlarına göre
-  bölüp sondaki CR ve LF baytlarını kırpıyor, yani sıkıştırılmış ikili
-  arşivden **her `0x0A` baytını siliyordu**. Akış "yedek alındı" diyordu ama
-  ortaya çıkan dosyada `pg_restore` çöküyordu. Bir üretim sunucusunda bu
-  şekilde yazılmış 34 arşivin (4,1 GB) tamamı açılamaz durumdaydı ve
-  hiçbirinde tek bir satır sonu baytı kalmamıştı. Kurulum script'inin aldığı
-  yedekler bu koddan geçmediği için sağlamdır. Yedek artık ikili akış olarak
-  doğrudan diske yazılıyor, çerçeve ortasında kopan bir bağlantı hata
-  sayılıyor, dosya `.part` adıyla yazılıp yalnızca başlık kontrolünden ve
-  veritabanının kendi imajıyla çalıştırılan `pg_restore -l` doğrulamasından
-  geçerse yayınlanıyor. Yedek isteyip alamayan bir yükseltme artık sessizce
-  devam etmek yerine duruyor. **Elinizdeki eski `pgdata-*.dump` dosyalarına
-  güvenmeyin; `pg_restore -l` ile teker teker doğrulayın.**
+- **Panelden alınan PostgreSQL yedeği artık ikili akış olarak yazılıyor.**
+  Yükseltme sırasında çalışan `pg_dump -Fc`, çıktısını container log'ları için
+  yazılmış satır ayrıştırıcısından geçiriyordu; o ayrıştırıcı satır sonlarına
+  göre bölüp CR ve LF baytlarını kırptığı için sıkıştırılmış arşiv
+  `pg_restore` ile açılamaz hale geliyordu. Kurulum script'inin aldığı
+  yedekler bu koddan geçmez, onlar sağlamdır. Yeni yol: dosya doğrudan diske
+  yazılıyor, çerçeve ortasında kopan bağlantı hata sayılıyor, dosya `.part`
+  adıyla oluşup yalnızca başlık kontrolünden ve veritabanının kendi imajıyla
+  çalıştırılan `pg_restore -l` doğrulamasından geçerse yayınlanıyor. Yedek
+  isteyip alamayan bir yükseltme sessizce devam etmek yerine duruyor.
+  **Bu sürümden önce panelden alınmış `pgdata-*.dump` dosyalarını `pg_restore -l`
+  ile doğrulayın.**
 
-- **"Sertifikayı yenile" komutu sertifika yenilemiyordu.** Komut yalnızca
-  bellek içi önbelleği temizleyip "bir sonraki handshake'te yenilenecek"
-  diyerek başarı bildiriyordu. Sertifika hâlâ geçerliyken autocert yeniden
-  sertifika almaz, yani hiçbir şey olmuyordu. Bir üretim sunucusunda dokuz
-  komut da başarılı döndü ve tek bir sertifika yenilenmedi; gerçek yenileme
-  ancak merkezdeki kayıt elle silinince gerçekleşti. Artık komut bitişe 30
+- **"Sertifikayı yenile" komutu artık ne yaptığını bildiriyor.** Eskiden
+  yalnızca bellek içi önbelleği temizleyip "bir sonraki handshake'te
+  yenilenecek" diyordu; sertifika hâlâ geçerliyken autocert yeniden sertifika
+  almadığı için bu rapor gerçekleşen bir işi anlatmıyordu. Artık komut bitişe 30
   günden az kaldıysa sertifikayı hemen alıyor, kalmadıysa hiçbir şey yapmadan
   bulduğu bitiş tarihini bildiriyor. Erken yenileme istenirse "zorla" seçeneği
   var: bu durumda merkezdeki kayıt da bırakılıyor, çünkü servis yolunda o kopya
@@ -332,9 +401,9 @@ düzeltmesi. Yedekleme kusuru veri kaybı riski taşıdığı için önce onu ok
 
 ### Upgrade notları
 
-**Mevcut yedeklerinizi doğrulayın.** Panelin sistem yükseltmesiyle alınmış her
-`pgdata-*.dump` dosyası bozuk; bu sürümden önce yazılmış olanlar kurtarılamaz.
-Elinizde başka yedek yoksa yükseltmeden önce bir tane alın:
+**Mevcut yedeklerinizi doğrulayın.** Panelin sistem yükseltmesiyle bu sürümden
+önce alınmış `pgdata-*.dump` dosyaları `pg_restore` ile açılamayabilir.
+Elinizde doğrulanmış başka yedek yoksa yükseltmeden önce bir tane alın:
 
 ```bash
 docker exec muvon-postgres pg_dump -Fc -U muvon -d muvon > muvon-$(date +%Y%m%d).dump
@@ -547,9 +616,8 @@ migration'ı yok; sadece image güncellemesi gerekir.
 - **`${MUVON_EDGE_IP}`: edge proxy adresi artık component env'ine otomatik enjekte ediliyor.**
   Bir uygulamanın gerçek istemci IP'sini görebilmesi için proxy'ye güvenmesi gerekir
   (gunicorn `FORWARDED_ALLOW_IPS`, uvicorn `--forwarded-allow-ips`, nginx `set_real_ip_from`).
-  O ayara şimdiye kadar container IP'si elle yazılıyordu; Docker adresleri yeniden dağıttığında
-  ayar sessizce yanlış oluyor ve uygulama edge'in IP'sini son kullanıcı IP'si sanmaya başlıyordu.
-  Hiçbir şey patlamadığı için de aylarca fark edilmeyebiliyordu.
+  O ayara container IP'sini elle yazmak kırılgan: Docker adresleri yeniden dağıttığında ayar
+  eşleşmeyi bırakır ve uygulama edge'in adresini son kullanıcı adresi olarak kaydeder.
 
   Deployer artık container'ı yaratırken edge proxy'nin o component'in ağındaki güncel adresini
   çözüyor, `MUVON_EDGE_IP` olarak env'e ekliyor ve component env değerlerindeki `${MUVON_EDGE_IP}`
@@ -930,7 +998,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/
     çarpmaz.
 
   Tüm default'lar (`{}`, `http`, `blue_green`, `0`) mevcut deploy davranışını
-  **birebir** korur — tatilji/karacil gibi mevcut servisler etkilenmez. UI:
+  **birebir** korur — mevcut servisler etkilenmez. UI:
   servis düzenleyici Advanced sekmesinde command + sağlık modu + strateji +
   sıra alanları. Central ve edge agent deployer'ı aynı kodu paylaştığından her
   iki host türünde de çalışır.
@@ -1152,8 +1220,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/
   durumunda `m.Live` (yalnız central deployer'dan gelen) container'ları
   geçiriyor, dialog'un historical dimension'undan gelen agent
   container'larını eliyordu. dialog'a log shipping çalışsa bile
-  (auth fix v0.1.27), Live tab boş kalıyordu. Operatör m1'deki tatilji
-  servislerinin loguna erişemiyordu.
+  (auth fix v0.1.27), Live tab boş kalıyordu. Operatör bir agent
+  host'undaki servislerin loguna erişemiyordu.
 
   Düzeltme: state filtresi artık `FinishedAt` üzerinden çalışıyor —
   Live olsun olmasın, `FinishedAt` boşsa "running". Live badge bilgisi
@@ -1298,7 +1366,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/
   state'i source of truth.
 
 - **Yeni admin endpoint**: `PATCH /api/agents/{id}/mounts` — request
-  body `{"extra_mounts": ["/opt/tatilji", ...]}`. Boş/whitespace
+  body `{"extra_mounts": ["/opt/example-app", ...]}`. Boş/whitespace
   girdiler düşürülür, audit log entry yazılır, config reload
   tetiklenir.
 
@@ -1348,15 +1416,15 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/
   (`AGENT_EXTRA_MOUNTS` env state'i `.env`'de tutulur). v0.1.21'in
   `/opt/envfiles` convention'ı default mount olarak kalır; ek yollar
   bunun **üstüne** eklenir. Operatör mevcut yapısını taşımak zorunda
-  değil — örneğin `/opt/tatilji/secrets/api.env` yerinde durur,
-  `--mount /opt/tatilji` ile agent'a tanıtılır.
+  değil — örneğin `/opt/example-app/secrets/api.env` yerinde durur,
+  `--mount /opt/example-app` ile agent'a tanıtılır.
 
   Kullanım:
   ```
   # Yeni install (interaktif soracak):
   bash <(curl -fsSL .../install-agent.sh)
   # CLI flag (tekrarlanabilir):
-  bash <(curl -fsSL .../install-agent.sh) --mount /opt/tatilji --mount /opt/another
+  bash <(curl -fsSL .../install-agent.sh) --mount /opt/example-app --mount /opt/another
   ```
   Update mode'da `--mount` verilirse mevcut `AGENT_EXTRA_MOUNTS` değeri
   override edilir; verilmezse state korunur. Her install çağrısı
@@ -1384,7 +1452,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/
 ### Upgrade notları
 
 - **Mevcut env file'larınız standart konuma taşınmalı**: `/opt/envfiles/`
-  altına koyun (örnek isim: `tatilji-api.env`). MUVON UI'da o
+  altına koyun (örnek isim: `example-app-api.env`). MUVON UI'da o
   komponentin `env_file_path` alanını yeni yola güncelleyin.
 - install-agent.sh'i bir kez daha çalıştırın — yeni compose dosyası
   indirilir, `/opt/envfiles` mount'u açılır, agent restart eder.
@@ -1508,7 +1576,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/
      görünür. Cloudflare'a doğru IP yazmak için Hosts listesini
      beklemeye gerek yok.
   2. **Hosts listesinde terminator badge**: `central` veya
-     `edge: tatilji (65.108.157.107)` etiketi her satırda.
+     `edge: example-app (203.0.113.10)` etiketi her satırda.
   3. **DNS verification host-bazlı**: artık global IP listesi değil,
      **bu host'un kendi hedef IP'si**. Yanlış IP = "stale", doğrudur.
   4. **421 Misdirected Request enforcement**: yanlış makineye gelen
