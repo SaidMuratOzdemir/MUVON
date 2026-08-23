@@ -40,6 +40,7 @@ interface Filters {
   response_time_min: string
   status_group: '' | '2xx' | '3xx' | '4xx' | '5xx'
   user: string
+  search_bodies: boolean
 }
 
 const emptyFilters = (): Filters => ({
@@ -47,6 +48,7 @@ const emptyFilters = (): Filters => ({
   status_min: '', status_max: '', from: '', to: '',
   starred: false, client_ip: '',
   response_time_min: '', status_group: '', user: '',
+  search_bodies: false,
 })
 
 // URL ↔ Filters conversion. The URL is the single source of truth:
@@ -54,7 +56,7 @@ const emptyFilters = (): Filters => ({
 // reproduce the same filter + page state. String filters round-trip
 // verbatim; booleans and the status_group enum get their own narrow
 // reader so bad URL values don't poison the state.
-const BOOL_KEYS = ['starred'] as const
+const BOOL_KEYS = ['starred', 'search_bodies'] as const
 const STATUS_GROUPS = ['2xx', '3xx', '4xx', '5xx'] as const
 
 function filtersFromURL(p: URLSearchParams): Filters {
@@ -198,7 +200,8 @@ function hasFilters(f: Filters) {
     f.search !== '' || f.host !== '' || f.method !== '' || f.path !== '' ||
     f.status_min !== '' || f.status_max !== '' || f.from !== '' || f.to !== '' ||
     f.starred || f.client_ip !== '' ||
-    f.response_time_min !== '' || f.status_group !== '' || f.user !== ''
+    f.response_time_min !== '' || f.status_group !== '' || f.user !== '' ||
+    f.search_bodies
   )
 }
 
@@ -211,9 +214,12 @@ function toRFC3339(local: string): string {
 }
 
 // How far back a free-text search reaches when the operator has not chosen a
-// range. It mirrors the server's own default, but sending it explicitly is
-// what makes the window visible in the UI instead of silently applied.
-export const SEARCH_WINDOW_DAYS = 7
+// range. These mirror the server's own defaults, but sending the value
+// explicitly is what makes the window visible here instead of silently
+// applied. Searching bodies gets a much tighter window because it costs
+// orders of magnitude more per row.
+export const SEARCH_WINDOW_DAYS = 30
+export const SEARCH_WINDOW_DAYS_BODIES = 7
 
 export function windowStart(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
@@ -228,6 +234,7 @@ function filtersToParams(f: Filters, off: number): api.LogSearchParams {
   if (f.client_ip) params.client_ip = f.client_ip
   if (f.user) params.user = f.user
   if (f.starred) params.starred = true
+  if (f.search_bodies) params.search_bodies = true
   if (f.response_time_min) params.response_time_min = Number(f.response_time_min)
   if (f.from) {
     params.from = toRFC3339(f.from)
@@ -235,7 +242,7 @@ function filtersToParams(f: Filters, off: number): api.LogSearchParams {
     // Free text without a range: send the window explicitly so the operator
     // can see it in the UI and widen it, instead of the server applying one
     // that never appears anywhere.
-    params.from = windowStart(SEARCH_WINDOW_DAYS)
+    params.from = windowStart(f.search_bodies ? SEARCH_WINDOW_DAYS_BODIES : SEARCH_WINDOW_DAYS)
   }
   if (f.to) params.to = toRFC3339(f.to)
 
@@ -272,6 +279,7 @@ function FilterChips({ filters, onClear }: {
   if (filters.status_max) chips.push({ key: 'status_max', label: `≤${filters.status_max}` })
   if (filters.response_time_min) chips.push({ key: 'response_time_min', label: `≥${filters.response_time_min}ms` })
   if (filters.starred) chips.push({ key: 'starred', label: 'starred' })
+  if (filters.search_bodies) chips.push({ key: 'search_bodies', label: 'gövdelerde de ara' })
   if (filters.from) chips.push({ key: 'from', label: `from: ${filters.from.replace('T', ' ')}` })
   if (filters.to) chips.push({ key: 'to', label: `to: ${filters.to.replace('T', ' ')}` })
 
@@ -925,9 +933,10 @@ export default function Logs() {
       {autoWindow && (
         <div className="flex flex-wrap items-center gap-2 px-6 py-2 border-b border-border bg-amber-500/10 shrink-0">
           <span className="text-[11px] text-amber-400">
-            Arama son {SEARCH_WINDOW_DAYS} günde yapıldı. Daha eskisi için aralığı genişletin.
+            Arama son {filters.search_bodies ? SEARCH_WINDOW_DAYS_BODIES : SEARCH_WINDOW_DAYS} günde
+            yapıldı. Daha eskisi için aralığı genişletin.
           </span>
-          {[30, 90].map((d) => (
+          {[90, 180].map((d) => (
             <Button
               key={d}
               variant="outline"
@@ -1005,6 +1014,18 @@ export default function Logs() {
             <div className="space-y-1">
               <Label className="text-xs">From</Label>
               <Input type="datetime-local" className="h-8 text-xs bg-background border-border" value={pendingFilters.from} onChange={e => setPF('from', e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Gövdelerde de ara</Label>
+              <label className="flex h-8 items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="cursor-pointer"
+                  checked={pendingFilters.search_bodies}
+                  onChange={e => setPF('search_bodies', e.target.checked)}
+                />
+                İstek ve yanıt gövdeleri (yavaş)
+              </label>
             </div>
             <div className="space-y-1">
               <Label className="text-xs">To</Label>

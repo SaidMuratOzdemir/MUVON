@@ -71,6 +71,11 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("starred"); v == "true" || v == "1" {
 		req.Starred = true
 	}
+	// Opt-in: searching bodies is the expensive shape, so it happens only when
+	// asked for.
+	if v := q.Get("search_bodies"); v == "true" || v == "1" {
+		req.SearchBodies = true
+	}
 	if v := q.Get("response_time_min"); v != "" {
 		n, _ := strconv.Atoi(v)
 		req.RespTimeMin = int32(n)

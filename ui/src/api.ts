@@ -360,6 +360,10 @@ export interface LogSearchParams {
   /** Match against JWT claims (email, sub, name). Backend ORs all three
    *  so admins do not need to know which claim the upstream app uses. */
   user?: string;
+  /** Extend the free-text search to captured request and response bodies.
+   *  Off by default: bodies live in their own hypertable, so matching them
+   *  costs orders of magnitude more than the other columns. */
+  search_bodies?: boolean;
 }
 
 export async function searchLogs(

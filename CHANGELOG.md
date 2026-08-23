@@ -76,6 +76,23 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ### ENHANCEMENTS
 
+- **Gövde araması artık isteğe bağlı ve arama penceresi 30 güne çıktı.**
+  Serbest metin araması, istek ve yanıt gövdelerini yalnız açıkça istendiğinde
+  tarıyor (`search_bodies=true`, panelde "Gövdelerde de ara" kutucuğu).
+  Gövdeler kendi hypertable'ında durduğu için eşleşme satır başına ayrı bir
+  `EXISTS` sorgusuna dönüşüyor ve `http_logs` üzerindeki hiçbir indeks bunu
+  karşılayamıyor.
+
+  Üretim verisinde ölçüldü: aynı arama, son 3 gün, gövde dahil **27.685 ms**;
+  gövde hariç **9 ms**. Sıkıştırılmış 12 günlük aralıkta gövde hariç **13 ms**,
+  hiç eşleşme olmayan en kötü durumda **513 ms**.
+
+  Bu ölçüm gizli 7 günlük pencerenin gerekçesini de ortadan kaldırdı: kısıt,
+  sıkıştırılmış chunk'larda aramanın çok yavaş olacağı varsayımına
+  dayanıyordu, oysa kolonsal tarama milisaniyeler mertebesinde. Varsayılan
+  pencere gövde kapalıyken 30 güne çıkarıldı (en kötü durum 1.433 ms), gövde
+  açıkken 7 günde bırakıldı.
+
 - **Log aramasının maliyeti düştü.** Arama sorgusu artık her satır için
   `request_headers` ve `response_headers` JSONB'lerini çekmiyor; liste yanıtı
   bu alanları zaten taşımıyordu, detay ucu tek satır için getiriyor. Ayrıca

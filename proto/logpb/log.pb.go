@@ -410,7 +410,14 @@ type SearchLogsRequest struct {
 	Limit       int32                  `protobuf:"varint,13,opt,name=limit,proto3" json:"limit,omitempty"`
 	Offset      int32                  `protobuf:"varint,14,opt,name=offset,proto3" json:"offset,omitempty"`
 	// Match against JWT claims (email, sub, name). Backend ORs all three.
-	User          string `protobuf:"bytes,15,opt,name=user,proto3" json:"user,omitempty"`
+	User string `protobuf:"bytes,15,opt,name=user,proto3" json:"user,omitempty"`
+	// Extend `search` to the captured request and response bodies. Off by
+	// default because it costs far more than the rest of the search put
+	// together: bodies live in their own hypertable, so the match becomes a
+	// per-row EXISTS probe that no index on http_logs can serve. Measured on a
+	// production window it took roughly three thousand times longer than the
+	// same search over the other columns.
+	SearchBodies  bool `protobuf:"varint,16,opt,name=search_bodies,json=searchBodies,proto3" json:"search_bodies,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -548,6 +555,13 @@ func (x *SearchLogsRequest) GetUser() string {
 		return x.User
 	}
 	return ""
+}
+
+func (x *SearchLogsRequest) GetSearchBodies() bool {
+	if x != nil {
+		return x.SearchBodies
+	}
+	return false
 }
 
 type SearchLogsResponse struct {
@@ -3272,7 +3286,7 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"5\n" +
 	"\bLogBatch\x12)\n" +
 	"\aentries\x18\x01 \x03(\v2\x0f.logpb.LogEntryR\aentries\"\x05\n" +
-	"\x03Ack\"\x8e\x03\n" +
+	"\x03Ack\"\xb3\x03\n" +
 	"\x11SearchLogsRequest\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x16\n" +
@@ -3291,7 +3305,8 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\rresp_time_max\x18\f \x01(\x05R\vrespTimeMax\x12\x14\n" +
 	"\x05limit\x18\r \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x0e \x01(\x05R\x06offset\x12\x12\n" +
-	"\x04user\x18\x0f \x01(\tR\x04user\"Q\n" +
+	"\x04user\x18\x0f \x01(\tR\x04user\x12#\n" +
+	"\rsearch_bodies\x18\x10 \x01(\bR\fsearchBodies\"Q\n" +
 	"\x12SearchLogsResponse\x12%\n" +
 	"\x04logs\x18\x01 \x03(\v2\x11.logpb.LogSummaryR\x04logs\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\"\xa2\x03\n" +

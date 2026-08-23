@@ -151,6 +151,13 @@ message SearchLogsRequest {
   int32  offset      = 14;
   // Match against JWT claims (email, sub, name). Backend ORs all three.
   string user        = 15;
+  // Extend `search` to the captured request and response bodies. Off by
+  // default because it costs far more than the rest of the search put
+  // together: bodies live in their own hypertable, so the match becomes a
+  // per-row EXISTS probe that no index on http_logs can serve. Measured on a
+  // production window it took roughly three thousand times longer than the
+  // same search over the other columns.
+  bool search_bodies = 16;
 }
 
 message SearchLogsResponse {

@@ -102,6 +102,7 @@ func (s *Server) SearchLogs(ctx context.Context, req *pb.SearchLogsRequest) (*pb
 	if req.User != "" {
 		params.UserQuery = req.User
 	}
+	params.SearchBodies = req.SearchBodies
 
 	logs, total, err := s.database.SearchLogs(ctx, params)
 	if err != nil {

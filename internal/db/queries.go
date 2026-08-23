@@ -837,6 +837,12 @@ type LogSearchParams struct {
 	// request attributed to that actor, regardless of which claim key the
 	// upstream app happens to populate.
 	UserQuery       string
+	// SearchBodies extends Query to the captured request and response bodies.
+	// Off by default: bodies live in their own hypertable, so matching them
+	// turns the search into a per-row EXISTS probe that no index on http_logs
+	// can serve. On a production window it measured about three thousand times
+	// slower than the same search across the other columns.
+	SearchBodies    bool
 	Limit           int
 	Offset          int
 }
@@ -882,6 +888,15 @@ type LogBody struct {
 // reports SearchCountCap+1 to mean "at least this many".
 const SearchCountCap = 10000
 
+// Default reach of a free-text search when the caller gives no `from`.
+// Searching bodies is bounded far more tightly because it costs orders of
+// magnitude more per row; everything else stays fast well beyond the
+// compression boundary, so it gets a month.
+const (
+	searchWindowNoBodies   = 30 * 24 * time.Hour
+	searchWindowWithBodies = 7 * 24 * time.Hour
+)
+
 func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int, error) {
 	if p.Limit <= 0 || p.Limit > 500 {
 		p.Limit = 100
@@ -922,41 +937,48 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		argIdx++
 	}
 	if p.Query != "" {
-		// TimescaleDB compresses chunks older than 7 days; compressed
-		// chunks ignore the pg_trgm GIN and fall back to a columnar
-		// seq scan. On a tenant with tens of millions of rows that is
-		// multi-second, so without an explicit `from` we default the
-		// search window to the last 7 days — the uncompressed range
-		// the trigram indexes actually accelerate. The admin can type
-		// a wider `from` / `to` into the form whenever they need to
-		// reach into archived data; the tradeoff is their call.
+		// A free-text search with no range gets a default window, so an
+		// unbounded scan is never the accident. The bound depends on what is
+		// being searched, because the two shapes cost very differently:
+		// without bodies the planner walks the timestamp index and filters
+		// cheap columns, which measured in milliseconds even across
+		// compressed chunks; with bodies every candidate row turns into an
+		// EXISTS probe into another hypertable, which measured about three
+		// thousand times slower. Callers that want more reach pass an
+		// explicit `from`; this only decides what happens when they do not.
 		if p.From.IsZero() {
-			p.From = time.Now().Add(-7 * 24 * time.Hour)
+			window := searchWindowNoBodies
+			if p.SearchBodies {
+				window = searchWindowWithBodies
+			}
+			p.From = time.Now().Add(-window)
 			baseWhere += fmt.Sprintf(" AND l.timestamp >= $%d", argIdx)
 			args = append(args, p.From)
 			argIdx++
 		}
-		// Full-text-ish search across every column that carries
-		// admin-interesting text: URL, host, UA, IP, enriched identity
-		// (JSONB text-cast — surfaces user_id UUIDs, emails, etc.) and
-		// captured bodies (EXISTS subquery so a single body row can't
-		// duplicate a log). Every branch is backed by a pg_trgm GIN so
-		// the ILIKE '%term%' lookups stay hypertable-safe and fast.
+		// Text that an operator would recognise: URL, host, user agent, client
+		// address and the enriched identity (JSONB cast to text, which is how
+		// user ids and emails become searchable).
 		like := "%" + p.Query + "%"
-		baseWhere += fmt.Sprintf(
-			` AND (
-				l.path             ILIKE $%d
-				OR l.host          ILIKE $%d
-				OR l.user_agent    ILIKE $%d
-				OR l.client_ip     ILIKE $%d
-				OR l.user_identity::text ILIKE $%d
+		clause := ` AND (
+				l.path             ILIKE $%[1]d
+				OR l.host          ILIKE $%[1]d
+				OR l.user_agent    ILIKE $%[1]d
+				OR l.client_ip     ILIKE $%[1]d
+				OR l.user_identity::text ILIKE $%[1]d`
+		if p.SearchBodies {
+			// EXISTS rather than a join so one log with several body rows
+			// cannot appear twice in the result.
+			clause += `
 				OR EXISTS (
 					SELECT 1 FROM http_log_bodies b
 					WHERE b.log_id = l.id
-					  AND (b.request_body ILIKE $%d OR b.response_body ILIKE $%d)
-				)
-			)`,
-			argIdx, argIdx, argIdx, argIdx, argIdx, argIdx, argIdx)
+					  AND (b.request_body ILIKE $%[1]d OR b.response_body ILIKE $%[1]d)
+				)`
+		}
+		clause += `
+			)`
+		baseWhere += fmt.Sprintf(clause, argIdx)
 		args = append(args, like)
 		argIdx++
 	}
