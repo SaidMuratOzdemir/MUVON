@@ -76,6 +76,48 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ### ENHANCEMENTS
 
+- **Veri tabanı şeması normalize edildi, kullanılmayan iki uzantı kaldırıldı.**
+  Üç yeni migration eklendi:
+
+  - `drop_stray_dialog_agents`: `agents` tablosu paylaşılan bir migration ile
+    şema adı verilmeden yaratıldığı için her serviste bir kez, yani hem
+    `muvon` hem `dialog` altında oluşuyordu. Kodun tamamı `muvon.agents`
+    yazdığından `dialog` kopyası okunmuyor ama şemaya bakan birine filo boş
+    görünüyor. Migration bu kopyayı yalnız **boşsa** düşürür; içinde satır
+    varsa dokunmaz ve operatörün bakmasını bekler.
+  - `move_pg_trgm_to_public`: `pg_trgm` uzantısı, onu yaratan migration
+    `dialog` şeması `search_path`'in başındayken çalıştığı için `public`
+    yerine `dialog` altına düşmüştü. Uzantı artık `public`'e taşınıyor.
+    Taşıma katalog güncellemesidir: indeksler operatör sınıfını OID ile
+    tuttuğu için yeniden kurulmaz ve sorgular kesintisiz çalışmaya devam
+    eder. `postgres/init.sql` de uzantıları veri tabanı ilk açılışında
+    yaratacak şekilde güncellendi, böylece yeni kurulumlarda baştan doğru
+    şemaya iniyorlar.
+  - `drop_pg_search`: BM25 indeksini besleyen `pg_search` kaldırıldı. BM25
+    operatörü TimescaleDB hypertable'ından chunk'lara inmediği için arama
+    zaten `pg_trgm` trigram indekslerine taşınmıştı. Bu adım bakım
+    niteliğinde olduğundan, düşürme başarısız olursa migration uyarı basar
+    ve servis açılışını durdurmaz.
+
+  `docker-compose.yml` içindeki `shared_preload_libraries` listesinden
+  `pg_search` ve `pg_cron` çıkarıldı; zamanlama zaten Go tarafında
+  (`internal/scheduler`) çalışıyor. Liste artık `timescaledb` ve
+  `pg_stat_statements` içeriyor.
+
+  **Yükseltme notu:** compose ile kurulan sistemlerde ek işlem yok, yeni
+  compose dosyası preload listesini kendisi getiriyor. Panelden yapılan
+  self-upgrade postgres container'ını yeniden yaratmadığı için yeni preload
+  listesi postgres'in bir sonraki yeniden başlatılmasında devreye girer;
+  uzantı o ana kadar zaten migration tarafından düşürülmüş olur, yani
+  kütüphane hâlâ yüklüyken düşürülür. Dış bir PostgreSQL kullanıyorsanız
+  preload listenizden aynı iki uzantıyı çıkarın ve uzantıların `public`
+  şemasında olduğunu doğrulayın:
+
+  ```sql
+  SELECT e.extname, n.nspname FROM pg_extension e
+    JOIN pg_namespace n ON n.oid = e.extnamespace;
+  ```
+
 - **Gövde araması artık isteğe bağlı ve arama penceresi 30 güne çıktı.**
   Serbest metin araması, istek ve yanıt gövdelerini yalnız açıkça istendiğinde
   tarıyor (`search_bodies=true`, panelde "Gövdelerde de ara" kutucuğu).

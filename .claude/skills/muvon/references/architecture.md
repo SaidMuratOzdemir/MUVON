@@ -23,8 +23,10 @@ One Go module (`muvon`), four independent binaries:
 One PostgreSQL 18 instance with **schema isolation**. Extensions in use:
 
 - **TimescaleDB**: `http_logs`, `http_log_bodies`, `alerts`, `container_logs` and `client_events` hypertables, 7-day compression. Retention comes from the `retention_days` setting (default 30 days, `0` keeps forever); dialog-siem reconciles the Timescale job catalog against that setting. `GET /api/system/retention` returns what is actually applied.
-- **pg_search** (ParadeDB/Tantivy): created by the first migration and required for startup, but **nothing queries it**. Its BM25 operator did not propagate from a hypertable to its chunks, so search moved to `pg_trgm` GIN indexes queried with `ILIKE` over path, host, user_agent, client_ip, `user_identity::text` and the body columns.
+- **pg_trgm**: GIN trigram indexes queried with `ILIKE` over path, host, user_agent, client_ip and `user_identity::text`. This is all of log search; there is no BM25. Body columns are indexed the same way but only searched when the caller passes `search_bodies`.
 - **pg_uuidv7**: primary keys are time-ordered, so `ORDER BY id` is chronological.
+
+Extensions belong in `public`. `postgres/init.sql` creates them at database init so they land there; a bare `CREATE EXTENSION` from a migration instead lands in the running service's own schema, which is how `pg_trgm` was owned by `dialog` until `move_pg_trgm_to_public`. **pg_search** (BM25) and **pg_cron** were both removed: BM25 lost to trigram indexes because its operator did not reach hypertable chunks, and scheduling has always been Go code in `internal/scheduler`.
 
 The `schema_migrations` table tracks the ordered slice in `internal/db/migrations.go`. Every migration is tagged with a `product` (`muvon`, `dialog`, or empty for shared).
 

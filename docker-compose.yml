@@ -10,7 +10,9 @@ services:
     image: muvon-postgres:latest
     container_name: muvon-postgres
     restart: unless-stopped
-    command: postgres -c shared_preload_libraries=timescaledb,pg_search,pg_cron,pg_stat_statements
+    # pg_search and pg_cron were preloaded for features that no longer exist:
+    # BM25 lost to trigram indexes, and scheduling lives in internal/scheduler.
+    command: postgres -c shared_preload_libraries=timescaledb,pg_stat_statements
     environment:
       POSTGRES_DB: muvon
       POSTGRES_USER: muvon

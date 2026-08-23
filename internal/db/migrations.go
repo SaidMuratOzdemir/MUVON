@@ -81,12 +81,21 @@ type migration struct {
 
 var migrations = []migration{
 	// ── Extensions ──
+	// pg_search was dropped from this list rather than from a later migration
+	// alone: it needs shared_preload_libraries, so once the compose file stops
+	// preloading it, a CREATE EXTENSION here would fail on every fresh install.
+	// Installs that already ran this migration have the extension dropped by
+	// `drop_pg_search` at the end of the slice, so both paths end up the same.
+	//
+	// gen_uuidv7 is deliberately unqualified: each product schema gets its own
+	// wrapper and its tables bind to that one. Consolidating them would mean
+	// rewriting the DEFAULT on every table and every hypertable chunk for no
+	// behavioural gain.
 	{
 		name: "create_extensions", product: "",
 		sql: `
 CREATE EXTENSION IF NOT EXISTS pg_uuidv7;
 CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-CREATE EXTENSION IF NOT EXISTS pg_search;
 CREATE OR REPLACE FUNCTION gen_uuidv7() RETURNS UUID AS $$ SELECT uuidv7(); $$ LANGUAGE SQL;`,
 	},
 	// ── MUVON (Edge Gateway) Tables ──
@@ -1292,5 +1301,54 @@ WHERE key IN ('acme_email', 'acme_staging', 'log_retention_days',
 	{
 		name: "drop_geoip_settings", product: "muvon",
 		sql: `DELETE FROM settings WHERE key IN ('geoip_enabled', 'geoip_db_path');`,
+	},
+	// The shared migrations name their objects unqualified, so each service
+	// applied them in its own schema and `agents` was created a second time
+	// under `dialog`. Nothing reads that copy, since every query names
+	// `muvon.agents`, so it is a decoy: a reader who finds it first will
+	// conclude the fleet is empty. The drop refuses to run on a non-empty
+	// table, so an install that somehow did write there keeps its rows and
+	// the operator gets to look rather than losing them to a migration.
+	{
+		name: "drop_stray_dialog_agents", product: "dialog",
+		sql: `
+DO $$
+BEGIN
+    -- Separate statements on purpose: PL/pgSQL plans a whole IF expression up
+    -- front, so a single condition would still parse the SELECT and fail where
+    -- the table was never created.
+    IF to_regclass('dialog.agents') IS NULL THEN
+        RETURN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM dialog.agents) THEN
+        EXECUTE 'DROP TABLE dialog.agents';
+    END IF;
+END $$;`,
+	},
+	// pg_trgm was created by the migration that introduced the trigram
+	// indexes, which runs with `dialog` first in search_path, so the extension
+	// landed there instead of `public`. It works today only because the one
+	// service that searches has `dialog` in its path; a second consumer, or an
+	// external PostgreSQL with a different search_path, would not find the
+	// operator classes. Moving it is a catalog update: indexes reference the
+	// operator class by OID and keep working.
+	{
+		name: "move_pg_trgm_to_public", product: "dialog",
+		sql: `ALTER EXTENSION pg_trgm SET SCHEMA public;`,
+	},
+	// pg_search backed the original BM25 index, whose operator does not reach
+	// hypertable chunks; search runs on the trigram indexes above instead and
+	// the extension is no longer preloaded. Dropping it is housekeeping rather
+	// than a correctness fix, so a failure warns and leaves it in place instead
+	// of holding up startup.
+	{
+		name: "drop_pg_search", product: "",
+		sql: `
+DO $$
+BEGIN
+    EXECUTE 'DROP EXTENSION IF EXISTS pg_search';
+EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'pg_search left in place: %', SQLERRM;
+END $$;`,
 	},
 }

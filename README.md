@@ -80,11 +80,12 @@ Each service is a standalone binary with its own database schema. They share a s
 - **Go 1.24+**
 - **Node.js 22+** (to build the admin panel)
 - **Docker** (for the postgres container) or an external PostgreSQL 18+
-- PostgreSQL extensions:
+- PostgreSQL extensions, all expected in `public`:
   - [TimescaleDB](https://www.timescale.com/) — hypertables, compression, retention
-  - [pg_search](https://github.com/paradedb/paradedb) (ParadeDB): still created by the first migration, so it must be installed for startup to succeed. Nothing queries it any more (see Full-Text Search below)
   - [pg_uuidv7](https://github.com/fboulnois/pg_uuidv7): UUIDv7 generation
-  - `pg_trgm`: trigram GIN indexes behind log search. Created by a migration, ships with PostgreSQL
+  - `pg_trgm`: trigram GIN indexes behind log search. Ships with PostgreSQL
+
+  The bundled image builds on ParadeDB, which is where `pg_search` came from. That extension backed an earlier BM25 search and is now dropped by a migration (see Full-Text Search below); the base image is kept only because it is what the current `pgdata` volume was initialised with.
 
 ### 1. Database Setup
 
@@ -94,8 +95,10 @@ CREATE DATABASE muvon;
 
 CREATE EXTENSION IF NOT EXISTS pg_uuidv7;
 CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-CREATE EXTENSION IF NOT EXISTS pg_search;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```
+
+Create them in `public`. A migration also creates `pg_trgm` if it is missing, but that migration runs with the service's own schema first in `search_path`, so the extension lands there instead and only the service that put it there can see its operator classes.
 
 ### 2. Build
 
@@ -333,7 +336,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 |---------|-------|
 | HTTP Logs | Full request/response capture: headers, bodies, timing, user identity, geolocation |
 | TimescaleDB Hypertables | Daily chunks, 7-day compression, retention from the `retention_days` setting (default 30 days, `0` = keep forever) |
-| Full-Text Search | pg_trgm trigram GIN indexes, queried with `ILIKE`, across path, host, user-agent, client IP, `user_identity` and the captured bodies. BM25 was dropped in an early migration: pg_search's operator did not propagate from a TimescaleDB hypertable to its chunks, so root-level queries returned nothing |
+| Full-Text Search | pg_trgm trigram GIN indexes, queried with `ILIKE`, across path, host, user-agent, client IP and `user_identity`; the captured bodies are searched only when the caller opts in, since that is the expensive shape. BM25 was dropped in an early migration because pg_search's operator did not propagate from a TimescaleDB hypertable to its chunks, so root-level queries returned nothing, and the extension itself is now dropped too |
 | UUIDv7 IDs | Time-ordered, K-sortable, no separate timestamp index |
 | SSE Live Tail | Real-time log stream over Server-Sent Events |
 | Body Capture | Configurable max size (default 64KB), truncation flag |
