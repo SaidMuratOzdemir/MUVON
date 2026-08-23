@@ -41,11 +41,24 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 		n, _ := strconv.Atoi(v)
 		req.StatusMax = int32(n)
 	}
-	if v := q.Get("from"); v != "" {
-		req.From = v
-	}
-	if v := q.Get("to"); v != "" {
-		req.To = v
+	// A time bound that cannot be parsed is refused rather than dropped. The
+	// pipeline parses these with a strict RFC3339 and ignores the error, so a
+	// value like "2026-08-23T14:30" used to disable the filter silently: the
+	// caller believed it had narrowed the search and got a window it never
+	// asked for.
+	for _, tb := range []struct {
+		name string
+		dst  *string
+	}{{"from", &req.From}, {"to", &req.To}} {
+		v := q.Get(tb.name)
+		if v == "" {
+			continue
+		}
+		if err := validTimeBound(tb.name, v); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		*tb.dst = v
 	}
 	if v := q.Get("limit"); v != "" {
 		n, _ := strconv.Atoi(v)
@@ -320,4 +333,15 @@ func (s *Server) handleToggleLogStar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// validTimeBound checks a `from` / `to` query value. The log pipeline parses
+// these with a strict RFC3339 and drops the error, so an unparseable bound
+// would disable the filter instead of narrowing it. Refusing it here keeps
+// that failure visible to the caller.
+func validTimeBound(name, v string) error {
+	if _, err := time.Parse(time.RFC3339, v); err != nil {
+		return fmt.Errorf("%s must be RFC3339, for example 2026-08-23T14:30:00Z (got %q)", name, v)
+	}
+	return nil
 }

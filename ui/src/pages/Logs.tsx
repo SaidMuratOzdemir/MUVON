@@ -202,6 +202,23 @@ function hasFilters(f: Filters) {
   )
 }
 
+// The date inputs are `datetime-local`, which yields "2026-08-23T14:30" in the
+// operator's own timezone. The API takes RFC3339 and refuses anything else, so
+// the conversion happens here rather than being sent verbatim and rejected.
+function toRFC3339(local: string): string {
+  const d = new Date(local)
+  return isNaN(d.getTime()) ? '' : d.toISOString()
+}
+
+// How far back a free-text search reaches when the operator has not chosen a
+// range. It mirrors the server's own default, but sending it explicitly is
+// what makes the window visible in the UI instead of silently applied.
+export const SEARCH_WINDOW_DAYS = 7
+
+export function windowStart(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+}
+
 function filtersToParams(f: Filters, off: number): api.LogSearchParams {
   const params: api.LogSearchParams = { limit: PAGE_SIZE, offset: off }
   if (f.search) params.search = f.search
@@ -212,8 +229,15 @@ function filtersToParams(f: Filters, off: number): api.LogSearchParams {
   if (f.user) params.user = f.user
   if (f.starred) params.starred = true
   if (f.response_time_min) params.response_time_min = Number(f.response_time_min)
-  if (f.from) params.from = f.from
-  if (f.to) params.to = f.to
+  if (f.from) {
+    params.from = toRFC3339(f.from)
+  } else if (f.search) {
+    // Free text without a range: send the window explicitly so the operator
+    // can see it in the UI and widen it, instead of the server applying one
+    // that never appears anywhere.
+    params.from = windowStart(SEARCH_WINDOW_DAYS)
+  }
+  if (f.to) params.to = toRFC3339(f.to)
 
   // Status group overrides manual min/max
   if (f.status_group) {
@@ -750,6 +774,19 @@ export default function Logs() {
     commitFilters({ ...filters, [key]: emptyFilters()[key] })
   }
 
+  // A free-text search with no range runs against a bounded window, because
+  // trigram indexes stop helping once a chunk is compressed. Widening is the
+  // operator's call, so it is offered rather than decided for them.
+  const autoWindow = !!filters.search && !filters.from
+
+  function widenTo(days: number) {
+    const d = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const local = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+      `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    commitFilters({ ...filters, from: local })
+  }
+
   function setPF<K extends keyof Filters>(k: K, v: Filters[K]) {
     setPendingFilters(f => ({ ...f, [k]: v }))
   }
@@ -765,6 +802,10 @@ export default function Logs() {
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
+  // The API stops counting at 10.000 and returns 10.001 to mean "at least
+  // this many", so the exact number is only shown while it is exact.
+  const countCapped = total > 10000
+  const totalLabel = countCapped ? '10.000+' : total.toLocaleString()
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
 
   const methodColor = (m: string) => {
@@ -859,7 +900,7 @@ export default function Logs() {
           Live
         </Button>
         <div className="ml-auto text-xs text-muted-foreground">
-          {total.toLocaleString()} entries
+          {totalLabel} entries
         </div>
       </div>
 
@@ -877,6 +918,29 @@ export default function Logs() {
             <RotateCcw className="h-3 w-3" />
             Yeniden Baglan
           </Button>
+        </div>
+      )}
+
+      {/* Search window notice — the one thing that used to be invisible */}
+      {autoWindow && (
+        <div className="flex flex-wrap items-center gap-2 px-6 py-2 border-b border-border bg-amber-500/10 shrink-0">
+          <span className="text-[11px] text-amber-400">
+            Arama son {SEARCH_WINDOW_DAYS} günde yapıldı. Daha eskisi için aralığı genişletin.
+          </span>
+          {[30, 90].map((d) => (
+            <Button
+              key={d}
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-[11px] cursor-pointer"
+              onClick={() => widenTo(d)}
+            >
+              Son {d} gün
+            </Button>
+          ))}
+          <span className="text-[11px] text-muted-foreground">
+            Geniş aralıklarda arama yavaşlar.
+          </span>
         </div>
       )}
 
@@ -1054,7 +1118,7 @@ export default function Logs() {
       <div className="flex items-center justify-between px-6 py-3 border-t border-border shrink-0">
         <span className="text-xs text-muted-foreground">
           Page {currentPage} of {totalPages || 1}
-          {' '}&bull; {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
+          {' '}&bull; {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {totalLabel}
           {live && <span className="ml-2 text-primary animate-pulse">● live</span>}
         </span>
         <div className="flex items-center gap-1">
