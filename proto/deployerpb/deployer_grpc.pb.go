@@ -33,40 +33,40 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// DeployerService — muvon-deployer'in container introspection ve canli
-// log akisi sunan gRPC API'si. Sadece muvon admin'in dialerli oldugu
-// /run/muvon/deployer.sock Unix soketi uzerinden konusur. Docker socket
-// erisimi yalnizca muvon-deployer'da kalir; admin bu RPC ile sinirli bir
-// yuzeyden gecer.
+// DeployerService is muvon-deployer's gRPC API for container introspection
+// and live log streaming. It speaks only over the /run/muvon/deployer.sock
+// Unix socket that muvon admin dials. Docker socket access stays inside
+// muvon-deployer; admin reaches it through this narrow surface.
 type DeployerServiceClient interface {
-	// ListContainers active + son acılmış container'ları gosterir. Filtreler
-	// ister managed-only ister tum container'lar icin uygulanir. Admin UI'in
-	// "Live tail" picker'i bunu cagirir.
+	// ListContainers returns active and recently started containers. The
+	// filters apply to managed-only or to every container. The admin UI's
+	// "Live tail" picker calls this.
 	ListContainers(ctx context.Context, in *ListContainersRequest, opts ...grpc.CallOption) (*ListContainersResponse, error)
-	// GetContainer tek bir container icin durum + label snapshot'ini doner.
+	// GetContainer returns the state and label snapshot for one container.
 	GetContainer(ctx context.Context, in *GetContainerRequest, opts ...grpc.CallOption) (*ContainerDetail, error)
-	// StreamContainerLogs Docker daemon'a `?follow=1&timestamps=1` ile baglanir,
-	// multiplexed stream'i demuks edip her satiri ayri bir mesaj olarak yollar.
-	// Yavas tuketici icin sunucu drop-oldest backpressure uygular ve sentetik
-	// bir "[muvon] dropped N lines" satiri ile kayip bilgisini akıtır.
+	// StreamContainerLogs connects to the Docker daemon with
+	// `?follow=1&timestamps=1`, demultiplexes the stream and sends each line as
+	// its own message. For a slow consumer the server applies drop-oldest
+	// backpressure and reports the loss with a synthetic
+	// "[muvon] dropped N lines" line.
 	StreamContainerLogs(ctx context.Context, in *StreamContainerLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ContainerLogChunk], error)
-	// Health basit bir liveness probe; admin UI deployer down banner'ini
-	// bunun başarısızlığına bağlar.
+	// Health is a simple liveness probe. The admin UI ties its "deployer down"
+	// banner to this failing.
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
-	// SelfImageDigest deployer'ın çalıştığı (kendisi dahil) MUVON
-	// container'larının mevcut image digest'lerini döner. Admin UI
-	// "yeni sürüm mevcut" karşılaştırması için kullanır.
+	// SelfImageDigest returns the current image digests of the MUVON
+	// containers the deployer runs alongside, itself included. The admin UI
+	// uses it for the "a new version is available" comparison.
 	SelfImageDigest(ctx context.Context, in *SelfImageDigestRequest, opts ...grpc.CallOption) (*SelfImageDigestResponse, error)
-	// SystemUpgrade pull + recreate akışını başlatır. Stream üzerinde her
-	// adım için bir event döner (pull, backup, restart, done). Admin
-	// POST /api/system/upgrade bu çağrıyı proxy'ler ve event'leri SSE
-	// olarak UI'ya yansıtır.
+	// SystemUpgrade starts the pull-and-recreate flow, returning one event per
+	// step on the stream (pull, backup, restart, done). The admin endpoint
+	// POST /api/system/upgrade proxies this call and reflects the events to the
+	// UI over SSE.
 	SystemUpgrade(ctx context.Context, in *SystemUpgradeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[UpgradeEvent], error)
-	// CreateBackup pg_dump -Fc alıp doğrular. Yükseltmeden bağımsızdır:
-	// önceden yedek almanın tek yolu bir yükseltme başlatmaktı, dolayısıyla
-	// yükseltilecek bir şey yokken yedek de alınamıyordu.
+	// CreateBackup takes a pg_dump -Fc and verifies it. It is independent of
+	// an upgrade: the only way to get a backup used to be starting one, so
+	// there was no way to take a backup when there was nothing to upgrade.
 	CreateBackup(ctx context.Context, in *CreateBackupRequest, opts ...grpc.CallOption) (*CreateBackupResponse, error)
-	// ListBackups diskteki yedekleri döner (en yeni önce).
+	// ListBackups returns the backups on disk, newest first.
 	ListBackups(ctx context.Context, in *ListBackupsRequest, opts ...grpc.CallOption) (*ListBackupsResponse, error)
 }
 
@@ -180,40 +180,40 @@ func (c *deployerServiceClient) ListBackups(ctx context.Context, in *ListBackups
 // All implementations must embed UnimplementedDeployerServiceServer
 // for forward compatibility.
 //
-// DeployerService — muvon-deployer'in container introspection ve canli
-// log akisi sunan gRPC API'si. Sadece muvon admin'in dialerli oldugu
-// /run/muvon/deployer.sock Unix soketi uzerinden konusur. Docker socket
-// erisimi yalnizca muvon-deployer'da kalir; admin bu RPC ile sinirli bir
-// yuzeyden gecer.
+// DeployerService is muvon-deployer's gRPC API for container introspection
+// and live log streaming. It speaks only over the /run/muvon/deployer.sock
+// Unix socket that muvon admin dials. Docker socket access stays inside
+// muvon-deployer; admin reaches it through this narrow surface.
 type DeployerServiceServer interface {
-	// ListContainers active + son acılmış container'ları gosterir. Filtreler
-	// ister managed-only ister tum container'lar icin uygulanir. Admin UI'in
-	// "Live tail" picker'i bunu cagirir.
+	// ListContainers returns active and recently started containers. The
+	// filters apply to managed-only or to every container. The admin UI's
+	// "Live tail" picker calls this.
 	ListContainers(context.Context, *ListContainersRequest) (*ListContainersResponse, error)
-	// GetContainer tek bir container icin durum + label snapshot'ini doner.
+	// GetContainer returns the state and label snapshot for one container.
 	GetContainer(context.Context, *GetContainerRequest) (*ContainerDetail, error)
-	// StreamContainerLogs Docker daemon'a `?follow=1&timestamps=1` ile baglanir,
-	// multiplexed stream'i demuks edip her satiri ayri bir mesaj olarak yollar.
-	// Yavas tuketici icin sunucu drop-oldest backpressure uygular ve sentetik
-	// bir "[muvon] dropped N lines" satiri ile kayip bilgisini akıtır.
+	// StreamContainerLogs connects to the Docker daemon with
+	// `?follow=1&timestamps=1`, demultiplexes the stream and sends each line as
+	// its own message. For a slow consumer the server applies drop-oldest
+	// backpressure and reports the loss with a synthetic
+	// "[muvon] dropped N lines" line.
 	StreamContainerLogs(*StreamContainerLogsRequest, grpc.ServerStreamingServer[ContainerLogChunk]) error
-	// Health basit bir liveness probe; admin UI deployer down banner'ini
-	// bunun başarısızlığına bağlar.
+	// Health is a simple liveness probe. The admin UI ties its "deployer down"
+	// banner to this failing.
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
-	// SelfImageDigest deployer'ın çalıştığı (kendisi dahil) MUVON
-	// container'larının mevcut image digest'lerini döner. Admin UI
-	// "yeni sürüm mevcut" karşılaştırması için kullanır.
+	// SelfImageDigest returns the current image digests of the MUVON
+	// containers the deployer runs alongside, itself included. The admin UI
+	// uses it for the "a new version is available" comparison.
 	SelfImageDigest(context.Context, *SelfImageDigestRequest) (*SelfImageDigestResponse, error)
-	// SystemUpgrade pull + recreate akışını başlatır. Stream üzerinde her
-	// adım için bir event döner (pull, backup, restart, done). Admin
-	// POST /api/system/upgrade bu çağrıyı proxy'ler ve event'leri SSE
-	// olarak UI'ya yansıtır.
+	// SystemUpgrade starts the pull-and-recreate flow, returning one event per
+	// step on the stream (pull, backup, restart, done). The admin endpoint
+	// POST /api/system/upgrade proxies this call and reflects the events to the
+	// UI over SSE.
 	SystemUpgrade(*SystemUpgradeRequest, grpc.ServerStreamingServer[UpgradeEvent]) error
-	// CreateBackup pg_dump -Fc alıp doğrular. Yükseltmeden bağımsızdır:
-	// önceden yedek almanın tek yolu bir yükseltme başlatmaktı, dolayısıyla
-	// yükseltilecek bir şey yokken yedek de alınamıyordu.
+	// CreateBackup takes a pg_dump -Fc and verifies it. It is independent of
+	// an upgrade: the only way to get a backup used to be starting one, so
+	// there was no way to take a backup when there was nothing to upgrade.
 	CreateBackup(context.Context, *CreateBackupRequest) (*CreateBackupResponse, error)
-	// ListBackups diskteki yedekleri döner (en yeni önce).
+	// ListBackups returns the backups on disk, newest first.
 	ListBackups(context.Context, *ListBackupsRequest) (*ListBackupsResponse, error)
 	mustEmbedUnimplementedDeployerServiceServer()
 }

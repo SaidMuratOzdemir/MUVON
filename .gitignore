@@ -34,8 +34,8 @@
 *~
 
 # ── Claude Code ────────────────────────────────────────────
-# Skill set (.claude/skills/) ve paylaşılan ayarlar commit edilir.
-# Sadece kişisel izin/local ayarları ignore et.
+# The skill set (.claude/skills/) and shared settings are committed.
+# Only personal, machine-local settings are ignored.
 .claude/settings.local.json
 
 # ── Compiled Binaries ──────────────────────────────────────

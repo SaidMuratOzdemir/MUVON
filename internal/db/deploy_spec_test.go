@@ -39,7 +39,7 @@ func TestSpecHashIgnoresEnvOrdering(t *testing.T) {
 // because that is exactly the set of edits a running container never sees.
 func TestSpecHashReactsToBakedInFields(t *testing.T) {
 	cases := map[string]func(*DeployComponent){
-		"env value changed":   func(c *DeployComponent) { c.Env["SERVER_API_URL"] = "http://tatilji-api:8000" },
+		"env value changed":   func(c *DeployComponent) { c.Env["SERVER_API_URL"] = "http://example-app-api:8000" },
 		"env key added":       func(c *DeployComponent) { c.Env["NEW"] = "1" },
 		"env key removed":     func(c *DeployComponent) { delete(c.Env, "TZ") },
 		"secret key declared": func(c *DeployComponent) { c.EnvSecretKeys = append(c.EnvSecretKeys, "DB_PASSWORD") },

@@ -7,12 +7,11 @@ import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
 /**
- * Agent için gönderilen son komutların durumu. State machine her
- * komut için: pending → dispatched → succeeded|failed|expired. Stale
- * komutlar central'daki sweeper tarafından 5 dk sonra expired olur.
+ * The state of the commands recently sent to an agent. Each one moves through
+ * pending, dispatched, then succeeded, failed or expired; central's sweeper
+ * expires a stale command after five minutes.
  *
- * Bu liste sayfa yenilenince otomatik fetch eder; manuel refresh için
- * sağ üstte buton var.
+ * The list fetches on mount, and the button in the top right refetches.
  */
 
 interface Props {

@@ -4,8 +4,8 @@ package logpb;
 
 option go_package = "dialog/proto/logpb";
 
-// LogService — diaLOG SIEM'in gRPC API'si.
-// MUVON proxy log entry'lerini bu servise gonderir.
+// LogService is diaLOG SIEM's gRPC API.
+// The MUVON proxy sends its log entries to this service.
 service LogService {
   // SendEntry: tek bir log entry gonder (fire-and-forget).
   rpc SendEntry(LogEntry)   returns (Ack);

@@ -313,10 +313,10 @@ function ProjectSettingsDialog({
                   const inst = (project.instances ?? []).find(i => i.component_id === c.id && i.state === 'active')
                   const secretCount = (c.env_secret_keys ?? []).length
                   const envCount = Object.keys(c.env ?? {}).length
-                  // env, ağlar, mount'lar ve komut container yaratılırken
-                  // uygulanır: kaydedilen değişiklik çalışan container'a
-                  // ulaşmaz. Boş spec_hash bu alandan önce başlatılmış
-                  // container demektir, onu "bilinmiyor" sayıp uyarmıyoruz.
+                  // env, networks, mounts and command are applied when the
+                  // container is created, so a saved edit does not reach a
+                  // running one. An empty spec_hash means the container predates
+                  // the column: treat that as unknown rather than as drift.
                   const configDrift = Boolean(
                     inst?.spec_hash && c.spec_hash && inst.spec_hash !== c.spec_hash,
                   )

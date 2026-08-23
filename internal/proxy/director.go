@@ -74,8 +74,8 @@ func Rewrite(target *url.URL, stripPrefix string, route db.Route, clientIP strin
 			req.URL.RawQuery = target.RawQuery + "&" + req.URL.RawQuery
 		}
 
-		// Accept-Encoding header'ını sil, backend plaintext dönsün
-		// Gzip sıkıştırmasını biz middleware ile yapacağız
+		// Drop Accept-Encoding so the backend answers uncompressed; our own
+		// middleware does the gzip.
 		req.Header.Del("Accept-Encoding")
 
 		// X-Forwarded-For is the hop chain, oldest first: keep what a trusted
@@ -119,7 +119,7 @@ func Rewrite(target *url.URL, stripPrefix string, route db.Route, clientIP strin
 			req.Header.Del(h)
 		}
 		for k, v := range route.ReqHeadersAdd {
-			// Host header'ı req.Header ile değil req.Host ile set edilmeli
+			// The Host header is set through req.Host, not req.Header.
 			if strings.EqualFold(k, "host") {
 				req.Host = v
 			} else {

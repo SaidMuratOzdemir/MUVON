@@ -84,8 +84,8 @@ func (s *Server) resolveHostTarget(ctx context.Context, kind, agentID string) (d
 	}
 }
 
-// validDomain kabul edilen hostname/domain formatını doğrular (RFC 1123).
-// Wildcard alan adlarına (*.) izin verilir.
+// validDomain checks the accepted hostname and domain shape (RFC 1123).
+// Wildcard domains (*.) are allowed.
 var validDomain = regexp.MustCompile(`^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$|^localhost$`)
 
 func domainError(err error) string {

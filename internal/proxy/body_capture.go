@@ -24,11 +24,11 @@ func CaptureRequestBody(r *http.Request, maxSize int) (*http.Request, *CapturedB
 		return r, &CapturedBody{Size: int(r.ContentLength)}, nil
 	}
 
-	// Gövdeyi tümüyle oku: forward edilen kopya asla kısaltılmaz, yalnız
-	// SIEM kopyası maxSize'da kırpılır (Truncated bayrağı ile). Okuma hatası
-	// (client bağlantısı koptu ya da MaxBytesReader limiti aşıldı) durumunda
-	// kısmi gövdeyi "tam" gibi backend'e ASLA iletme — hatayı yukarı taşı,
-	// çağıran isteği reddetsin.
+	// Read the body in full: the copy forwarded upstream is never shortened,
+	// only the SIEM copy is cut at maxSize and flagged Truncated. On a read
+	// error (the client disconnected, or MaxBytesReader hit its limit) never
+	// pass the partial body upstream as if it were complete. Return the error
+	// and let the caller reject the request.
 	full, err := io.ReadAll(r.Body)
 	r.Body.Close()
 	if err != nil {
@@ -83,7 +83,7 @@ func (rc *ResponseCapture) WriteHeader(code int) {
 	rc.wroteHeader = true
 	rc.statusCode = code
 
-	// Response header'larını kaydet
+	// Snapshot the response headers.
 	for k, v := range rc.ResponseWriter.Header() {
 		rc.headers[k] = v
 	}

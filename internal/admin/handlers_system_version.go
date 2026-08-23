@@ -194,9 +194,9 @@ func fetchLatestDigest(ctx context.Context, service, tag string) (digest string,
 		return "", fmt.Errorf("ghcr token empty")
 	}
 
-	// Step 2: manifest HEAD — Docker-Content-Digest header'ı immutable
-	// content addressini taşır; "v2 manifest" Accept header'ı şart yoksa
-	// 404 döner çünkü GHCR default OCI'ye yöneliyor.
+	// Step 2: a manifest HEAD. The Docker-Content-Digest header carries the
+	// immutable content address. The "v2 manifest" Accept header is required:
+	// without it GHCR defaults to OCI and answers 404.
 	manifestURL := "https://ghcr.io/v2/" + repo + "/manifests/" + tag
 	mfReq, err := http.NewRequestWithContext(ctx, http.MethodHead, manifestURL, nil)
 	if err != nil {

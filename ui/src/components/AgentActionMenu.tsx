@@ -16,14 +16,14 @@ import { Button } from '@/components/ui/button'
 import * as api from '@/api'
 
 /**
- * Operatör için her agent satırında bir aksiyon menüsü.
+ * An action menu on every agent row.
  *
- * Her komut central tarafında muvon.agent_commands tablosuna HMAC-imzalı
- * bir row olarak yazılır; agent long-poll ile çeker, imzayı doğrular,
- * çalıştırır ve sonucu raporlar.
+ * Each command is written on the central side as an HMAC-signed row in
+ * muvon.agent_commands. The agent claims it on its long poll, verifies the
+ * signature, runs it and reports the result.
  *
- * Yıkıcı eylemler (drain, restart, revoke) için onay dialog'u açılır —
- * "tek tıkla kazara restart" ihtimalini sıfırlamak için.
+ * Destructive actions (drain, restart, revoke) open a confirmation dialog, so
+ * that an accidental single click cannot restart a live edge.
  */
 
 interface ActionDef {
@@ -53,7 +53,7 @@ interface Props {
 
 export function AgentActionMenu({ agentID, agentName, onCommandSent }: Props) {
   const [confirmAction, setConfirmAction] = useState<ActionDef | null>(null)
-  // cert.renew için domain prompt durumu
+  // Domain prompt state for cert.renew.
   const [domainPromptOpen, setDomainPromptOpen] = useState(false)
   const [domain, setDomain] = useState('')
   const [forceRenew, setForceRenew] = useState(false)
@@ -73,7 +73,7 @@ export function AgentActionMenu({ agentID, agentName, onCommandSent }: Props) {
 
   function handleClick(action: ActionDef) {
     if (action.kind === 'cert.renew') {
-      // Domain için ayrı küçük prompt — daha temiz UX
+      // A small separate prompt for the domain reads better than one big form.
       setDomainPromptOpen(true)
       return
     }

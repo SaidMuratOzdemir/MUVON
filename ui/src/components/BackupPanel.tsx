@@ -6,12 +6,11 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
 /**
- * Settings → Sistem altındaki yedek kartı.
+ * The backup card under Settings, "Sistem".
  *
- * Yedek almak eskiden yalnızca sistem yükseltmesinin bir yan etkisiydi:
- * yükseltilecek bir şey yoksa yedek de alınamıyordu, yani riskli bir işten
- * önce yedek almanın yolu yoktu. Buradaki düğme aynı akışı bağımsız çağırır;
- * dosya doğrulamadan geçmeden yayınlanmaz.
+ * The button calls the dump flow on its own, independently of a system
+ * upgrade, which is what makes it useful before any risky work. A file is
+ * published only after it passes verification.
  */
 export function BackupPanel() {
   const [list, setList] = useState<api.BackupList | null>(null)

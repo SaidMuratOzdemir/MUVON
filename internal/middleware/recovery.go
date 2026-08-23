@@ -28,7 +28,6 @@ func Recovery(next http.Handler) http.Handler {
 }
 
 func headersSent(w http.ResponseWriter) bool {
-	// ResponseWriter henüz header yazmadıysa false
-	// Bu heuristic: Header'da Content-Type varsa yazılmış demektir
+	// A heuristic: a Content-Type on the header means something was written.
 	return w.Header().Get("Content-Type") != ""
 }

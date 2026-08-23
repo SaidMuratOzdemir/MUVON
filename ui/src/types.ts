@@ -317,8 +317,9 @@ export interface DeployComponent {
   env_secret_keys: string[];
   mounts: Mount[];
   is_routable: boolean;
-  // Empty string = central host (operatörün VPS'i). Non-empty = bu agent
-  // edge'inde host edilir. Set yalnız create'te; UI'da edit gizli.
+  // An empty string means the central host (the operator's own VPS); a value
+  // means this agent's edge hosts it. Set at creation only, and the UI hides
+  // it on edit.
   agent_id: string;
   // Paused stops the deployer from spawning new instances and drains
   // existing ones. Config stays intact so the operator can resume by

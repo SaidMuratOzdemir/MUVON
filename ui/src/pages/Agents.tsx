@@ -163,7 +163,7 @@ function ExtraMountsEditor({
         {isDirty && <Badge variant="outline" className="text-[10px] text-yellow-400 border-yellow-400/40">unsaved</Badge>}
       </div>
       <Textarea
-        placeholder={'/opt/tatilji\n/opt/another-app'}
+        placeholder={'/opt/example-app\n/opt/another-app'}
         value={text}
         onChange={e => setText(e.target.value)}
         rows={3}
@@ -258,8 +258,7 @@ export default function Agents() {
   // back. We keep both the row and the key together until the operator
   // dismisses the reveal banner.
   const [createdAgent, setCreatedAgent] = useState<{ agent: Agent; api_key: string } | null>(null)
-  // Komut gönderildiğinde history bileşenlerini re-fetch ettirmek için
-  // bumplanan counter.
+  // Bumped after a command is sent, to make the history components refetch.
   const [historyRefresh, setHistoryRefresh] = useState(0)
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null)
 

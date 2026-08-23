@@ -82,14 +82,14 @@ func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerS
 
 	ctx := stream.Context()
 
-	// 1) Pre-check — host'taki /host/muvon mount'ı + Docker socket.
+	// 1) Pre-check: the host's /host/muvon mount and the Docker socket.
 	emit("pre_check", "info", "checking host mounts...", false)
 	if _, err := os.Stat(filepath.Join(helperHostMnt, "docker-compose.yml")); err != nil {
 		emit("failed", "error", fmt.Sprintf("host compose mount missing: %v (deployer needs /opt/muvon mounted as %s)", err, helperHostMnt), true)
 		return nil
 	}
 
-	// 2) Hedef tag normalize (v prefix strip, Docker semver convention).
+	// 2) Normalise the target tag (strip a leading v, Docker's semver style).
 	tag := strings.TrimSpace(req.GetTargetTag())
 	if tag == "" {
 		tag = "latest"
@@ -97,9 +97,9 @@ func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerS
 	tag = strings.TrimPrefix(tag, "v")
 	emit("pre_check", "info", fmt.Sprintf("target tag: %s", tag), false)
 
-	// 3) Yedek. Operatör yedek istediyse ve yedek alınamıyorsa upgrade durur:
-	//    ağsız bir yedekle devam etmek, yedek var sanılarak yükseltme yapmak
-	//    demek ve bu tam olarak bozuk dump'ların fark edilmemesine yol açtı.
+	// 3) Backup. When the operator asked for one and it cannot be produced,
+	//    the upgrade stops: continuing would upgrade under the belief that a
+	//    usable backup exists.
 	if req.GetTakeBackup() {
 		emit("backup", "info", "running pg_dump -Fc...", false)
 		path, err := s.runPGDump(ctx, emit)
@@ -113,16 +113,17 @@ func (s *Server) SystemUpgrade(req *pb.SystemUpgradeRequest, stream pb.DeployerS
 		emit("backup", "info", "backup skipped (operator opted out)", false)
 	}
 
-	// 4) Helper container'ı başlat + stdout/stderr'i event'e dönüştür
+	// 4) Start the helper container and turn its stdout/stderr into events.
 	emit("pull", "info", "spawning muvon-upgrader helper container...", false)
 	if err := s.runUpgrader(ctx, emit, tag); err != nil {
 		emit("failed", "error", fmt.Sprintf("upgrader failed: %v", err), true)
 		return nil
 	}
 
-	// 5) Buraya geldiysek helper bizi (deployer) restart etmedi — yeni
-	//    image aynı digest ise compose tetiklenmez. Yine de işi başarılı
-	//    sayıyoruz; admin UI sürüm karşılaştırmasını yeniden tetikleyecek.
+	// 5) Reaching this point means the helper did not restart this deployer,
+	//    which happens when the new image carries the same digest and compose
+	//    has nothing to recreate. That still counts as success; the admin UI
+	//    re-runs its version comparison.
 	emit("done", "info", "upgrade completed", true)
 	return nil
 }
@@ -341,13 +342,13 @@ func (s *Server) backupStorageBind(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("no mount found at %s", backupDir)
 }
 
-// runUpgrader docker:cli helper container yaratır: compose dosyasını
-// github'tan tazeler, hedef tag'i sed ile yazar, `compose pull && up -d`
-// çalıştırır. Helper bitince auto-remove. Stdout/stderr event'lere döner.
+// runUpgrader creates the docker:cli helper container: it refreshes the compose
+// file from GitHub, writes the target tag with sed, and runs
+// `compose pull && up -d`. Its stdout and stderr are turned into events.
 func (s *Server) runUpgrader(parentCtx context.Context, emit func(step, level, msg string, done bool), target string) error {
-	// Helper'ın yaşam döngüsünü gRPC stream'inden ayır: stream koparsa
-	// (deployer recreate sırasında olur) helper'ın Docker call'ları
-	// iptal olmasın. 12 dakika kendi başına yeterli budget.
+	// Detach the helper's lifetime from the gRPC stream: when the stream drops,
+	// which it does while the deployer is being recreated, the helper's Docker
+	// calls must not be cancelled. Twelve minutes is budget enough on its own.
 	helperCtx, helperCancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer helperCancel()
 
@@ -360,8 +361,8 @@ func (s *Server) runUpgrader(parentCtx context.Context, emit func(step, level, m
 		sedLine = fmt.Sprintf(`sed -i -E "s|(ghcr\\.io/[^:]+):latest|\\1:%s|g" docker-compose.yml`, target)
 	}
 
-	// muvon-deployer'ı SONA bırak: helper container bu deployer'ın
-	// spawn'ı. set -ex ile her satır echo'lanır, kör failure görmüyoruz.
+	// Leave muvon-deployer for LAST: the helper container is this deployer's
+	// own child. set -ex echoes every line, so no failure passes unseen.
 	script := strings.Join([]string{
 		"set -ex",
 		"cd " + helperHostMnt,
@@ -387,8 +388,9 @@ func (s *Server) runUpgrader(parentCtx context.Context, emit func(step, level, m
 			"/opt/muvon:" + helperHostMnt,
 		},
 		Labels: map[string]string{"muvon.role": "upgrader"},
-		// AutoRemove=false: failure'da carcass kalır, `docker logs <id>`
-		// ile son satırlar görülür. Başarılı yolda aşağıda explicit remove.
+		// AutoRemove=false keeps the carcass on failure so `docker logs <id>`
+		// still shows the last lines. The success path removes it explicitly
+		// below.
 		AutoRemove: false,
 		Init:       true,
 	})
@@ -423,10 +425,9 @@ func (s *Server) runUpgrader(parentCtx context.Context, emit func(step, level, m
 	return nil
 }
 
-// classifyUpgraderLine helper container'ın stdout'undaki marker
-// satırlarını adıma map'ler. Helper bilinçli olarak "[upgrader]"
-// prefix'iyle adım başlatıyor; geri kalan docker output'u "pull"
-// adımının altında kalır.
+// classifyUpgraderLine maps the marker lines in the helper container's stdout
+// onto steps. The helper deliberately opens each step with an "[upgrader]"
+// prefix; everything else Docker prints stays under the "pull" step.
 func classifyUpgraderLine(line string) string {
 	switch {
 	case strings.Contains(line, "[upgrader] pulling"):

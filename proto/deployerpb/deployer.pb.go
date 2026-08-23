@@ -59,11 +59,12 @@ func (*CreateBackupRequest) Descriptor() ([]byte, []int) {
 
 type CreateBackupResponse struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
-	Path      string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // yayınlanan dosyanın tam yolu
+	Path      string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"` // full path of the written file
 	Bytes     int64                  `protobuf:"varint,2,opt,name=bytes,proto3" json:"bytes,omitempty"`
 	CreatedAt string                 `protobuf:"bytes,3,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // RFC3339
-	// Verified, pg_restore -l doğrulamasının geçtiğini söyler. False ise note
-	// nedenini taşır; dosya yine de yazılmıştır ama körlemesine güvenilmemeli.
+	// Verified reports that the pg_restore -l check passed. When false, note
+	// carries the reason: the file was still written, but do not trust it
+	// blindly.
 	Verified      bool   `protobuf:"varint,4,opt,name=verified,proto3" json:"verified,omitempty"`
 	Note          string `protobuf:"bytes,5,opt,name=note,proto3" json:"note,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -234,8 +235,8 @@ func (*ListBackupsRequest) Descriptor() ([]byte, []int) {
 type ListBackupsResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Backups []*BackupInfo          `protobuf:"bytes,1,rep,name=backups,proto3" json:"backups,omitempty"`
-	// KeepLimit, kaç yedeğin saklandığını söyler; UI bunu kullanıcıya
-	// gösterir ki eski dosyaların neden kaybolduğu belirsiz kalmasın.
+	// KeepLimit says how many backups are retained. The UI shows it so that
+	// the disappearance of older files is never a mystery.
 	KeepLimit     int32 `protobuf:"varint,2,opt,name=keep_limit,json=keepLimit,proto3" json:"keep_limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -287,11 +288,12 @@ func (x *ListBackupsResponse) GetKeepLimit() int32 {
 
 type ListContainersRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// managed_only=true sadece muvon.managed=true label'li container'lar.
+	// managed_only=true restricts the result to containers labelled
+// muvon.managed=true.
 	ManagedOnly bool   `protobuf:"varint,1,opt,name=managed_only,json=managedOnly,proto3" json:"managed_only,omitempty"`
 	Project     string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	Component   string `protobuf:"bytes,3,opt,name=component,proto3" json:"component,omitempty"`
-	// state ∈ {"", "running", "exited"}; bos = her ikisi.
+	// state is one of "", "running" or "exited"; empty means both.
 	State         string `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -449,20 +451,20 @@ type ContainerDetail struct {
 	ContainerName string                 `protobuf:"bytes,2,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
 	Image         string                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
 	ImageDigest   string                 `protobuf:"bytes,4,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
-	// state ∈ Docker'in dondurdugu kanonik degerler: created, running,
-	// paused, restarting, removing, exited, dead.
+	// state is one of Docker's canonical values: created, running, paused,
+	// restarting, removing, exited, dead.
 	State string `protobuf:"bytes,5,opt,name=state,proto3" json:"state,omitempty"`
 	// status — Docker UI'inin gosterdigi insan-okunabilir cumle, ornek:
 	// "Up 5 minutes (healthy)".
 	Status string            `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
 	Labels map[string]string `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// RFC3339; container start anı (Up için State.StartedAt).
+	// RFC3339; when the container started (State.StartedAt while Up).
 	StartedAt string `protobuf:"bytes,8,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	// RFC3339; çıkış varsa State.FinishedAt; aktif container'larda boş.
+	// RFC3339; State.FinishedAt if it exited, empty for a running container.
 	FinishedAt string `protobuf:"bytes,9,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
 	ExitCode   int32  `protobuf:"varint,10,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
-	// Inspect'ten cıkarılan label-derived bilgiler — admin UI'in arama
-	// alanlarinı doldurmasını kolaylaştırır.
+	// Label-derived fields pulled out of Inspect, so the admin UI can fill its
+	// search fields without parsing labels itself.
 	Project       string `protobuf:"bytes,11,opt,name=project,proto3" json:"project,omitempty"`                      // muvon.project
 	Component     string `protobuf:"bytes,12,opt,name=component,proto3" json:"component,omitempty"`                  // muvon.component
 	ReleaseId     string `protobuf:"bytes,13,opt,name=release_id,json=releaseId,proto3" json:"release_id,omitempty"` // muvon.release_id
@@ -594,8 +596,9 @@ func (x *ContainerDetail) GetReleaseId() string {
 type StreamContainerLogsRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	ContainerId string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
-	// tail = ilk bagli sirasinda gonderilecek son N satir; 0 = sadece yeni
-	// satirlar; <0 = tum mevcut log (baslangıc icin maliyetli, kullanmayin).
+	// tail is how many trailing lines to send on connect; 0 means new lines
+	// only; a negative value means the whole existing log, which is expensive
+	// to start with and should not be used.
 	Tail int32 `protobuf:"varint,2,opt,name=tail,proto3" json:"tail,omitempty"`
 	// follow=true bagli kalir ve container son bulana kadar yeni satirlari
 	// surekli gonderir.
@@ -603,8 +606,8 @@ type StreamContainerLogsRequest struct {
 	// streams: bos = "stdout,stderr"; yoksa istenenleri filtrele. Docker
 	// API tarafindaki ayar; sunucu varsayilani stdout+stderr.
 	Streams []string `protobuf:"bytes,4,rep,name=streams,proto3" json:"streams,omitempty"`
-	// since RFC3339 — sadece bu zamandan sonraki satirlari gonder. Boş
-	// ise Docker'in docker logs default davranisi.
+	// since is RFC3339: send only lines after that time. Empty falls back to
+	// docker logs' own default behaviour.
 	Since         string `protobuf:"bytes,5,opt,name=since,proto3" json:"since,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -677,20 +680,20 @@ func (x *StreamContainerLogsRequest) GetSince() string {
 
 type ContainerLogChunk struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// timestamp Docker daemon'in sagladigi RFC3339Nano.
+	// timestamp is the RFC3339Nano value the Docker daemon supplies.
 	Timestamp string `protobuf:"bytes,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	// stream ∈ {"stdout","stderr"} — multiplexed stream header'dan cıkarılır.
+	// stream is "stdout" or "stderr", taken from the multiplexed stream header.
 	Stream string `protobuf:"bytes,2,opt,name=stream,proto3" json:"stream,omitempty"`
-	// line — newline-strip edilmis tek bir log satiri.
+	// line is a single log line with its newline stripped.
 	Line string `protobuf:"bytes,3,opt,name=line,proto3" json:"line,omitempty"`
 	// truncated=true: kaynak satir max_line'i astigi icin server tarafindan
-	// bolundu. UI bu satiri "..." ile birlestirebilir.
+	// split it. The UI may join such lines with an ellipsis.
 	Truncated bool `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"`
-	// seq — server'in tail goroutine'i icinde monoton artan sayac. Iki
-	// satir ayni microsaniyeyi paylasirsa siralama icin kullanilir.
+	// seq is a monotonic counter inside the server's tail goroutine, used to
+	// order two lines that share the same microsecond.
 	Seq int64 `protobuf:"varint,5,opt,name=seq,proto3" json:"seq,omitempty"`
-	// synthetic=true: bu satir muvon tarafından üretilmiştir (örn. "dropped
-	// N lines"). UI bunları farklı renderleyebilir.
+	// synthetic=true means muvon produced the line itself (for example
+	// "dropped N lines"). The UI may render those differently.
 	Synthetic     bool `protobuf:"varint,6,opt,name=synthetic,proto3" json:"synthetic,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -806,12 +809,12 @@ func (*HealthRequest) Descriptor() ([]byte, []int) {
 
 type HealthResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// ok = true ise deployer + Docker daemon erisimi calisiyor.
+	// ok=true means the deployer and its Docker daemon access are working.
 	Ok bool `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
-	// last_tick_age_seconds = deployer'in son tick'inden bu yana gecen sure.
-	// 0 = ulasilamiyor.
+	// last_tick_age_seconds is how long ago the deployer's last tick ran.
+	// 0 means unknown.
 	LastTickAgeSeconds int64 `protobuf:"varint,2,opt,name=last_tick_age_seconds,json=lastTickAgeSeconds,proto3" json:"last_tick_age_seconds,omitempty"`
-	// active_tail_streams = o anda canli olan StreamContainerLogs sayisi.
+	// active_tail_streams is how many StreamContainerLogs calls are live.
 	ActiveTailStreams int32 `protobuf:"varint,3,opt,name=active_tail_streams,json=activeTailStreams,proto3" json:"active_tail_streams,omitempty"`
 	// shipper_active = logship aktif container sayisi (persistans icin
 	// tail edilenler).
@@ -916,8 +919,8 @@ func (*SelfImageDigestRequest) Descriptor() ([]byte, []int) {
 
 type SelfImageDigestResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Her servis için container'ın çalıştığı image digest'i.
-	// Eksik servis = bilinmiyor (container yok ya da Docker hata verdi).
+	// The image digest each service's container is running.
+	// A missing service means unknown: no container, or Docker errored.
 	Digests       map[string]string `protobuf:"bytes,1,rep,name=digests,proto3" json:"digests,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -962,10 +965,11 @@ func (x *SelfImageDigestResponse) GetDigests() map[string]string {
 
 type SystemUpgradeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// target_tag: ":latest" (default), ":v0.1.0", vb. Compose .env'deki
-	// VERSION değişkenine yazılır, pull bu tag'i çeker.
+	// target_tag is ":latest" (the default), ":v0.1.0" and so on. It is
+	// written to the VERSION variable in compose's .env and the pull follows
+	// that tag.
 	TargetTag string `protobuf:"bytes,1,opt,name=target_tag,json=targetTag,proto3" json:"target_tag,omitempty"`
-	// take_backup: true ise pull öncesi pg_dump alınır.
+	// take_backup=true takes a pg_dump before the pull.
 	TakeBackup    bool `protobuf:"varint,2,opt,name=take_backup,json=takeBackup,proto3" json:"take_backup,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1021,11 +1025,11 @@ type UpgradeEvent struct {
 	Step string `protobuf:"bytes,1,opt,name=step,proto3" json:"step,omitempty"`
 	// level ∈ {info, warn, error}
 	Level string `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
-	// İnsana okunabilir mesaj (stdout'tan dökülmüş veya manuel).
+	// A human-readable message, either captured from stdout or written here.
 	Message string `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
-	// RFC3339; backend bunu set eder.
+	// RFC3339; set by the backend.
 	Timestamp string `protobuf:"bytes,4,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	// done=true son event işaretidir. Stream bu event'ten sonra kapanır.
+	// done=true marks the final event. The stream closes after it.
 	Done          bool `protobuf:"varint,5,opt,name=done,proto3" json:"done,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

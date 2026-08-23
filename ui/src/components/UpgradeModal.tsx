@@ -30,23 +30,23 @@ interface Props {
 }
 
 /**
- * İki aşamalı modal:
- *   1. Konfigürasyon — hedef tag seçimi, DB yedek tercihi, CHANGELOG önizleme.
- *      "Başlat" butonuna basıldığında upgrade başlatılır.
- *   2. İlerleme — SSE event stream'i; her adım renderlanır.
+ * A two-stage modal:
+ *   1. Configuration: target tag, whether to take a DB backup, a CHANGELOG
+ *      preview. The start button launches the upgrade.
+ *   2. Progress: the SSE event stream, one rendered row per step.
  *
- * Hata durumlarında modal kapanmaz, kullanıcı state'i görür ve manuel
- * kapatır (re-try için tekrar açar).
+ * On failure the modal stays open so the operator can read the state and close
+ * it themselves; reopening it retries.
  */
 export function UpgradeModal({ open, onClose, onCompleted, currentTag, latestTag }: Props) {
-  // ── Form state (Aşama 1)
+  // ── Form state (stage 1)
   const [customTag, setCustomTag] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [takeBackup, setTakeBackup] = useState(true)
   const [changelog, setChangelog] = useState<string | null>(null)
   const [changelogOpen, setChangelogOpen] = useState(false)
 
-  // ── Upgrade state (Aşama 2)
+  // ── Upgrade state (stage 2)
   const [phase, setPhase] = useState<'config' | 'running' | 'done' | 'failed'>('config')
   const [events, setEvents] = useState<api.UpgradeEvent[]>([])
   const [closeStream, setCloseStream] = useState<(() => void) | null>(null)
@@ -67,7 +67,7 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag, latestTag
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // CHANGELOG'u tembel yükle — kullanıcı butona basınca.
+  // Load the CHANGELOG lazily, when the operator asks for it.
   async function loadChangelog() {
     if (changelog) {
       setChangelogOpen(o => !o)
@@ -82,11 +82,12 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag, latestTag
     }
   }
 
-  // Üst [Unreleased] / ilk sürüm bölümünü kes — iki ## başlık arası.
+  // Cut the leading [Unreleased] or first release section, between two ##
+  // headings.
   const changelogPreview = useMemo(() => {
     if (!changelog) return ''
     const parts = changelog.split(/^## /m)
-    // parts[0] = preamble, parts[1] = ilk ## bloğu (## başlığı kaldırılmış)
+    // parts[0] is the preamble, parts[1] the first ## block without its heading
     return parts.length > 1 ? '## ' + parts[1].trim() : changelog.trim()
   }, [changelog])
 
@@ -96,8 +97,9 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag, latestTag
       toast.error('Hedef sürüm bulunamadı')
       return
     }
-    // Downgrade engelleme: semver formundaki bir tag çalışan sürümden küçükse uyar.
-    // latest/v0/v0.1 gibi semver olmayanlar atlanır (rolling tag, downgrade tanımsız).
+    // Warn on a downgrade: a semver tag lower than the running version. Rolling
+    // tags such as latest, v0 or v0.1 are skipped, since downgrade is undefined
+    // for them.
     if (currentTag && isStrictSemver(effectiveTag) && isStrictSemver(currentTag)) {
       if (compareSemver(effectiveTag, currentTag) < 0) {
         const ok = window.confirm(
@@ -121,7 +123,7 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag, latestTag
       toast.error(err instanceof Error ? err.message : 'Güncelleme başlatılamadı')
       return
     }
-    // Stream'e bağlan
+    // Connect to the stream.
     const close = api.createUpgradeStream(
       ev => {
         setEvents(prev => [...prev, ev])
@@ -132,13 +134,14 @@ export function UpgradeModal({ open, onClose, onCompleted, currentTag, latestTag
       },
       () => {
         // Server-side stream EOF — phase already settled by Done event,
-        // but if not, fall through to done (deployer kendi container'ını
-        // restart ettiği zaman stream EOF olur — bu success demek).
+        // but if not, fall through to done: the stream EOFs when the deployer
+        // restarts its own container, which is the success path.
         setPhase(p => (p === 'running' ? 'done' : p))
         onCompleted()
       },
       () => {
-        // Network error veya disconnect — running fazında ise informational.
+        // A network error or a disconnect. While still running it is only
+        // informational.
         setPhase(p => (p === 'running' ? 'done' : p))
       },
     )

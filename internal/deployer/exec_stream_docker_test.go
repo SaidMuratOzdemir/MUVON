@@ -13,7 +13,7 @@ import (
 // End-to-end proof that a dump taken through ContainerExecStream restores.
 // The frame tests cover the decoding; this one covers the whole path against a
 // real daemon and a real postgres, which is the only way to be sure the fix
-// addresses the failure that produced 34 unrestorable archives.
+// keeps a pg_dump restorable: the log demuxer would strip its newlines.
 //
 // Skipped unless MUVON_TEST_PG_CONTAINER names a running postgres container
 // whose image also carries pg_restore:

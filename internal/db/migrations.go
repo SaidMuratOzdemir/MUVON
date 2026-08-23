@@ -912,10 +912,10 @@ ALTER TABLE container_logs SET (
 SELECT add_compression_policy('container_logs', INTERVAL '7 days', if_not_exists => true);
 SELECT add_retention_policy('container_logs', INTERVAL '30 days', if_not_exists => true);`,
 	},
-	// Operatörün hangi env değişkenlerini "hassas" işaretlediğini saklar.
-	// İşaretli key'lerin değerleri Env JSONB'sinde "enc:" prefix'iyle
-	// secret.Box ciphertext olarak yazılır. UI bu key'leri masked gösterir
-	// ve deployer container'a verirken decrypt eder.
+	// Records which env variables the operator marked sensitive. Values for
+	// the listed keys are stored in the Env JSONB as secret.Box ciphertext
+	// behind an "enc:" prefix; the UI shows them masked and the deployer
+	// decrypts them on the way into the container.
 	{
 		name: "add_deploy_components_env_secret_keys", product: "muvon",
 		sql: `ALTER TABLE deploy_components ADD COLUMN IF NOT EXISTS env_secret_keys TEXT[] NOT NULL DEFAULT '{}';`,
@@ -961,12 +961,13 @@ UPDATE hosts SET tls_mode = 'redirect' WHERE force_https = true AND tls_mode = '
 		sql: `ALTER TABLE agents ADD COLUMN IF NOT EXISTS api_key_hash BYTEA;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_api_key_hash ON agents (api_key_hash) WHERE api_key_hash IS NOT NULL;`,
 	},
-	// Central → agent command queue. Operator UI yazar (örn. "agent X'i
-	// restart et"), agent long-poll'la çeker, HMAC doğrular, çalıştırır,
-	// sonucu raporlar. Durability = queue Postgres'te; central restart
-	// = no-op. Idempotency = state machine (pending → dispatched →
-	// succeeded|failed|expired). UUIDv7 ID time-ordered, "since cursor"
-	// pagination doğal.
+	// Central to agent command queue. The operator UI writes a row (for
+	// example "restart agent X"), the agent claims it on its long poll,
+	// verifies the HMAC, runs it and reports the result. Durability comes
+	// from the queue living in Postgres, so a central restart is a no-op.
+	// Idempotency comes from the state machine (pending, dispatched, then
+	// succeeded, failed or expired). UUIDv7 ids are time-ordered, which makes
+	// "since cursor" pagination natural.
 	{
 		name: "create_agent_commands", product: "muvon",
 		sql: `

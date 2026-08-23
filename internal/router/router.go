@@ -51,10 +51,10 @@ func (rt *Router) Handler() http.Handler {
 		return proxy
 	}
 
-	// adminDomain set edilmişse Host'a göre yönlendir
+	// With adminDomain set, route on the Host header.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
-		// port varsa sil (örn. "muvon.example.com:443" → "muvon.example.com")
+		// Strip the port if present ("muvon.example.com:443").
 		if i := strings.LastIndex(host, ":"); i != -1 {
 			host = host[:i]
 		}

@@ -16,13 +16,13 @@ func NewTransport() *http.Transport {
 		MaxIdleConns:          1000,
 		MaxIdleConnsPerHost:   100,
 		IdleConnTimeout:       90 * time.Second,
-		DisableCompression:    true, // gzip bizde hallediliyor
+		DisableCompression:    true, // our own middleware handles gzip
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 30 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-		// ForceAttemptHTTP2 kasıtlı olarak false bırakıldı.
-		// HTTP/2 WebSocket Upgrade başlığını desteklemez (RFC 7540 §8.1.2.2).
-		// Backend gRPC/HTTP2 istiyorsa backend_url'yi h2c ile yapılandırmalı.
+		// ForceAttemptHTTP2 is deliberately left false: HTTP/2 has no
+		// WebSocket Upgrade header (RFC 7540 8.1.2.2). A backend that wants
+		// gRPC or HTTP/2 configures its backend_url for h2c instead.
 		TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		},

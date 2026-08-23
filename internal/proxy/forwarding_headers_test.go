@@ -86,15 +86,15 @@ func TestForwarding_UntrustedPeerCannotSpoof(t *testing.T) {
 // client-then-CDN in order. X-Real-IP still names the client outright, which is
 // what saves a backend from having to recognise CDN address ranges.
 func TestForwarding_TrustedUpstreamPreservesChain(t *testing.T) {
-	got := proxyThrough(t, "172.70.248.207:443", "151.250.19.230", true, map[string]string{
-		"X-Forwarded-For": "151.250.19.230",
+	got := proxyThrough(t, "172.70.248.207:443", "203.0.113.7", true, map[string]string{
+		"X-Forwarded-For": "203.0.113.7",
 	})
 
-	const wantChain = "151.250.19.230, 172.70.248.207"
+	const wantChain = "203.0.113.7, 172.70.248.207"
 	if xff := got.Get("X-Forwarded-For"); xff != wantChain {
 		t.Errorf("X-Forwarded-For = %q, want %q", xff, wantChain)
 	}
-	if xri := got.Get("X-Real-IP"); xri != "151.250.19.230" {
+	if xri := got.Get("X-Real-IP"); xri != "203.0.113.7" {
 		t.Errorf("X-Real-IP = %q, want the resolved client, not the CDN edge", xri)
 	}
 }
@@ -114,7 +114,7 @@ func TestForwarding_TrustedUpstreamMultiHop(t *testing.T) {
 
 // A trusted upstream may legitimately report that it terminated TLS.
 func TestForwarding_TrustedUpstreamSchemeHonoured(t *testing.T) {
-	got := proxyThrough(t, "172.70.248.207:443", "151.250.19.230", true, map[string]string{
+	got := proxyThrough(t, "172.70.248.207:443", "203.0.113.7", true, map[string]string{
 		"X-Forwarded-Proto": "https",
 	})
 

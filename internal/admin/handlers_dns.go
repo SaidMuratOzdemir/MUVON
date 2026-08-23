@@ -178,9 +178,9 @@ func (s *Server) expectedHostIPs(ctx context.Context, host db.Host) ([]string, e
 		if ip := strings.TrimSpace(ag.PublicIP); ip != "" {
 			return []string{ip}, nil
 		}
-		// Legacy fallback: agent v0.1.13'ten önce kayıt olduysa public_ip
-		// rapor edilmemiş; last_remote_addr private network IP'si olabilir
-		// ama yine de operatöre bir şey göster.
+		// Legacy fallback: an agent enrolled before v0.1.13 never reported a
+		// public_ip. last_remote_addr may be a private network address, but
+		// showing the operator something beats showing nothing.
 		if ip := stripPort(strings.TrimSpace(ag.LastRemoteAddr)); ip != "" {
 			return []string{ip}, nil
 		}

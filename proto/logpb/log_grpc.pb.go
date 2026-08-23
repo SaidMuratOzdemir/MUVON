@@ -43,8 +43,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// LogService — diaLOG SIEM'in gRPC API'si.
-// MUVON proxy log entry'lerini bu servise gonderir.
+// LogService is diaLOG SIEM's gRPC API.
+// The MUVON proxy sends its log entries to this service.
 type LogServiceClient interface {
 	// SendEntry: tek bir log entry gonder (fire-and-forget).
 	SendEntry(ctx context.Context, in *LogEntry, opts ...grpc.CallOption) (*Ack, error)
@@ -310,8 +310,8 @@ func (c *logServiceClient) GetContainerLastLogAt(ctx context.Context, in *GetCon
 // All implementations must embed UnimplementedLogServiceServer
 // for forward compatibility.
 //
-// LogService — diaLOG SIEM'in gRPC API'si.
-// MUVON proxy log entry'lerini bu servise gonderir.
+// LogService is diaLOG SIEM's gRPC API.
+// The MUVON proxy sends its log entries to this service.
 type LogServiceServer interface {
 	// SendEntry: tek bir log entry gonder (fire-and-forget).
 	SendEntry(context.Context, *LogEntry) (*Ack, error)

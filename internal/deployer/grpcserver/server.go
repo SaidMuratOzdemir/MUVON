@@ -251,19 +251,17 @@ func (s *Server) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthRespo
 
 // --- SelfImageDigest ---
 //
-// Bu RPC her muvon-* container'ının çalışmakta olduğu image digest'ini
-// raporlar. Admin "yeni sürüm mevcut" karşılaştırması (running ↔ GHCR
-// latest) için kullanır. ContainerInspect baktığımız field: Image
-// (sha256:...). Eksik veya hatalı container'lar boş string olarak
-// dönmez — anahtar map'te yer almaz; çağıran tarafa lookup miss
-// semantiği.
+// This RPC reports the image digest each muvon-* container is running, which
+// the admin panel compares against the GHCR :latest digest. The field read out
+// of ContainerInspect is Image (sha256:...). A missing or failing container is
+// not reported as an empty string: its key is absent from the map, so the
+// caller sees a lookup miss.
 func (s *Server) SelfImageDigest(ctx context.Context, _ *pb.SelfImageDigestRequest) (*pb.SelfImageDigestResponse, error) {
 	out := &pb.SelfImageDigestResponse{Digests: make(map[string]string)}
-	// Compose-projeden gelen kanonik isimler (`muvon-<service>-1`). Sabit
-	// — compose project adı operatörün INSTALL_DIR'ına bağlı, ama
-	// muvon-deployer kendi container'ında olduğu için kendi adına bakar
-	// + hostname'i pattern olarak kullanırsak default proje adı düşer.
-	// Pragmatik liste: bilinen üç tane.
+	// The canonical compose names (`muvon-<service>-1`). This list is fixed:
+	// the compose project name follows the operator's INSTALL_DIR, and
+	// deriving it from this container's hostname would break as soon as the
+	// project is not named "muvon". Three known services, listed plainly.
 	for _, name := range []string{"muvon-muvon-1", "muvon-dialog-siem-1", "muvon-muvon-deployer-1"} {
 		key := strings.TrimSuffix(strings.TrimPrefix(name, "muvon-"), "-1")
 		if digest, err := s.docker.ContainerImageDigest(ctx, name); err == nil && digest != "" {

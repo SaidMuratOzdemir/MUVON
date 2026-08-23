@@ -129,7 +129,7 @@ func (s *Server) handleUpdateRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	req.ID = id
 
-	// Mevcut route'u al, eksik alanları doldur
+	// Load the current route and fill in whatever the request left out.
 	existing, err := s.db.GetRoute(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route not found"})

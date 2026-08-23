@@ -192,7 +192,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 		return
 	}
 
-	// Request header'larını kaydet
+	// Snapshot the request headers for the log pipeline.
 	reqHeaders := captureHeaders(r.Header)
 
 	// Trusted-proxy-aware client IP (used for rate limiting, logging).
@@ -203,9 +203,10 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	// so a validated CDN edge counts as trusted here too.
 	trustedUpstream := upstreamTrusted(r, hc.Host.TrustedProxies)
 
-	// Akıllı body yakalama:
-	// - GET/HEAD/OPTIONS/static route → body okuma (sadece header/path/IP gönder)
-	// - POST/PUT/PATCH → body oku (enableCapture limiti SIEM için)
+	// Body capture. The gate is the body itself, not the method: a request
+	// with no content length has nothing to read, which is why GET, HEAD and
+	// OPTIONS fall through with only headers, path and IP logged. maxBodySize
+	// bounds the SIEM copy alone.
 	var reqCapture *CapturedBody
 	if enableCapture {
 		var capErr error
@@ -274,7 +275,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	rp := &httputil.ReverseProxy{
 		Rewrite:       Rewrite(target, stripPrefix, routeSnapshot, ip, trustedUpstream),
 		Transport:     h.transport,
-		FlushInterval: -1, // SSE desteği: anında flush
+		FlushInterval: -1, // flush immediately, which is what SSE needs
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if hm != nil {
 				hm.RecordFailure(backend.URL)
@@ -297,7 +298,7 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 		hm.RecordSuccess(backend.URL)
 	}
 
-	// Log kaydı — route log_enabled=false ise pipeline'a gönderme
+	// Ship the log entry, unless the route has log_enabled=false.
 	if !route.Route.LogEnabled {
 		return
 	}

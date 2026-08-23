@@ -10,10 +10,10 @@ import { cn } from '@/lib/utils'
 import { UpgradeModal } from '@/components/UpgradeModal'
 
 /**
- * Settings → Sistem'in baş kartı. Çalışan sürüm vs GitHub'daki en yüksek
- * semver release. `update_available` semver karşılaştırmasından gelir
- * (digest değil — aynı commit'in main+tag push'ları farklı digest
- * üretir, digest karşılaştırması false-positive verirdi).
+ * The lead card under Settings, "Sistem": the running version against the
+ * highest semver release on GitHub. `update_available` comes from that semver
+ * comparison rather than a digest, because the same commit pushed to main and
+ * as a tag produces two digests and would read as an update every time.
  */
 export function SystemUpgradePanel() {
   const [running, setRunning] = useState<api.SystemVersion | null>(null)
