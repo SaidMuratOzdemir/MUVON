@@ -11,7 +11,33 @@ env:
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/muvon
 
 jobs:
+  # Gate: nothing is published unless this passes. The images are what
+  # operators upgrade to with one click, so a red test must stop the tag from
+  # ever existing rather than be noticed afterwards.
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      # -race because the hot paths here are concurrent (log pipelines, the
+      # config holder, the deploy loop) and a data race in them is exactly the
+      # kind of defect that only shows up under production load.
+      - name: go test
+        run: go test -race -count=1 ./...
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+
   build:
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,17 +65,16 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
-          # Üçlü-tier SemVer + commit-sha + branch tag matrisi:
-          # - v1.2.3 tag push'unda image'lar :1.2.3, :1.2, :1, :latest
-          #   olarak yayınlanır. Kullanıcı .env'de VERSION=v1.2.3
-          #   (patch-pin), VERSION=v1.2 (minor-pin) veya VERSION=latest
-          #   ile seçtiği konservatiflikte takipte kalabilir.
-          # - main push'unda yalnızca sha-XXXXXXX ve branch adı.
-          # :latest yalnızca v tag push'unda yenilenir. Main push'lar
-          # sadece :sha-XXX + :main üretir (dev artifact). Bu sayede
-          # GHCR'da :latest her zaman en son resmi release'e işaret eder
-          # ve aynı commit'in main+tag push'larından farklı digest çıksa
-          # bile UI doğru karşılaştırma yapar.
+          # Three-tier SemVer plus commit-sha and branch tags:
+          # - A v1.2.3 tag publishes :1.2.3, :1.2, :1 and :latest, so an
+          #   operator can pin VERSION=v1.2.3 (patch), VERSION=v1.2 (minor)
+          #   or VERSION=latest and stay as conservative as they want.
+          # - A main push produces only :sha-XXXXXXX and the branch name.
+          # :latest moves only on a v tag push. Main pushes stay dev
+          # artifacts, which keeps :latest pointing at the newest official
+          # release: the panel compares the running digest against it, and
+          # the same commit pushed to main and as a tag can otherwise
+          # produce two different digests.
           tags: |
             type=sha,prefix=sha-,format=short
             type=ref,event=branch
@@ -81,7 +106,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
-  # Tag push'ta GitHub Release otomatik oluştur
+  # A tag push also creates the GitHub Release
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
