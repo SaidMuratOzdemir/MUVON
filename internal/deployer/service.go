@@ -25,8 +25,7 @@ type Service struct {
 	// Only ever read/written from the single tick goroutine — no lock needed.
 	lastStaleReset time.Time
 	// secretBox decrypts the "enc:"-prefixed values in component env maps
-	// before they reach the container. Operates as passthrough when no
-	// MUVON_ENCRYPTION_KEY was configured (HasKey() == false).
+	// before they reach the container. Required, never nil.
 	secretBox *secret.Box
 	// onTick is called once per loop iteration. Optional — the binary
 	// uses this to keep the gRPC Health response fresh ("deployer is up
@@ -60,13 +59,11 @@ func (s *Service) SetOnTick(fn func()) { s.onTick = fn }
 // NewService wires the deployer lifecycle to a State backend. The central
 // deployer passes NewDBState(*db.DB, "") — direct PostgreSQL access. The
 // embedded edge deployer in cmd/agent passes an HTTP-backed state that
-// talks to the central admin server.
+// talks to the central admin server. secretBox must be non-nil; both
+// binaries fail to start without an encryption key.
 func NewService(state State, docker *DockerClient, secretBox *secret.Box, pollInterval time.Duration) *Service {
 	if pollInterval <= 0 {
 		pollInterval = 5 * time.Second
-	}
-	if secretBox == nil {
-		secretBox = secret.NewBox("")
 	}
 	return &Service{
 		state:        state,
@@ -857,9 +854,13 @@ func (s *Service) connectExtraNetworks(ctx context.Context, networks []string, c
 // attach time and reused when containers churn, so it must never be written into
 // configuration by hand. The deployer resolves it live and exposes it two ways:
 // as MUVON_EDGE_IP in the container env, and by substituting the literal
-// ${MUVON_EDGE_IP} token in any component env value. That lets an operator write
-// FORWARDED_ALLOW_IPS=${MUVON_EDGE_IP} (or the equivalent for their server) once
-// and have it stay correct across restarts, redeploys and reinstalls.
+// ${MUVON_EDGE_IP} token in any component env value, so a setting written once
+// stays correct across restarts, redeploys and reinstalls.
+//
+// The address is the gate an application uses before believing X-Real-IP, not a
+// trusted-proxy list for the app server's own forwarded-header handling: that
+// walks the XFF chain and picks the CDN edge when one is in front. See
+// docs/client-ip.md.
 //
 // Substitution is a literal token replace, not shell-style expansion, so secret
 // values that happen to contain "$" are never mangled.
@@ -943,14 +944,9 @@ func checkEdgeIPResolved(env map[string]string, cmd []string) error {
 	return nil
 }
 
-// applyEdgeIP publishes the resolved edge address as MUVON_EDGE_IP and resolves
-// ${MUVON_EDGE_IP} references in the remaining values. No-op when ip is empty, so
-// an unresolved placeholder stays visible instead of turning into an empty
-// allow-list that silently disables proxy trust.
-// applyEdgeIPToArgs resolves ${MUVON_EDGE_IP} inside a container command. App
-// servers often carry the trusted-proxy address as a command-line flag
-// (gunicorn's --forwarded-allow-ips), and there it overrides the environment
-// variable, so the token has to work in both places or the fix is incomplete.
+// applyEdgeIPToArgs resolves ${MUVON_EDGE_IP} inside a container command, since
+// a command-line flag overrides the same value in the environment and the token
+// has to work in both places or the fix is incomplete.
 func applyEdgeIPToArgs(args []string, ip string) []string {
 	if ip == "" || len(args) == 0 {
 		return args
@@ -962,6 +958,10 @@ func applyEdgeIPToArgs(args []string, ip string) []string {
 	return out
 }
 
+// applyEdgeIP publishes the resolved edge address as MUVON_EDGE_IP and resolves
+// ${MUVON_EDGE_IP} references in the remaining values. No-op when ip is empty, so
+// an unresolved placeholder stays visible instead of turning into an empty
+// allow-list that silently disables proxy trust.
 func applyEdgeIP(env map[string]string, ip string) {
 	if ip == "" {
 		return

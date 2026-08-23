@@ -26,9 +26,9 @@ func (s *Server) handleEnqueueAgentCommand(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing agent id"})
 		return
 	}
-	if s.agentSvc == nil || !s.agentSvc.HasCommandSigning() {
+	if s.agentSvc == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-			"error": "command channel disabled (MUVON_ENCRYPTION_KEY not set)",
+			"error": "agent service unavailable",
 		})
 		return
 	}

@@ -1,36 +1,36 @@
-# Agent makine: agent binary
-# Güncelleme:
+# Agent host: the agent binary
+# Update:
 #   docker compose -f docker-compose.agent.yml pull && \
 #   docker compose -f docker-compose.agent.yml up -d
 #
-# Veya: install-agent.sh tekrar koştur (idempotent).
+# Or re-run install-agent.sh, which is idempotent.
 
 services:
   agent:
     image: ghcr.io/saidmuratozdemir/muvon/agent:latest
     restart: unless-stopped
-    # Bu container aynı zamanda edge proxy. Deployer, backend container'larına
-    # MUVON_EDGE_IP olarak enjekte edeceği adresi bu etiketten bulur; uygulama
-    # env'inde FORWARDED_ALLOW_IPS=${MUVON_EDGE_IP} yazmak yeterli olur ve
-    # Docker adresi değiştirdiğinde ayar bozulmaz.
+    # This container is also the edge proxy. The label is how the deployer
+    # finds the address it injects into backend containers as MUVON_EDGE_IP.
+    # An application uses that address as the gate before trusting X-Real-IP;
+    # do not enable the server's own proxy-header handling (docs/client-ip.md).
     labels:
       muvon.role: edge
     ports:
       - "80:80"
       - "443:443"
-      # Deployer gRPC TCP — central'ın canlı container log tail için
-      # dial edeceği port. AGENT_DEPLOYER_TCP_BIND iki şekil alır:
+      # Deployer gRPC over TCP: the port central dials for live container
+      # log tail. AGENT_DEPLOYER_TCP_BIND takes two shapes:
       #
-      #   "<host>:9100"   — host-side bind tek interface'e. Önerilen:
-      #                     bir iç ağ adresi (provider private network,
-      #                     VPC subnet, VPN mesh interface — Tailscale,
-      #                     Wireguard, vs). Public yüzey sıfır.
-      #   "9100"          — tüm interface'lere (0.0.0.0:9100). Public
-      #                     IP'si olan host'ta provider firewall'unda
-      #                     yalnız merkez'in IP'sine 9100/tcp izin ver.
+      #   "<host>:9100"   host-side bind to a single interface. Preferred:
+      #                   an internal address (provider private network,
+      #                   VPC subnet, or a VPN mesh interface such as
+      #                   Tailscale or Wireguard). Zero public surface.
+      #   "9100"          bind to every interface (0.0.0.0:9100). On a host
+      #                   with a public IP, allow 9100/tcp only from
+      #                   central's address in the provider firewall.
       #
-      # Token doğrulaması (HKDF-türetilmiş bearer) zaten zorunlu,
-      # firewall sıkmasına gerek yok ama defansif derinlik tavsiye.
+      # Token verification (an HKDF-derived bearer) is mandatory either way,
+      # so a firewall is defence in depth rather than the only control.
       - "${AGENT_DEPLOYER_TCP_BIND:-9100}:9100"
     environment:
       AGENT_CENTRAL_URL: ${AGENT_CENTRAL_URL:?required}
@@ -48,8 +48,8 @@ services:
       MUVON_HOST_AGENT_DIR: ${MUVON_AGENT_DIR:-/opt/muvon-agent}
 
       # ── Fail-soft startup config cache ─────────────────────────────
-      # Central kesintisinde stale-but-working config ile başlar, arka
-      # planda yeniden bağlanır. Volume aşağıda mount edilmiş.
+      # During a central outage the agent starts from stale-but-working
+      # config and reconnects in the background. Volume mounted below.
       AGENT_CONFIG_CACHE: /var/lib/agent/config.json
 
       # ── Container log shipping (dockerwatch) ─────────────────────────
@@ -62,13 +62,16 @@ services:
       AGENT_DOCKERWATCH_MANAGED_ONLY: ${AGENT_DOCKERWATCH_MANAGED_ONLY:-false}
 
       # ── Embedded edge deployer (opt-in) ─────────────────────────────
-      # true yaparsan agent kendi `agent_id`'sine atanmış component'leri
-      # lokal Docker socket'i üstünden ayağa kaldırır (central deployer
-      # aynı kodu paylaşır — fark, state'in HTTP üzerinden tutulması).
-      # Aktif olması için:
-      #   1. /var/run/docker.sock RW olarak mount edilmeli (aşağıda)
-      #   2. AGENT_ENCRYPTION_KEY central'ın MUVON_ENCRYPTION_KEY'i ile
-      #      AYNI olmalı — yoksa secret env'ler decrypt edilemez.
+      # Set this to true and the agent brings up the components assigned to
+      # its own `agent_id` over the local Docker socket. It shares the
+      # central deployer's code; the difference is that state is kept over
+      # HTTP. To enable it:
+      #   1. mount /var/run/docker.sock read-write (below)
+      #   2. AGENT_ENCRYPTION_KEY must be IDENTICAL to central's
+      #      MUVON_ENCRYPTION_KEY. With the deployer on and the key empty
+      #      the agent refuses to start: a deployer that cannot decrypt
+      #      secret env would surface the mistake months later, inside a
+      #      deployment.
       AGENT_DEPLOYER_ENABLED: ${AGENT_DEPLOYER_ENABLED:-false}
       AGENT_DEPLOYER_POLL_MS: ${AGENT_DEPLOYER_POLL_MS:-5000}
       AGENT_ENCRYPTION_KEY: ${AGENT_ENCRYPTION_KEY:-}
@@ -89,35 +92,35 @@ services:
       - config_cache:/var/lib/agent              # fail-soft startup cache
 
       # ── Docker socket mount ──────────────────────────────────────────
-      # Mod seçimi:
-      #   :ro — yalnız dockerwatch (container log shipping). Agent
-      #          container start/stop yapamaz, sadece tail eder.
-      #   ""   — dockerwatch + embedded deployer (AGENT_DEPLOYER_ENABLED=true
-      #          için RW gerek; agent ImagePull/ContainerCreate/Start çağırır).
-      # install-agent.sh seçilen moda göre bu satırı doğru ekler.
+      # Pick a mode:
+      #   :ro   dockerwatch only (container log shipping). The agent can
+      #         tail containers but cannot start or stop them.
+      #   ""    dockerwatch plus the embedded deployer, which needs
+      #         read-write because it calls ImagePull, ContainerCreate
+      #         and ContainerStart.
+      # install-agent.sh writes the right line for the selected mode.
       #
       # - /var/run/docker.sock:/var/run/docker.sock:ro
 
-      # ── Registry credentials (private GHCR / Docker Hub) ─────────────
-      # Agent embedded-deployer modundayken (AGENT_DEPLOYER_ENABLED=true)
-      # ImagePull /images/create çağrısı yapar; X-Registry-Auth header'ı
-      # ~/.docker/config.json'dan okur. Container içinde bu dosya yoksa
-      # registry'ye anonymous gider, private image'lar 401 döner.
-      # Host'taki root config'i ro mount: install-agent.sh edge deployer
-      # enabled olduğunda bu satırı açar.
+      # ── Registry credentials (private GHCR or Docker Hub) ────────────
+      # With the embedded deployer on, ImagePull calls /images/create and
+      # reads the X-Registry-Auth header from ~/.docker/config.json. Without
+      # that file inside the container the pull goes anonymous and private
+      # images return 401. Mount the host's root config read-only;
+      # install-agent.sh uncomments this line when the edge deployer is
+      # enabled.
       #
       # - /root/.docker/config.json:/root/.docker/config.json:ro
 
       # ── Operator env files (deploy_components.env_file_path) ─────────
-      # Agent embedded-deployer komponentin env_file_path alanında yazan
-      # host yolundan dosyayı okur ve container'a env vars olarak inject
-      # eder (mount değil — dosya permission'ı container user'ı bağlamaz).
-      # Bunun için agent container'ının bu yolu görmesi gerek. Convention:
-      # tüm env file'ları /opt/envfiles/ altına koy; agent compose tek
-      # mount ile hepsine ro erişir. Central muvon-deployer'da aynı yapı
-      # zaten var (docker-compose.yml: muvon-deployer service).
-      # install-agent.sh edge deployer enabled olduğunda bu satırı açar
-      # ve /opt/envfiles dizinini oluşturur.
+      # The embedded deployer reads the file at the host path named by a
+      # component's env_file_path and injects its contents as env vars. It
+      # is not a mount, so file permissions do not bind the container user,
+      # but the agent container does need to see the path. Convention: keep
+      # every env file under /opt/envfiles/, which this compose reaches with
+      # one read-only mount. The central muvon-deployer has the same layout.
+      # install-agent.sh uncomments this line and creates the directory when
+      # the edge deployer is enabled.
       #
       # - /opt/envfiles:/opt/envfiles:ro
 

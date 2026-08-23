@@ -46,8 +46,7 @@ func NewService(database *db.DB, holder *config.Holder, broadcaster *Broadcaster
 
 // SetCommandSigningKey wires the HMAC key for the agent command
 // channel. Called at startup from cmd/muvon/main.go after deriving the
-// key from MUVON_ENCRYPTION_KEY. When the key is empty (operator never
-// set MUVON_ENCRYPTION_KEY) command endpoints refuse to enqueue.
+// key from MUVON_ENCRYPTION_KEY, which the binary requires.
 func (s *Service) SetCommandSigningKey(key []byte) {
 	s.signingKey = key
 }
@@ -55,12 +54,6 @@ func (s *Service) SetCommandSigningKey(key []byte) {
 // CommandBus exposes the in-memory wake bus so the admin handler can
 // notify agents after enqueuing a command in the same request.
 func (s *Service) CommandBus() *CommandBus { return s.commandBus }
-
-// HasCommandSigning reports whether the command channel is usable —
-// admin handlers gate POST /api/agents/:id/commands on this so we
-// don't enqueue rows the agent will never accept (signature verify
-// fails when key is empty).
-func (s *Service) HasCommandSigning() bool { return len(s.signingKey) > 0 }
 
 // SigningKey returns a copy of the HMAC key. Avoid leaking — only
 // the admin enqueue handler should call this.

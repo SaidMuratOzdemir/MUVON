@@ -80,12 +80,11 @@ func main() {
 		"poll_interval", pollInterval.String(),
 		"grpc_socket", *grpcSocket)
 
-	// Must match the key the admin server uses to encrypt secret env vars;
-	// otherwise components with secret-marked env values fail to start
-	// because the deployer can't decrypt them. Passthrough when unset.
-	secretBox := secret.NewBox(os.Getenv("MUVON_ENCRYPTION_KEY"))
-	if !secretBox.HasKey() {
-		slog.Warn("MUVON_ENCRYPTION_KEY not set — secret-marked env vars will be unreadable")
+	// Must match the key the admin server uses to encrypt secret env vars.
+	secretBox, err := secret.NewBox(os.Getenv("MUVON_ENCRYPTION_KEY"))
+	if err != nil {
+		slog.Error("MUVON_ENCRYPTION_KEY is required and must match central MUVON: without it secret-marked env vars cannot be decrypted and containers fail to start", "error", err)
+		os.Exit(1)
 	}
 
 	service := deployer.NewService(deployer.NewDBState(database, ""), dockerClient, secretBox, *pollInterval)

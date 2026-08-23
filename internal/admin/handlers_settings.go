@@ -71,7 +71,7 @@ func (s *Server) handleUpdateSetting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Encrypt secret values before persisting to DB
-	if secretKeys[key] && s.secretBox.HasKey() {
+	if secretKeys[key] {
 		var plainVal string
 		if json.Unmarshal(req.Value, &plainVal) == nil && plainVal != "" {
 			encrypted, err := s.secretBox.Encrypt(plainVal)
@@ -150,7 +150,7 @@ func (s *Server) handleUploadCert(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Domain = strings.ToLower(strings.TrimSpace(req.Domain))
 
-	// Sertifikayı parse edip son kullanma tarihini bul
+	// Parse the certificate and read its expiry.
 	certBytes := []byte(req.CertPEM)
 	keyBytes := []byte(req.KeyPEM)
 

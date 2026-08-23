@@ -18,43 +18,37 @@ var (
 	ErrShortCipher = errors.New("secret: ciphertext too short")
 )
 
-// Box performs AES-256-GCM encryption and decryption.
-// A zero-value Box (empty key) is valid — Encrypt/Decrypt become no-ops
-// for backward compatibility with deployments that haven't set a key yet.
+// Box performs AES-256-GCM encryption and decryption. A Box always holds a
+// key: there is no passthrough mode. One used to exist, and it turned a
+// missing MUVON_ENCRYPTION_KEY into secrets written to the database in the
+// clear while the panel kept masking them, so the operator saw "********"
+// over a readable row. A service that cannot encrypt now refuses to start
+// instead.
 type Box struct {
 	key [32]byte
-	ok  bool // true if a real key was provided
 }
 
-// NewBox derives a 256-bit key from the provided passphrase using SHA-256.
-// If passphrase is empty, the Box operates in passthrough mode.
-func NewBox(passphrase string) *Box {
-	b := &Box{}
+// NewBox derives a 256-bit key from the passphrase using SHA-256. An empty
+// passphrase is an error the caller is expected to treat as fatal.
+//
+// No minimum length is enforced. The key is not recoverable from anything
+// else, so rejecting a short one at startup would lock an operator out of
+// data that key already encrypted.
+func NewBox(passphrase string) (*Box, error) {
 	if passphrase == "" {
-		return b
+		return nil, ErrNoKey
 	}
-	b.key = sha256.Sum256([]byte(passphrase))
-	b.ok = true
-	return b
+	return &Box{key: sha256.Sum256([]byte(passphrase))}, nil
 }
 
-// HasKey reports whether an encryption key is configured.
-func (b *Box) HasKey() bool {
-	return b.ok
-}
-
-// Encrypt encrypts plaintext and returns "enc:" + base64(nonce + ciphertext).
-// If no key is configured, returns plaintext unchanged.
+// Encrypt returns "enc:" + base64(nonce + ciphertext). An empty input stays
+// empty: there is nothing to protect and callers store it as "unset".
 func (b *Box) Encrypt(plaintext string) (string, error) {
-	if !b.ok || plaintext == "" {
+	if plaintext == "" {
 		return plaintext, nil
 	}
 
-	block, err := aes.NewCipher(b.key[:])
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := b.gcm()
 	if err != nil {
 		return "", err
 	}
@@ -68,31 +62,20 @@ func (b *Box) Encrypt(plaintext string) (string, error) {
 	return encPrefix + base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// Decrypt decrypts a value. If the value doesn't have the "enc:" prefix,
-// it's treated as legacy plaintext and returned as-is.
-// If no key is configured but the value is encrypted, returns empty string.
+// Decrypt reverses Encrypt. A value without the "enc:" prefix was never
+// encrypted (an env var the operator did not mark secret, or a row written
+// before the key existed) and is returned unchanged.
 func (b *Box) Decrypt(value string) (string, error) {
 	if !strings.HasPrefix(value, encPrefix) {
-		// Legacy plaintext — return as-is
 		return value, nil
 	}
 
-	if !b.ok {
-		// Encrypted value but no key configured
-		return "", ErrNoKey
-	}
-
-	encoded := value[len(encPrefix):]
-	data, err := base64.StdEncoding.DecodeString(encoded)
+	data, err := base64.StdEncoding.DecodeString(value[len(encPrefix):])
 	if err != nil {
 		return "", ErrDecrypt
 	}
 
-	block, err := aes.NewCipher(b.key[:])
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
+	gcm, err := b.gcm()
 	if err != nil {
 		return "", err
 	}
@@ -107,6 +90,14 @@ func (b *Box) Decrypt(value string) (string, error) {
 		return "", ErrDecrypt
 	}
 	return string(plaintext), nil
+}
+
+func (b *Box) gcm() (cipher.AEAD, error) {
+	block, err := aes.NewCipher(b.key[:])
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
 }
 
 // IsEncrypted reports whether the value carries the "enc:" prefix.

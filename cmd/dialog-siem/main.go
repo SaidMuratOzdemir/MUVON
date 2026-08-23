@@ -84,7 +84,11 @@ func main() {
 	}
 
 	// Config holder — for alerting settings
-	box := secret.NewBox(*encryptionKey)
+	box, err := secret.NewBox(*encryptionKey)
+	if err != nil {
+		slog.Error("MUVON_ENCRYPTION_KEY is required: alerting settings such as the SMTP password are stored encrypted", "error", err)
+		os.Exit(1)
+	}
 	dbSrc := config.NewDBSource(database, box)
 	ch := config.NewHolder(dbSrc, box)
 	if err := ch.Init(ctx); err != nil {

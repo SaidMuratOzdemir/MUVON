@@ -39,14 +39,18 @@ import (
 	_ "time/tzdata"
 )
 
+// minJWTSecretLen matches what install.sh generates (openssl rand -hex 32)
+// and what .env.example asks for.
+const minJWTSecretLen = 32
+
 func main() {
 	var (
 		dsn                  = flag.String("dsn", envOr("MUVON_DSN", "postgres://dialog:dialog@localhost:5432/dialog?sslmode=disable"), "PostgreSQL connection string")
 		httpAddr             = flag.String("http", envOr("MUVON_HTTP_ADDR", ":80"), "HTTP listen address")
 		httpsAddr            = flag.String("https", envOr("MUVON_HTTPS_ADDR", ":443"), "HTTPS listen address")
-		adminAddr            = flag.String("admin", envOr("MUVON_ADMIN_ADDR", ":9443"), "Admin API listen address (used only when admin-domain is not set)")
-		adminDomain          = flag.String("admin-domain", envOr("MUVON_ADMIN_DOMAIN", ""), "Serve admin panel on this domain via :443 (e.g. muvon.example.com). When set, :9443 is not started.")
-		jwtSecret            = flag.String("jwt-secret", envOr("MUVON_JWT_SECRET", "change-me-in-production"), "JWT signing secret")
+		adminAddr            = flag.String("admin", envOr("MUVON_ADMIN_ADDR", ":9443"), "Admin API listen address. Always started, plain HTTP; restrict it at the network layer (compose publishes it on 127.0.0.1 only)")
+		adminDomain          = flag.String("admin-domain", envOr("MUVON_ADMIN_DOMAIN", ""), "Additionally serve the admin panel on this domain via :443 (e.g. muvon.example.com)")
+		jwtSecret            = flag.String("jwt-secret", envOr("MUVON_JWT_SECRET", ""), "JWT signing secret for admin sessions; required, at least 32 characters")
 		logSocket            = flag.String("log-socket", envOr("MUVON_LOG_SOCKET", "/tmp/dialog.sock"), "diaLOG Unix socket path")
 		deployerSocket       = flag.String("deployer-socket", envOr("MUVON_DEPLOYER_SOCKET", "/run/muvon/deployer.sock"), "muvon-deployer Unix socket path (live container introspection + log tail)")
 		logLevel             = flag.String("log-level", envOr("MUVON_LOG_LEVEL", "info"), "Log level")
@@ -65,6 +69,16 @@ func main() {
 		return
 	}
 	setupLogger(*logLevel)
+
+	// An admin session is a signed cookie, so a guessable signing secret is a
+	// login bypass. There is no default to fall back to: 32 characters is what
+	// the installer generates and what the sample env documents.
+	if len(*jwtSecret) < minJWTSecretLen {
+		slog.Error("MUVON_JWT_SECRET is required and must be at least 32 characters",
+			"have_length", len(*jwtSecret),
+			"generate_with", "openssl rand -hex 32")
+		os.Exit(1)
+	}
 
 	slog.Info("MUVON starting",
 		"version", version.String(),
@@ -99,7 +113,11 @@ func main() {
 	}
 
 	// Config
-	box := secret.NewBox(*encryptionKey)
+	box, err := secret.NewBox(*encryptionKey)
+	if err != nil {
+		slog.Error("MUVON_ENCRYPTION_KEY is required: it encrypts secret settings and component env values, and seeds the agent command signing key", "error", err)
+		os.Exit(1)
+	}
 	dbSrc := config.NewDBSource(database, box)
 	ch := config.NewHolder(dbSrc, box)
 	if err := ch.Init(ctx); err != nil {
@@ -111,16 +129,14 @@ func main() {
 	// the central → agent command channel.
 	agentBroadcaster := agentsvc.NewBroadcaster()
 	agentSvc := agentsvc.NewService(database, ch, agentBroadcaster)
-	if *encryptionKey != "" {
-		// HMAC key for the agent command channel. Empty
-		// MUVON_ENCRYPTION_KEY = command channel disabled (admin
-		// endpoint returns 503 with a clear error).
-		if key, err := agentctrl.DeriveSigningKey(*encryptionKey); err == nil {
-			agentSvc.SetCommandSigningKey(key)
-		} else {
-			slog.Warn("agent command signing disabled", "error", err)
-		}
+	// HMAC key for the agent command channel, derived from the same
+	// encryption key the secret box uses.
+	signingKey, err := agentctrl.DeriveSigningKey(*encryptionKey)
+	if err != nil {
+		slog.Error("agent command signing key derivation failed", "error", err)
+		os.Exit(1)
 	}
+	agentSvc.SetCommandSigningKey(signingKey)
 	// Whenever config reloads, push to all connected agents
 	ch.OnReload(func(_ *config.Config) {
 		agentBroadcaster.Broadcast()
@@ -263,7 +279,8 @@ func main() {
 	adminSrv.StartRefreshTokenCleanup(ctx, time.Hour)
 
 	// Router — main reverse proxy handler
-	// If adminDomain is set, admin panel is served on :443 for that domain; :9443 is not started.
+	// If adminDomain is set, the admin panel is also served on :443 for that
+	// domain. The :9443 listener still runs: the upgrade flow polls it locally.
 	// Central terminates only hosts bound with target_kind="central" — the
 	// proxy returns 421 for anything else so misdirected traffic is loud.
 	rt := router.New(ch, logSink, transport, hm, database, frontendFS, *adminDomain, adminSrv.Handler(), "central", "")

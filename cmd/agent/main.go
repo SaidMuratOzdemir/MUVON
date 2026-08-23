@@ -263,9 +263,13 @@ func main() {
 			slog.Warn("deployer: enabled but docker socket unreachable; staying disabled")
 		} else {
 			apiState := deployer.NewAPIState(*centralURL, *apiKey)
-			deploySecret := secret.NewBox(*deployEncKey)
-			if !deploySecret.HasKey() {
-				slog.Warn("deployer: AGENT_ENCRYPTION_KEY not set — secret-marked env vars will be unreadable on this agent")
+			// Fatal rather than "run without decryption": the operator asked
+			// for the edge deployer, and one that cannot read secret env
+			// values would fail deployments later instead of at startup.
+			deploySecret, err := secret.NewBox(*deployEncKey)
+			if err != nil {
+				slog.Error("deployer: AGENT_ENCRYPTION_KEY is required when AGENT_DEPLOYER_ENABLED=true and must equal central's MUVON_ENCRYPTION_KEY", "error", err)
+				os.Exit(1)
 			}
 			pollInterval := time.Duration(*deployPollMs) * time.Millisecond
 			deploySvc := deployer.NewService(apiState, dockerCli, deploySecret, pollInterval)

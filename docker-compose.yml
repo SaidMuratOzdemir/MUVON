@@ -1,6 +1,6 @@
-# MUVON Ana Makine Stack
-# Kurulum: ./install.sh  veya  cp .env.example .env && docker compose up -d
-# Güncelleme: docker compose pull && docker compose up -d
+# MUVON central host stack
+# Install: ./install.sh, or cp .env.example .env && docker compose up -d
+# Update:  docker compose pull && docker compose up -d
 
 services:
   # ── PostgreSQL (ParadeDB + TimescaleDB + pg_uuidv7) ─────────────────────
@@ -52,7 +52,7 @@ services:
       DIALOG_SOCKET: /run/muvon/dialog.sock
       DIALOG_TCP_ADDR: ":9001"
       DIALOG_LOG_LEVEL: ${LOG_LEVEL:-info}
-      MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:-}
+      MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:?MUVON_ENCRYPTION_KEY is required}
     volumes:
       - sockets:/run/muvon
     logging:
@@ -69,9 +69,9 @@ services:
       args:
         SERVICE: muvon
     restart: unless-stopped
-    # Central'da proxy (muvon) ile deployer ayrı container'lar. Deployer,
-    # backend'lere MUVON_EDGE_IP olarak enjekte edeceği adresi bu etiketten
-    # bulur.
+    # On central the proxy (muvon) and the deployer are separate containers.
+    # This label is how the deployer finds the address it injects into
+    # backends as MUVON_EDGE_IP.
     labels:
       muvon.role: edge
     user: root
@@ -93,7 +93,7 @@ services:
     environment:
       MUVON_DSN: "postgres://muvon:${POSTGRES_PASSWORD}@postgres:5432/muvon?sslmode=disable"
       MUVON_JWT_SECRET: ${MUVON_JWT_SECRET:?MUVON_JWT_SECRET is required}
-      MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:-}
+      MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:?MUVON_ENCRYPTION_KEY is required}
       MUVON_LOG_LEVEL: ${LOG_LEVEL:-info}
       MUVON_ADMIN_DOMAIN: ${MUVON_ADMIN_DOMAIN:?MUVON_ADMIN_DOMAIN is required}
       MUVON_LOG_SOCKET: /run/muvon/dialog.sock
@@ -130,6 +130,9 @@ services:
       MUVON_DOCKER_HOST: "unix:///var/run/docker.sock"
       MUVON_DEPLOYER_POLL_INTERVAL: ${MUVON_DEPLOYER_POLL_INTERVAL:-5s}
       MUVON_LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Same key as muvon and dialog-siem: the deployer decrypts secret-marked
+      # component env values at container start and cannot do it without this.
+      MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:?MUVON_ENCRYPTION_KEY is required}
       # Container introspection / live tail gRPC surface — admin
       # gateway dials this Unix socket on the shared sockets volume.
       MUVON_DEPLOYER_SOCKET: /run/muvon/deployer.sock
@@ -156,13 +159,13 @@ services:
       # dialog-siem outage spanning a deployer restart does not lose
       # the queued lines.
       - logship_spool:/var/lib/muvon/logship
-      # Host MUVON dir (compose + .env) — Settings → Sistem güncelleme
-      # akışı için. SystemUpgrade RPC bu mount üzerinden .env'in
-      # VERSION satırını yazar ve `docker:cli` helper container'ı
-      # compose dosyasını okuyarak pull+recreate eder.
+      # The host's MUVON directory (compose + .env), needed by the upgrade
+      # flow: the SystemUpgrade RPC writes the VERSION line in .env through
+      # this mount, and the `docker:cli` helper container reads the compose
+      # file to pull and recreate.
       - /opt/muvon:/host/muvon:rw
-      # Backup target — pg_dump çıktıları buraya yazılır, /opt/muvon/
-      # üzerinden host'tan da görünür.
+      # Backup target: pg_dump output lands here and is visible from the
+      # host under /opt/muvon/.
       - backups:/var/lib/muvon/backups
     networks:
       - default
