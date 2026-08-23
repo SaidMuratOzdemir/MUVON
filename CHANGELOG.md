@@ -76,12 +76,32 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ### ENHANCEMENTS
 
+- **Log aramasının maliyeti düştü.** Arama sorgusu artık her satır için
+  `request_headers` ve `response_headers` JSONB'lerini çekmiyor; liste yanıtı
+  bu alanları zaten taşımıyordu, detay ucu tek satır için getiriyor. Ayrıca
+  her aramada koşan tam `COUNT(*)` 10.000'de tavanlandı: eşleşen her satırı
+  saymak sayfa sorgusu kadar maliyetliydi ve saklama süresiyle birlikte
+  büyüyordu. Panel tavana ulaşıldığında sayıyı `10.000+` olarak gösteriyor.
 - `internal/secret` paketi için test kapsamı eklendi: round-trip, yanlış
   anahtar, kırpılmış ciphertext, boş passphrase.
 - Oturum kabul kuralı `sessionAccepted` olarak ayrıldı ve tablo testine bağlandı.
+- Zaman sınırı doğrulaması `validTimeBound` olarak ayrıldı ve teste bağlandı.
 
 ### BUGFIXES
 
+- **Panelde tarih aralığı seçmek artık gerçekten çalışıyor.** Tarih alanları
+  `datetime-local` biçimi üretiyor (`2026-08-23T14:30`), API ise katı RFC3339
+  bekliyor ve ayrıştırma hatasını yutuyordu; sonuç olarak seçilen aralık
+  sessizce hiç uygulanmıyordu. Panel değeri artık RFC3339'a çevirerek
+  gönderiyor, API de çevrilemeyen bir değeri sessizce düşürmek yerine 400 ile
+  reddediyor.
+- **Serbest metin aramasının zaman penceresi görünür oldu.** Aralık
+  seçilmediğinde arama son 7 günle sınırlıdır (sıkıştırılmış chunk'larda
+  trigram indeksleri devreye girmez). Bu kısıt daha önce yalnız sunucuda
+  uygulanıyor ve hiçbir yerde yazmıyordu, dolayısıyla daha eski bir kaydı
+  arayan operatör sebebini bilmeden "sonuç yok" görüyordu. Panel artık
+  pencereyi bir bantta gösteriyor ve tek tıkla 30 veya 90 güne genişletmeyi
+  öneriyor.
 - **Dokümantasyon kodla hizalandı.** Sağlık ucu `/health` (auth'suz olan tek
   uç), diaLOG'un TCP bayrağı `-tcp-addr`, log araması pg_trgm `ILIKE`,
   `:latest` yalnız `v*` tag push'unda yayınlanıyor ve GHCR yolu tümüyle küçük

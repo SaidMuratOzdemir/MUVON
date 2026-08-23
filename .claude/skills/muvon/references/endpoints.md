@@ -43,7 +43,7 @@ Every authenticated request re-reads the user row and compares `token_version`, 
 
 | Method | Path | Note |
 |---|---|---|
-| GET | `/api/logs` | Filters: `host`, `status`, `method`, `path`, `q` (free text, trigram `ILIKE`), `since`, `until`, `limit`, `cursor` |
+| GET | `/api/logs` | Filters: `host`, `path`, `method`, `client_ip`, `user`, `q` (or `search`; free text, trigram `ILIKE`), `status_min`, `status_max`, `from`, `to`, `starred`, `response_time_min`, `response_time_max`, `limit`, `offset`. **There is no `since`, `until` or `status` parameter**: times are absolute RFC3339 in `from`/`to`, and a status range needs `status_min` plus `status_max`. Unknown parameters are ignored silently, so a typo returns unfiltered results rather than an error |
 | GET | `/api/logs/stats` | Aggregations |
 | GET | `/api/logs/stream` | **SSE**, `text/event-stream`. Use EventSource or `curl -N` |
 | GET | `/api/logs/{id}` | One log with bodies |
@@ -51,7 +51,14 @@ Every authenticated request re-reads the user row and compares `token_version`, 
 | POST | `/api/logs/{id}/star` | Toggle star |
 | GET | `/api/logs/{id}/jwt` | Raw JWT (audit-logged) |
 
-Handy queries look like `/api/logs?limit=10&status=500&since=1h`.
+A handy query looks like
+`/api/logs?limit=20&status_min=500&from=2026-08-23T09:00:00Z`.
+
+**Free text narrows itself to seven days.** When `q` is set and `from` is
+empty, the server silently restricts the search to the last seven days,
+because trigram indexes stop helping once a chunk is compressed. Nothing in
+the response says so, so an empty result does not mean "not found": pass an
+explicit `from` before concluding anything.
 
 ## Container logs
 
@@ -133,7 +140,7 @@ Command state machine: `pending → dispatched → succeeded|failed|expired`. A 
 
 | Method | Path | Note |
 |---|---|---|
-| GET | `/api/audit` | `?limit=N&cursor=...` |
+| GET | `/api/audit` | `?limit=N&offset=N` |
 
 **Warning**: the audit log does not currently distinguish an agent from a human admin (`admin_user: admin` for both). See the discipline section in SKILL.md.
 

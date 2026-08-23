@@ -6,7 +6,7 @@ So that "we have a problem with X" has a starting point.
 
 ```
 1. Ask for the time window (last N minutes or hours).
-2. GET /api/logs?host=<x>&status=500&since=<N>&limit=20
+2. GET /api/logs?host=<x>&status_min=500&from=<RFC3339>&limit=20
    → collect the top error paths.
 3. GET /api/logs/{id} → look at the response body (the backend's own message).
 4. GET /api/deploy/deployments?slug=<component>&limit=5 → was there a deploy inside
@@ -150,7 +150,7 @@ Then confirm with `GET /api/system/stats` that uptime did not reset: a reload re
 ## 8) "Unusual traffic, possibly an attack"
 
 ```
-1. GET /api/logs?status=403&since=15m → a 403 spike?
+1. GET /api/logs?status_min=403&status_max=403&from=<RFC3339> → a 403 spike?
 2. GET /api/alerts → any auth_brute_force or error_spike alerts?
 3. /api/logs?q=.env or /api/logs?path=.env → bot scanning
 4. Top talkers straight from the DB (with SSH):
@@ -278,6 +278,6 @@ There are two separate layers. Do not conflate them:
 
 - **Start with a narrow window** (the last 15 minutes). Slow queries and huge responses waste everyone's time.
 - **No more than five endpoint calls before stopping to think.** Collect, reason, then continue.
-- Report every finding **with its source**: "GET /api/logs?status=500&since=1h → 47 rows, top path /api/auth".
+- Report every finding **with its source**: "GET /api/logs?status_min=500&from=2026-08-23T09:00:00Z → 47 rows, top path /api/auth".
 - When you meet a field you do not recognise: `Read internal/db/migrations.go` and grep.
 - Stay honest about uncertainty: report to the user, propose an action, and **let them approve it**.
