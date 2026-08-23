@@ -13,7 +13,7 @@ COPY ui/ ./
 RUN npm run build
 
 # ── Stage 2: Build Go binary ───────────────────────────────────────────────
-FROM golang:1.24-alpine AS go-builder
+FROM golang:1.25-alpine AS go-builder
 ARG SERVICE
 # Version + commit SHA are injected at build time so `binary --version`
 # reports a real release string instead of the "dev" fallback. CI

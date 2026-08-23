@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-MUVON is an edge gateway, security observability, and deploy platform composed of four independent Go services that share a single PostgreSQL 18 instance. The Go module is `muvon`, Go 1.24, Node.js 22 for the UI.
+MUVON is an edge gateway, security observability, and deploy platform composed of four independent Go services that share a single PostgreSQL 18 instance. The Go module is `muvon`, Go 1.25, Node.js 22 for the UI.
 
 | Binary (`cmd/`) | Role |
 |---|---|
@@ -132,6 +132,7 @@ Pipeline sizing (`log_pipeline_buffer`, `log_worker_count`, `log_batch_size`, `l
 
 - **Go module name is `muvon`** — all internal imports are `muvon/internal/...`, never rewrite as relative.
 - **`CGO_ENABLED=0`** for all builds (see Makefile + Dockerfile). Do not introduce CGo dependencies without discussion — the roadmap's ONNX integration is the one planned exception.
+- **`go.mod` pins a `toolchain`, and the pin is a security floor.** The CI gate runs `govulncheck`, which reports against the standard library of whichever toolchain built the code, so a `go` directive alone would leave the version CI installs open to interpretation and a patched stdlib to chance. Raise the pin when a standard-library advisory lands; do not remove it. `Dockerfile` and the `Go 1.25+` line in `README.md` track the same floor.
 - **Unix sockets over TCP** for inter-service IPC. Adding a new inter-service call: prefer a gRPC service in `proto/` + a `grpcclient`/`grpcserver` pair under `internal/<service>/` mirroring `logger`.
 - **Fail-open behavior is load-bearing.** When adding a new dependency on diaLOG in the MUVON proxy path, the call must not block traffic on socket failure — log and continue.
 - **Selective body capture**: the gate in `CaptureRequestBody` is the body itself, not the method. A request is captured when `Content-Length` is non-zero and the content type is not in the skip list (`multipart/form-data`, `application/octet-stream`, `image/`, `video/`, `audio/`, zip, gzip, pdf). GET and HEAD fall out of this naturally because they arrive without a body, but a GET or DELETE that does carry one is captured. Keep it that way: don't add a method allow-list, and don't add body inspection to paths that have no body to read.

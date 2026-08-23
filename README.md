@@ -77,7 +77,7 @@ Each service is a standalone binary with its own database schema. They share a s
 
 ### Prerequisites
 
-- **Go 1.24+**
+- **Go 1.25+**
 - **Node.js 22+** (to build the admin panel)
 - **Docker** (for the postgres container) or an external PostgreSQL 18+
 - PostgreSQL extensions, all expected in `public`:
