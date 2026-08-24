@@ -58,8 +58,55 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
+  # Two tests cover what unit tests cannot reach: a pg_dump taken through the
+  # exec stream that really restores, and retention statements applied to a
+  # real Timescale job catalog. Both skip themselves without their env var, so
+  # without this job they exist and never run. No UI build here: neither
+  # package pulls in the root package's embedded SPA.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start databases
+        run: |
+          docker run -d --name muvon-it-pg \
+            -e POSTGRES_PASSWORD=test -e POSTGRES_DB=muvon -e POSTGRES_USER=muvon \
+            postgres:18-alpine
+          docker run -d --name muvon-it-ts \
+            -e POSTGRES_PASSWORD=test -e POSTGRES_DB=muvon -e POSTGRES_USER=muvon \
+            -p 55432:5432 timescale/timescaledb:latest-pg17
+          for _ in $(seq 1 60); do
+            if docker exec muvon-it-pg pg_isready -U muvon -d muvon >/dev/null 2>&1 \
+               && docker exec muvon-it-ts pg_isready -U muvon -d muvon >/dev/null 2>&1; then
+              echo "both ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "databases did not become ready in time" >&2
+          docker logs --tail 20 muvon-it-pg >&2 || true
+          docker logs --tail 20 muvon-it-ts >&2 || true
+          exit 1
+
+      # Asserts the dump carries its newlines and that pg_restore accepts it.
+      - name: Backup restores
+        env:
+          MUVON_TEST_PG_CONTAINER: muvon-it-pg
+        run: go test ./internal/deployer -run TestContainerExecStreamProducesRestorableDump -v
+
+      - name: Retention reaches the job catalog
+        env:
+          MUVON_TEST_PG_DSN: postgres://muvon:test@localhost:55432/muvon?sslmode=disable
+        run: go test ./internal/db -run TestApplyRetentionAgainstTimescale -v
+
   build:
-    needs: verify
+    needs: [verify, integration]
     runs-on: ubuntu-latest
     permissions:
       contents: read
