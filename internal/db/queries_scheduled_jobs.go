@@ -78,9 +78,6 @@ func scanScheduledJob(scan func(...any) error) (ScheduledJob, error) {
 	return j, nil
 }
 
-const scheduledJobRunSelectCols = `id, job_id, COALESCE(agent_id, ''), status, trigger,
-	exit_code, scheduled_for, started_at, finished_at, error, output, created_at`
-
 func scanScheduledJobRun(scan func(...any) error) (ScheduledJobRun, error) {
 	var run ScheduledJobRun
 	err := scan(

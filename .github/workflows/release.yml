@@ -50,6 +50,11 @@ jobs:
       - name: go test
         run: go test -race -count=1 ./...
 
+      # Pinned like govulncheck: an unpinned linter turns an unrelated release
+      # into a red build the day it gains a check.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@2025.1.1 ./...
+
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 

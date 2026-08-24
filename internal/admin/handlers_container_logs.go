@@ -16,17 +16,6 @@ import (
 	pb "muvon/proto/logpb"
 )
 
-// requireDeployer returns true when the deployer gRPC client is wired.
-// Live tail + live container picker need the deployer; history search
-// does not.
-func (s *Server) requireDeployer(w http.ResponseWriter) bool {
-	if s.deployerClient == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "muvon-deployer service unavailable"})
-		return false
-	}
-	return true
-}
-
 // handleListContainers merges:
 //   - live state from muvon-deployer (running containers right now)
 //   - historical dimension rows from diaLOG (containers we have ever

@@ -94,18 +94,6 @@ func (b *upgradeBroker) subscribe() (history []*pb.UpgradeEvent, ch <-chan *pb.U
 	return history, c, true
 }
 
-func (b *upgradeBroker) waitDone() <-chan struct{} {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.done == nil {
-		// No upgrade running; closed channel signals "nothing to wait for".
-		closed := make(chan struct{})
-		close(closed)
-		return closed
-	}
-	return b.done
-}
-
 // handleSystemUpgrade kicks off an upgrade. Returns immediately with
 // 202 + the stream URL. The actual work runs in a background goroutine
 // that talks to muvon-deployer over gRPC.

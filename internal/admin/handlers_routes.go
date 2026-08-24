@@ -10,8 +10,6 @@ import (
 	"muvon/internal/db"
 )
 
-var rewritePatternValid = regexp.MustCompile(`^$|^[^\x00-\x1f]*$`)
-
 func routeError(err error) string {
 	s := err.Error()
 	if strings.Contains(s, "duplicate") || strings.Contains(s, "unique") {

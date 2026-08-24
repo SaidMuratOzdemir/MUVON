@@ -224,22 +224,6 @@ func fetchLatestDigest(ctx context.Context, service, tag string) (digest string,
 	return d, nil
 }
 
-// runningImageDigest tries to extract the digest of the image the muvon
-// container is currently running. Best-effort: we ask the deployer
-// gRPC client (which already has Docker socket access) for the muvon
-// container's image ID. When the deployer is unreachable we return ""
-// — the UI degrades gracefully ("update_available" becomes "unknown").
-func (s *Server) runningImageDigest(ctx context.Context) string {
-	if s.deployerClient == nil {
-		return ""
-	}
-	d, err := s.deployerClient.SelfImageDigest(ctx)
-	if err != nil {
-		return ""
-	}
-	return d
-}
-
 func (s *Server) handleSystemVersionLatest(w http.ResponseWriter, r *http.Request) {
 	runningTag := version.Version
 
