@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -41,20 +42,20 @@ func main() {
 		// defaults because container stdout volume is typically a
 		// fraction of HTTP traffic (and we'd rather pay an extra worker
 		// later than burn DB connections for nothing).
-		cBufSize   = flag.Int("container-buffer", intEnvOr("DIALOG_CONTAINER_BUFFER", 10000), "Container log pipeline buffer size")
-		cWorkers   = flag.Int("container-workers", intEnvOr("DIALOG_CONTAINER_WORKERS", 2), "Container log pipeline worker count")
-		cBatch     = flag.Int("container-batch", intEnvOr("DIALOG_CONTAINER_BATCH", 1000), "Container log pipeline batch size")
-		cFlushMs   = flag.Int("container-flush-ms", intEnvOr("DIALOG_CONTAINER_FLUSH_MS", 2000), "Container log pipeline flush interval (ms)")
+		cBufSize               = flag.Int("container-buffer", intEnvOr("DIALOG_CONTAINER_BUFFER", 10000), "Container log pipeline buffer size")
+		cWorkers               = flag.Int("container-workers", intEnvOr("DIALOG_CONTAINER_WORKERS", 2), "Container log pipeline worker count")
+		cBatch                 = flag.Int("container-batch", intEnvOr("DIALOG_CONTAINER_BATCH", 1000), "Container log pipeline batch size")
+		cFlushMs               = flag.Int("container-flush-ms", intEnvOr("DIALOG_CONTAINER_FLUSH_MS", 2000), "Container log pipeline flush interval (ms)")
 		containerIngestEnabled = flag.Bool("container-ingest", boolEnvOr("DIALOG_CONTAINER_INGEST", true), "Enable container log ingest pipeline")
 
-		ceBufSize  = flag.Int("client-event-buffer", intEnvOr("DIALOG_CLIENT_EVENT_BUFFER", 10000), "Client event pipeline buffer size")
-		ceWorkers  = flag.Int("client-event-workers", intEnvOr("DIALOG_CLIENT_EVENT_WORKERS", 2), "Client event pipeline worker count")
-		ceBatch    = flag.Int("client-event-batch", intEnvOr("DIALOG_CLIENT_EVENT_BATCH", 1000), "Client event pipeline batch size")
-		ceFlushMs  = flag.Int("client-event-flush-ms", intEnvOr("DIALOG_CLIENT_EVENT_FLUSH_MS", 2000), "Client event pipeline flush interval (ms)")
+		ceBufSize                = flag.Int("client-event-buffer", intEnvOr("DIALOG_CLIENT_EVENT_BUFFER", 10000), "Client event pipeline buffer size")
+		ceWorkers                = flag.Int("client-event-workers", intEnvOr("DIALOG_CLIENT_EVENT_WORKERS", 2), "Client event pipeline worker count")
+		ceBatch                  = flag.Int("client-event-batch", intEnvOr("DIALOG_CLIENT_EVENT_BATCH", 1000), "Client event pipeline batch size")
+		ceFlushMs                = flag.Int("client-event-flush-ms", intEnvOr("DIALOG_CLIENT_EVENT_FLUSH_MS", 2000), "Client event pipeline flush interval (ms)")
 		clientEventIngestEnabled = flag.Bool("client-event-ingest", boolEnvOr("DIALOG_CLIENT_EVENT_INGEST", true), "Enable client event (RUM) ingest pipeline")
-		logLevel      = flag.String("log-level", envOr("DIALOG_LOG_LEVEL", "info"), "Log level")
-		encryptionKey = flag.String("encryption-key", envOr("MUVON_ENCRYPTION_KEY", ""), "AES-256-GCM encryption key for secrets in DB")
-		showVersion   = flag.Bool("version", false, "Print version and exit")
+		logLevel                 = flag.String("log-level", envOr("DIALOG_LOG_LEVEL", "info"), "Log level")
+		encryptionKey            = flag.String("encryption-key", envOr("MUVON_ENCRYPTION_KEY", ""), "AES-256-GCM encryption key for secrets in DB")
+		showVersion              = flag.Bool("version", false, "Print version and exit")
 	)
 	flag.Parse()
 	if *showVersion {
@@ -122,6 +123,7 @@ func main() {
 	// install the initial policy (if_not_exists), so without this loop the
 	// panel value is decoration.
 	go runRetentionReconciler(ctx, database, ch)
+	go runCompressionReconciler(ctx, database, ch)
 
 	// Pipeline sizing. log_pipeline_buffer, log_worker_count, log_batch_size
 	// and log_flush_interval_ms are seeded into the settings table and parsed
@@ -594,4 +596,102 @@ func runRetentionReconciler(ctx context.Context, database *db.DB, ch *config.Hol
 		case <-ticker.C:
 		}
 	}
+}
+
+// runCompressionReconciler keeps the Timescale compression policies in step
+// with the settings, the same way retention is reconciled: the panel value is
+// the truth and the job catalog is made to match it.
+//
+// The window matters beyond disk. A compressed chunk cannot use the trigram
+// indexes, so the uncompressed window is also the window where searching paths
+// and bodies stays indexed. That is why bodies carry their own value.
+func runCompressionReconciler(ctx context.Context, database *db.DB, ch *config.Holder) {
+	const (
+		pollInterval = 5 * time.Second
+		fullInterval = 5 * time.Minute
+	)
+
+	applied := map[string]int{}
+	warned := ""
+	var lastFull time.Time
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		if cfg := ch.Get(); cfg != nil {
+			want := desiredCompression(cfg.Global.CompressionDays, cfg.Global.CompressionBodiesDays)
+			bad := outOfRangeCompression(want)
+			switch {
+			case bad != "":
+				// Refuse rather than clamp, for the reason retention does:
+				// enforcing a window other than the one on screen is the bug.
+				if bad != warned {
+					slog.Warn("compression setting out of range, leaving policies untouched",
+						"detail", bad, "max", db.MaxCompressionDays)
+					warned = bad
+				}
+			case !sameCompression(want, applied) || time.Since(lastFull) >= fullInterval:
+				changed, err := database.ApplyCompression(ctx, want)
+				if err != nil {
+					slog.Error("compression policy apply failed", "error", err)
+					break
+				}
+				applied = want
+				warned = ""
+				lastFull = time.Now()
+				if len(changed) > 0 {
+					slog.Info("compression policy updated",
+						"days", cfg.Global.CompressionDays,
+						"bodies_days", cfg.Global.CompressionBodiesDays,
+						"tables", changed)
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// desiredCompression maps the two settings onto the tables they govern.
+func desiredCompression(days, bodiesDays int) map[string]int {
+	want := make(map[string]int, len(db.CompressionTables))
+	for _, t := range db.CompressionTables {
+		if t == db.BodiesTable {
+			want[t] = bodiesDays
+			continue
+		}
+		want[t] = days
+	}
+	return want
+}
+
+func outOfRangeCompression(want map[string]int) string {
+	tables := make([]string, 0, len(want))
+	for t := range want {
+		tables = append(tables, t)
+	}
+	sort.Strings(tables)
+	for _, t := range tables {
+		if d := want[t]; d < 0 || d > db.MaxCompressionDays {
+			return fmt.Sprintf("%s=%d", t, d)
+		}
+	}
+	return ""
+}
+
+func sameCompression(a, b map[string]int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }

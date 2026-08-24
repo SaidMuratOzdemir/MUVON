@@ -50,15 +50,22 @@ type RouteRule struct {
 }
 
 type GlobalConfig struct {
-	RetentionDays      int
-	MaxBodyCaptureSize int
-	LogPipelineBuffer  int
-	LogBatchSize       int
-	LogFlushIntervalMs int
-	LogWorkerCount     int
-	EnableBodyCapture  bool
-	LetsEncryptStaging bool
-	LetsEncryptEmail   string
+	RetentionDays int
+	// CompressionDays is how old a chunk gets before Timescale turns it
+	// columnar. CompressionBodiesDays is the same knob for http_log_bodies,
+	// separate because compressing that table is what stops body search from
+	// using its trigram indexes. 0 means the policy is removed and new chunks
+	// stay uncompressed.
+	CompressionDays       int
+	CompressionBodiesDays int
+	MaxBodyCaptureSize    int
+	LogPipelineBuffer     int
+	LogBatchSize          int
+	LogFlushIntervalMs    int
+	LogWorkerCount        int
+	EnableBodyCapture     bool
+	LetsEncryptStaging    bool
+	LetsEncryptEmail      string
 
 	// Browser telemetry (RUM) — served to clients at /__muvon/rum/config so
 	// the edge controls overall sampling and beacon size centrally.
@@ -70,7 +77,6 @@ type GlobalConfig struct {
 	JWTIdentityMode    string   // "verify" or "decode"
 	JWTClaims          []string // claim keys to extract
 	JWTSecret          string   // HS256 secret (write-only in UI)
-
 
 	// Alerting settings
 	AlertingEnabled         bool
@@ -192,17 +198,21 @@ func loadGlobalConfig(ctx context.Context, database *db.DB, box *secret.Box) (Gl
 	}
 
 	g := GlobalConfig{
-		RetentionDays:      30,
-		MaxBodyCaptureSize: 65536,
-		LogPipelineBuffer:  10000,
-		LogBatchSize:       1000,
-		LogFlushIntervalMs: 2000,
-		LogWorkerCount:     4,
-		EnableBodyCapture:  true,
-		LetsEncryptStaging: false,
+		RetentionDays:         30,
+		CompressionDays:       7,
+		CompressionBodiesDays: 7,
+		MaxBodyCaptureSize:    65536,
+		LogPipelineBuffer:     10000,
+		LogBatchSize:          1000,
+		LogFlushIntervalMs:    2000,
+		LogWorkerCount:        4,
+		EnableBodyCapture:     true,
+		LetsEncryptStaging:    false,
 	}
 
 	g.RetentionDays = getIntSetting(settings, "retention_days", g.RetentionDays)
+	g.CompressionDays = getIntSetting(settings, "compression_days", g.CompressionDays)
+	g.CompressionBodiesDays = getIntSetting(settings, "compression_bodies_days", g.CompressionBodiesDays)
 	g.MaxBodyCaptureSize = getIntSetting(settings, "max_body_capture_size", g.MaxBodyCaptureSize)
 	g.LogPipelineBuffer = getIntSetting(settings, "log_pipeline_buffer", g.LogPipelineBuffer)
 	g.LogBatchSize = getIntSetting(settings, "log_batch_size", g.LogBatchSize)

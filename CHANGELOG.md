@@ -23,6 +23,33 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+### FEATURES
+
+- **Sıkıştırma penceresi artık panelden yönetiliyor.** İki yeni ayar geldi:
+  `compression_days` her log hypertable'ı için, `compression_bodies_days` ise
+  yakalanan gövdeler için. diaLOG bunları retention ile aynı şekilde Timescale
+  iş kataloğuna uyguluyor, yani panelde yazan değer gerçekten uygulanan
+  değerdir. Ayarlar bölümündeki rozetler her tablo için uygulanan süreyi ve
+  kaç chunk'ın sıkıştırıldığını gösteriyor.
+
+  İkisinin ayrı olmasının sebebi ölçülebilir: sıkıştırılmış bir chunk GIN
+  indeksini kullanamaz, dolayısıyla sıkıştırılmamış pencere aynı zamanda
+  trigram aramasının indeksli kaldığı penceredir. Gövde tablosu hem en büyük
+  olan hem de arama sırasında yoklanan tablo olduğu için kendi değerini
+  taşıyor: bu değeri büyütmek gövde aramasını daha geriye kadar hızlı tutar,
+  karşılığında disk kullanır.
+
+  Varsayılanlar mevcut davranışla aynı (ikisi de 7 gün), yani yükseltme tek
+  başına hiçbir şeyi değiştirmiyor. `0` politikayı kaldırır: yeni chunk'lar
+  sıkıştırılmadan kalır, hâlihazırda sıkıştırılmış veri olduğu gibi durur.
+  Hiçbir yol veriyi geri açmaz.
+
+### ENHANCEMENTS
+
+- **Ayarlar ekranı Türkçeleştirildi.** Panel yüzeyinin dili tek dosyada
+  karışık kalmasın diye `Settings.tsx` içindeki tüm başlıklar, alan adları ve
+  açıklamalar Türkçeye çevrildi. Kod yorumları İngilizce kaldı.
+
 ## [0.3.1] - 2026-08-24
 
 ### SECURITY

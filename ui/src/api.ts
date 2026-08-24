@@ -1029,6 +1029,29 @@ export async function getRetentionStatus(): Promise<RetentionStatus> {
   return request<RetentionStatus>("GET", "/api/system/retention")
 }
 
+export interface CompressionPolicy {
+  table: string
+  job_id?: number
+  days: number
+  has_policy: boolean
+  next_run?: string
+  chunks: number
+  compressed_chunks: number
+}
+
+export interface CompressionStatus {
+  setting_days: number
+  setting_bodies_days: number
+  policies: CompressionPolicy[] | null
+  in_sync: boolean
+  unavailable?: boolean
+  error?: string
+}
+
+export async function getCompressionStatus(): Promise<CompressionStatus> {
+  return request<CompressionStatus>("GET", "/api/system/compression")
+}
+
 export async function getSystemVersion(): Promise<SystemVersion> {
   return request<SystemVersion>("GET", "/api/system/version")
 }

@@ -1351,4 +1351,17 @@ EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'pg_search left in place: %', SQLERRM;
 END $$;`,
 	},
+	// Compression used to be whatever the migrations installed, which meant the
+	// panel could not answer "how far back is search still indexed" without an
+	// operator reading the job catalog. These two seed the setting the
+	// reconciler enforces. They carry the value the migrations already used, so
+	// applying them changes nothing until an operator moves them.
+	{
+		name: "seed_compression_settings", product: "muvon",
+		sql: `
+INSERT INTO settings (key, value) VALUES
+    ('compression_days',        '7'),
+    ('compression_bodies_days', '7')
+ON CONFLICT (key) DO NOTHING;`,
+	},
 }

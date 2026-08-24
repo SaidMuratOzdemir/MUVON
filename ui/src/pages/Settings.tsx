@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Save, RefreshCw, Loader2, HardDrive, Shield,
   Activity, AlertTriangle, Check, KeyRound, Bell,
-  Mail, Send, Radar, Lock, AlertOctagon, FileKey, Download,
+  Mail, Send, Radar, Lock, AlertOctagon, FileKey, Download, Archive,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -33,7 +33,7 @@ interface SettingGroup {
   // extra renders a group-specific panel under the fields. Retention uses it
   // to show what Timescale actually enforces, so the input box can never
   // again imply a policy that is not installed.
-  extra?: 'retention'
+  extra?: 'retention' | 'compression'
   // testAction adds a "Send Test" button to groups that configure outbound
   // notifications (Slack / SMTP). The button fires the corresponding
   // /api/alerting/test/* endpoint and toasts the result.
@@ -42,56 +42,80 @@ interface SettingGroup {
 
 const SETTING_GROUPS: SettingGroup[] = [
   {
-    title: 'Log Retention',
+    title: 'Log Saklama',
     icon: HardDrive,
     extra: 'retention',
     settings: [
       {
         key: 'retention_days',
-        label: 'Retention Period',
-        description: 'How long diaLOG keeps HTTP logs, captured bodies, container logs, client events and alerts. Lowering it deletes everything outside the new window within a day, permanently: chunks are dropped, not archived. 0 keeps data forever and lets the disk grow without bound.',
+        label: 'Saklama Süresi',
+        description: "diaLOG'un HTTP loglarını, yakalanan gövdeleri, container loglarını, istemci olaylarını ve alarmları ne kadar süre tuttuğu. Düşürmek, yeni pencerenin dışında kalan her şeyi bir gün içinde kalıcı olarak siler: chunk'lar arşivlenmez, düşürülür. 0 veriyi sonsuza kadar tutar ve diskin sınırsız büyümesine izin verir.",
         type: 'number',
         placeholder: '30',
-        unit: 'days',
+        unit: 'gün',
       },
     ],
   },
   {
-    title: 'Proxy Behavior',
+    title: 'Sıkıştırma',
+    icon: Archive,
+    extra: 'compression',
+    description: "Bir chunk kaç gün sonra sütunlu biçime çevrilsin. Sıkıştırma diski belirgin şekilde küçültür, ama sıkıştırılmış bir chunk trigram indeksini kullanamaz: sıkıştırılmamış pencere aynı zamanda aramanın indeksli kaldığı penceredir.",
+    settings: [
+      {
+        key: 'compression_days',
+        label: 'Sıkıştırma Süresi',
+        description: "HTTP logları, container logları, istemci olayları ve alarmlar için geçerlidir. 0 politikayı kaldırır ve yeni chunk'lar sıkıştırılmadan kalır; hâlihazırda sıkıştırılmış veriyi geri açmaz.",
+        type: 'number',
+        placeholder: '7',
+        unit: 'gün',
+      },
+      {
+        key: 'compression_bodies_days',
+        label: 'Gövde Sıkıştırma Süresi',
+        description: "Yakalanan istek ve yanıt gövdeleri için ayrı tutulur, çünkü gövde aramasının indeksini devre dışı bırakan şey tam olarak bu tablonun sıkıştırılmasıdır. Büyütmek gövde aramasını daha geriye kadar hızlı tutar, karşılığı disktir.",
+        type: 'number',
+        placeholder: '7',
+        unit: 'gün',
+      },
+    ],
+  },
+  {
+    title: 'Proxy Davranışı',
     icon: Activity,
     settings: [
       {
         key: 'enable_body_capture',
-        label: 'Capture Bodies',
-        description: 'Store request and response bodies in SIEM log detail',
+        label: 'Gövdeleri Yakala',
+        description: 'İstek ve yanıt gövdelerini SIEM log detayında sakla',
         type: 'boolean',
       },
       {
         key: 'max_body_capture_size',
-        label: 'Max Captured Body',
-        description: 'Maximum bytes captured per request or response body in SIEM logs',
+        label: 'Azami Gövde Boyutu',
+        description: 'SIEM loglarında istek veya yanıt gövdesi başına yakalanan azami bayt',
         type: 'number',
         placeholder: '65536',
-        unit: 'bytes',
+        unit: 'bayt',
       },
     ],
   },
   {
-    title: 'Client Telemetry (RUM)',
+    title: 'İstemci Telemetrisi (RUM)',
     icon: Radar,
-    description: 'Served to browsers from /__muvon/rum/config and pushed to agents. Only hosts with RUM enabled load the script at all.',
+    description: 'Tarayıcılara /__muvon/rum/config adresinden sunulur ve agentlara iletilir. Betiği yalnızca RUM açık olan hostlar yükler.',
     settings: [
       {
         key: 'rum_sample_rate',
-        label: 'Sample Rate',
-        description: 'Fraction of browser sessions that report telemetry, between 0 and 1. 1 sends everything; 0.1 keeps a tenth. Values outside that range are treated as 1.',
+        label: 'Örnekleme Oranı',
+        description: 'Telemetri gönderen tarayıcı oturumlarının oranı, 0 ile 1 arasında. 1 her şeyi gönderir, 0,1 onda birini tutar. Aralık dışındaki değerler 1 sayılır.',
         type: 'string',
         placeholder: '1',
       },
       {
         key: 'rum_max_batch_bytes',
-        label: 'Max Beacon Size',
-        description: 'Cap on a single browser beacon. Larger batches are split by the client library.',
+        label: 'Azami Beacon Boyutu',
+        description: 'Tek bir tarayıcı beacon\'ının üst sınırı. Daha büyük yığınları istemci kütüphanesi böler.',
         type: 'number',
         placeholder: '65536',
         unit: 'bytes',
@@ -104,124 +128,124 @@ const SETTING_GROUPS: SettingGroup[] = [
     settings: [
       {
         key: 'letsencrypt_email',
-        label: 'ACME Email',
-        description: "Email address for Let's Encrypt certificate notifications",
+        label: 'ACME E-postası',
+        description: "Let's Encrypt sertifika bildirimleri için e-posta adresi",
         type: 'string',
         placeholder: 'admin@example.com',
       },
       {
         key: 'letsencrypt_staging',
-        label: 'ACME Staging Mode',
-        description: "Use Let's Encrypt staging environment (for testing only)",
+        label: 'ACME Staging Modu',
+        description: "Let's Encrypt staging ortamını kullan (yalnızca test için)",
         type: 'boolean',
       },
     ],
   },
   {
-    title: 'JWT Identity',
+    title: 'JWT Kimliği',
     icon: KeyRound,
     settings: [
       {
         key: 'jwt_identity_enabled',
-        label: 'Enable JWT Identity',
-        description: 'Extract user identity from JWT tokens in Authorization header',
+        label: 'JWT Kimliğini Aç',
+        description: 'Authorization başlığındaki JWT tokenlarından kullanıcı kimliğini çıkar',
         type: 'boolean',
       },
       {
         key: 'jwt_identity_mode',
-        label: 'JWT Mode',
-        description: 'verify = validate signature first, decode = extract claims without verification',
+        label: 'JWT Modu',
+        description: 'verify = önce imzayı doğrula, decode = doğrulamadan claim çıkar',
         type: 'string',
         placeholder: 'verify',
       },
       {
         key: 'jwt_claims',
-        label: 'JWT Claims',
-        description: 'Comma-separated list of JWT claim keys to extract (e.g. sub,email,name,role)',
+        label: 'JWT Claim Listesi',
+        description: 'Çıkarılacak JWT claim anahtarları, virgülle ayrılmış (örn. sub,email,name,role)',
         type: 'string',
         placeholder: 'sub,email,name,role',
       },
       {
         key: 'jwt_secret',
         label: 'JWT Secret',
-        description: 'HS256 HMAC secret for JWT verification (write-only, not displayed after save)',
+        description: 'JWT doğrulaması için HS256 HMAC secret (yalnızca yazılır, kaydedildikten sonra gösterilmez)',
         type: 'password',
-        placeholder: 'Enter JWT secret',
+        placeholder: 'JWT secret girin',
       },
     ],
   },
   {
-    title: 'Alerting (Slack)',
+    title: 'Alarm (Slack)',
     icon: Bell,
     testAction: 'slack',
     settings: [
       {
         key: 'alerting_enabled',
-        label: 'Enable Alerting',
-        description: 'Send notifications when correlation rules detect anomalies',
+        label: 'Alarmları Aç',
+        description: 'Korelasyon kuralları anomali yakaladığında bildirim gönder',
         type: 'boolean',
       },
       {
         key: 'alerting_cooldown_seconds',
-        label: 'Cooldown',
-        description: 'Minimum seconds between alerts with the same fingerprint',
+        label: 'Bekleme Süresi',
+        description: 'Aynı parmak izine sahip alarmlar arasındaki asgari süre',
         type: 'number',
         placeholder: '300',
-        unit: 'sec',
+        unit: 'sn',
       },
       {
         key: 'alerting_slack_webhook',
-        label: 'Slack Webhook URL',
-        description: 'Slack incoming webhook URL for alert notifications',
+        label: 'Slack Webhook Adresi',
+        description: 'Alarm bildirimleri için Slack incoming webhook adresi',
         type: 'string',
         placeholder: 'https://hooks.slack.com/services/...',
       },
     ],
   },
   {
-    title: 'Email (SMTP)',
+    title: 'E-posta (SMTP)',
     icon: Mail,
     testAction: 'smtp',
     settings: [
       {
         key: 'alerting_smtp_host',
-        label: 'SMTP Host',
-        description: 'SMTP server hostname',
+        label: 'SMTP Sunucusu',
+        description: 'SMTP sunucusunun adı',
         type: 'string',
         placeholder: 'smtp.example.com',
       },
       {
         key: 'alerting_smtp_port',
-        label: 'SMTP Port',
-        description: 'SMTP server port (587 for STARTTLS, 465 for implicit TLS)',
+        label: 'SMTP Portu',
+        description: 'SMTP sunucu portu (STARTTLS için 587, örtük TLS için 465)',
         type: 'number',
         placeholder: '587',
       },
       {
         key: 'alerting_smtp_username',
-        label: 'SMTP Username',
-        description: 'SMTP authentication username',
+        label: 'SMTP Kullanıcı Adı',
+        description: 'SMTP kimlik doğrulama kullanıcı adı',
         type: 'string',
         placeholder: 'alerts@example.com',
       },
       {
         key: 'alerting_smtp_password',
-        label: 'SMTP Password',
-        description: 'SMTP authentication password (write-only, not displayed after save)',
+        label: 'SMTP Parolası',
+        description: 'SMTP kimlik doğrulama parolası (yalnızca yazılır, kaydedildikten sonra gösterilmez)',
         type: 'password',
-        placeholder: 'Enter SMTP password',
+        placeholder: 'SMTP parolası girin',
       },
       {
         key: 'alerting_smtp_from',
-        label: 'From Address',
-        description: 'Sender email address for alert notifications',
+        label: 'Gönderen Adresi',
+        description: 'Alarm bildirimlerinin gönderen e-posta adresi',
         type: 'string',
         placeholder: 'alerts@example.com',
       },
       {
         key: 'alerting_smtp_to',
-        label: 'To Address(es)',
-        description: 'Comma-separated recipient email addresses',
+        label: 'Alıcı Adresleri',
+        description: 'Virgülle ayrılmış alıcı e-posta adresleri',
         type: 'string',
         placeholder: 'team@example.com',
       },
@@ -232,63 +256,63 @@ const SETTING_GROUPS: SettingGroup[] = [
   // and path lists stay next to the rule they describe. Defaults ship with
   // the DB migration; these fields let ops tune per-app without a restart.
   {
-    title: 'Path Scan Detection',
+    title: 'Yol Tarama Tespiti',
     icon: Radar,
-    description: 'Alerts when a single IP hits N distinct 404 paths in the window. Classic scanner behaviour.',
+    description: 'Tek bir IP pencere içinde N farklı 404 yoluna dokunduğunda alarm üretir. Klasik tarayıcı davranışı.',
     settings: [
-      { key: 'correlation_path_scan_distinct', label: 'Distinct Paths', description: 'How many different 404 URLs an IP must touch to trip the rule.', type: 'number', placeholder: '10' },
-      { key: 'correlation_path_scan_window_seconds', label: 'Window', description: 'Rolling window size for the counter.', type: 'number', placeholder: '120', unit: 'sec' },
+      { key: 'correlation_path_scan_distinct', label: 'Farklı Yol Sayısı', description: 'Kuralın tetiklenmesi için bir IP\'nin dokunması gereken farklı 404 adresi sayısı.', type: 'number', placeholder: '10' },
+      { key: 'correlation_path_scan_window_seconds', label: 'Pencere', description: 'Sayacın kayan pencere boyutu.', type: 'number', placeholder: '120', unit: 'sn' },
     ],
   },
   {
-    title: 'Auth Brute Force',
+    title: 'Kimlik Doğrulama Kaba Kuvvet',
     icon: Lock,
-    description: 'Counts auth failures per IP. 401/403 always count; 400 counts only on login endpoints (Django/simplejwt emit 400 on bad credentials).',
+    description: 'IP başına kimlik doğrulama hatalarını sayar. 401 ve 403 her zaman sayılır, 400 yalnızca giriş uçlarında sayılır (Django ve simplejwt hatalı bilgide 400 döner).',
     settings: [
-      { key: 'correlation_auth_brute_count', label: 'Failure Count', description: 'Failures needed to fire the alert.', type: 'number', placeholder: '5' },
-      { key: 'correlation_auth_brute_window_seconds', label: 'Window', description: 'Rolling window size.', type: 'number', placeholder: '120', unit: 'sec' },
-      { key: 'correlation_auth_paths', label: 'Login Paths', description: 'Comma-separated login endpoint paths (exact match, trailing-slash insensitive). 400 on any of these counts as an auth failure.', type: 'string', placeholder: '/api/auth/login,/api/authentication/login/' },
+      { key: 'correlation_auth_brute_count', label: 'Hata Sayısı', description: 'Alarmın üretilmesi için gereken hata sayısı.', type: 'number', placeholder: '5' },
+      { key: 'correlation_auth_brute_window_seconds', label: 'Pencere', description: 'Kayan pencere boyutu.', type: 'number', placeholder: '120', unit: 'sn' },
+      { key: 'correlation_auth_paths', label: 'Giriş Yolları', description: 'Virgülle ayrılmış giriş ucu yolları (tam eşleşme, sondaki eğik çizgi önemsiz). Bunlardan birinde dönen 400, kimlik doğrulama hatası sayılır.', type: 'string', placeholder: '/api/auth/login,/api/authentication/login/' },
     ],
   },
   {
-    title: '5xx Error Spike',
+    title: '5xx Hata Sıçraması',
     icon: AlertOctagon,
-    description: 'Per-host 5xx counter. Fires once, then falls under the alert cooldown so outages do not flood Slack.',
+    description: 'Host başına 5xx sayacı. Bir kez tetiklenir, sonra alarm bekleme süresine düşer, böylece kesintiler Slack\'i doldurmaz.',
     settings: [
-      { key: 'correlation_error_spike_count', label: '5xx Count', description: 'Server errors needed to fire.', type: 'number', placeholder: '10' },
-      { key: 'correlation_error_spike_window_seconds', label: 'Window', description: 'Rolling window size.', type: 'number', placeholder: '60', unit: 'sec' },
+      { key: 'correlation_error_spike_count', label: '5xx Sayısı', description: 'Tetiklenme için gereken sunucu hatası sayısı.', type: 'number', placeholder: '10' },
+      { key: 'correlation_error_spike_window_seconds', label: 'Pencere', description: 'Kayan pencere boyutu.', type: 'number', placeholder: '60', unit: 'sn' },
     ],
   },
   {
-    title: 'Traffic Anomaly',
+    title: 'Trafik Anomalisi',
     icon: Activity,
-    description: 'Per-host current-RPS vs baseline-RPS. Useful for detecting sudden traffic bursts on low-to-medium-traffic hosts.',
+    description: 'Host başına anlık RPS ile taban RPS karşılaştırması. Düşük ve orta trafikli hostlarda ani sıçramaları yakalamak için kullanışlıdır.',
     settings: [
-      { key: 'correlation_anomaly_enabled', label: 'Enable', description: 'Turn the anomaly rule on/off without losing its thresholds.', type: 'boolean' },
-      { key: 'correlation_anomaly_ratio', label: 'Ratio Threshold', description: 'Current RPS must exceed baseline RPS by this factor to fire.', type: 'string', placeholder: '3.0' },
-      { key: 'correlation_anomaly_baseline_seconds', label: 'Baseline Window', description: 'Length of the rolling baseline (the non-current portion is used for the average).', type: 'number', placeholder: '600', unit: 'sec' },
-      { key: 'correlation_anomaly_current_seconds', label: 'Current Window', description: 'Recent interval compared against the baseline.', type: 'number', placeholder: '60', unit: 'sec' },
-      { key: 'correlation_anomaly_min_baseline', label: 'Min Baseline Events', description: 'Hosts with fewer than this many baseline events are skipped so tiny hosts do not trip easily.', type: 'number', placeholder: '20' },
+      { key: 'correlation_anomaly_enabled', label: 'Açık', description: 'Eşiklerini kaybetmeden anomali kuralını açıp kapatır.', type: 'boolean' },
+      { key: 'correlation_anomaly_ratio', label: 'Oran Eşiği', description: 'Tetiklenme için anlık RPS\'in taban RPS\'i bu katsayı kadar aşması gerekir.', type: 'string', placeholder: '3.0' },
+      { key: 'correlation_anomaly_baseline_seconds', label: 'Taban Penceresi', description: 'Kayan taban penceresinin uzunluğu (ortalama için anlık olmayan kısım kullanılır).', type: 'number', placeholder: '600', unit: 'sn' },
+      { key: 'correlation_anomaly_current_seconds', label: 'Anlık Pencere', description: 'Tabanla karşılaştırılan yakın aralık.', type: 'number', placeholder: '60', unit: 'sn' },
+      { key: 'correlation_anomaly_min_baseline', label: 'Asgari Taban Olayı', description: 'Taban olayı bu sayının altında kalan hostlar atlanır, böylece küçük hostlar kolayca tetiklenmez.', type: 'number', placeholder: '20' },
     ],
   },
   {
-    title: 'Sensitive Access',
+    title: 'Hassas Erişim',
     icon: FileKey,
-    description: 'Fires when too many requests land on configured high-value paths from the same IP. Leave paths empty to disable the rule.',
+    description: 'Aynı IP\'den tanımlı kritik yollara çok sayıda istek gelince tetiklenir. Yolları boş bırakmak kuralı kapatır.',
     settings: [
-      { key: 'correlation_sensitive_paths', label: 'Paths', description: 'Comma-separated glob patterns (use * for a single segment). E.g. /api/applications/*/generate_pdf_report/', type: 'string', placeholder: '/api/applications/*/generate_pdf_report/' },
-      { key: 'correlation_sensitive_threshold', label: 'Threshold', description: 'Hits within the window to fire.', type: 'number', placeholder: '10' },
-      { key: 'correlation_sensitive_window_seconds', label: 'Window', description: 'Rolling window size.', type: 'number', placeholder: '300', unit: 'sec' },
+      { key: 'correlation_sensitive_paths', label: 'Yollar', description: 'Virgülle ayrılmış glob desenleri (tek segment için * kullanın). Örn. /api/applications/*/generate_pdf_report/', type: 'string', placeholder: '/api/applications/*/generate_pdf_report/' },
+      { key: 'correlation_sensitive_threshold', label: 'Eşik', description: 'Tetiklenme için pencere içindeki isabet sayısı.', type: 'number', placeholder: '10' },
+      { key: 'correlation_sensitive_window_seconds', label: 'Pencere', description: 'Kayan pencere boyutu.', type: 'number', placeholder: '300', unit: 'sn' },
     ],
   },
   {
-    title: 'Data Export Burst',
+    title: 'Veri Dışa Aktarma Sıçraması',
     icon: Download,
-    description: 'Per-user export/download volume. Keyed by JWT identity (sub/user_id/email), falling back to IP. Rotating IPs do not split an insider footprint.',
+    description: 'Kullanıcı başına dışa aktarma ve indirme hacmi. JWT kimliğine göre gruplanır (sub, user_id, email), yoksa IP kullanılır. IP değiştirmek içeriden gelen izi bölmez.',
     settings: [
-      { key: 'correlation_export_pattern', label: 'URL Pattern', description: 'Case-insensitive regex (Go syntax). Paths that match this pattern count toward the burst.', type: 'string', placeholder: '(?i)(download|export|report|\\.pdf|\\.xlsx|\\.csv)' },
-      { key: 'correlation_export_threshold', label: 'Threshold', description: 'Matching requests within the window to fire.', type: 'number', placeholder: '5' },
-      { key: 'correlation_export_window_seconds', label: 'Window', description: 'Rolling window size.', type: 'number', placeholder: '300', unit: 'sec' },
+      { key: 'correlation_export_pattern', label: 'Adres Deseni', description: 'Büyük küçük harf duyarsız regex (Go söz dizimi). Bu desene uyan yollar sıçrama sayımına dahil olur.', type: 'string', placeholder: '(?i)(download|export|report|\\.pdf|\\.xlsx|\\.csv)' },
+      { key: 'correlation_export_threshold', label: 'Eşik', description: 'Tetiklenme için pencere içindeki eşleşen istek sayısı.', type: 'number', placeholder: '5' },
+      { key: 'correlation_export_window_seconds', label: 'Pencere', description: 'Kayan pencere boyutu.', type: 'number', placeholder: '300', unit: 'sn' },
     ],
   },
 ]
@@ -300,12 +324,12 @@ function TestChannelButton({ channel, disabled }: { channel: 'slack' | 'smtp'; d
     try {
       if (channel === 'slack') await api.testSlackAlert()
       else await api.testSMTPAlert()
-      toast.success(`${channel} test sent successfully`)
+      toast.success(`${channel} testi gönderildi`)
     } catch (err) {
       // Show the backend message verbatim — Slack/SMTP errors (bad URL,
       // auth failure, unreachable host) are actionable and should not be
       // generic-toasted.
-      toast.error(err instanceof api.ApiError ? err.message : `${channel} test failed`)
+      toast.error(err instanceof api.ApiError ? err.message : `${channel} testi başarısız`)
     } finally {
       setSending(false)
     }
@@ -317,10 +341,10 @@ function TestChannelButton({ channel, disabled }: { channel: 'slack' | 'smtp'; d
       disabled={disabled || sending}
       onClick={runTest}
       className="cursor-pointer"
-      title={disabled ? 'Save pending changes before testing' : 'Send a test alert via this channel'}
+      title={disabled ? 'Test etmeden önce bekleyen değişiklikleri kaydedin' : 'Bu kanaldan test alarmı gönder'}
     >
       {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" /> : <Send className="h-3.5 w-3.5 mr-2" />}
-      Send Test
+      Test Gönder
     </Button>
   )
 }
@@ -342,7 +366,7 @@ function SettingRow({
       <div className="flex-1 min-w-0 space-y-1">
         <div className="flex items-center gap-2">
           <Label className="text-sm font-medium text-foreground">{def.label}</Label>
-          {isDirty && <Badge variant="outline" className="text-[10px] text-yellow-400 border-yellow-400/40">unsaved</Badge>}
+          {isDirty && <Badge variant="outline" className="text-[10px] text-yellow-400 border-yellow-400/40">kaydedilmedi</Badge>}
         </div>
         <p className="text-xs text-muted-foreground">{def.description}</p>
         <code className="text-[10px] text-muted-foreground/60 font-mono">{def.key}</code>
@@ -388,7 +412,7 @@ function SettingRow({
           )}
           onClick={onSave}
           disabled={!isDirty || saving}
-          title={isDirty ? 'Save' : 'No changes'}
+          title={isDirty ? 'Kaydet' : 'Değişiklik yok'}
         >
           {saving
             ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -432,7 +456,7 @@ function RetentionStatusPanel({ refreshKey }: { refreshKey: string }) {
   if (failed) {
     return (
       <p className="px-4 pb-3 text-xs text-muted-foreground">
-        Could not read the enforced retention policy.
+        Uygulanan saklama politikası okunamadı.
       </p>
     )
   }
@@ -441,19 +465,19 @@ function RetentionStatusPanel({ refreshKey }: { refreshKey: string }) {
   if (status.unavailable) {
     return (
       <p className="px-4 pb-3 text-xs text-muted-foreground">
-        No log hypertables on this deployment, so nothing enforces retention here.
+        Bu kurulumda log hypertable yok, dolayısıyla burada saklama uygulayan bir şey de yok.
       </p>
     )
   }
 
   const policies = status.policies ?? []
   const describe = (p: api.RetentionPolicy) =>
-    p.has_policy ? `${p.days}d` : 'kept forever'
+    p.has_policy ? `${p.days} gün` : 'süresiz'
 
   return (
     <div className="px-4 pb-3 space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-muted-foreground">Enforced by diaLOG right now:</span>
+        <span className="text-xs text-muted-foreground">Şu an diaLOG tarafından uygulanan:</span>
         {policies.map(p => (
           <Badge
             key={p.table}
@@ -471,8 +495,90 @@ function RetentionStatusPanel({ refreshKey }: { refreshKey: string }) {
       </div>
       {!status.in_sync && (
         <p className="text-xs text-yellow-400">
-          The setting says {status.setting_days} days but the policies above differ. diaLOG applies
-          the change within a few seconds; if this stays, diaLOG is down or cannot alter the jobs.
+          Ayar {status.setting_days} gün diyor ama yukarıdaki politikalar farklı. diaLOG değişikliği
+          birkaç saniye içinde uygular; bu böyle kalıyorsa diaLOG kapalıdır veya işleri değiştiremiyordur.
+        </p>
+      )}
+    </div>
+  )
+}
+
+// CompressionStatusPanel is the retention panel's twin: it reports what
+// Timescale enforces plus how much of each table is already columnar, because
+// raising the window does not decompress anything that was compressed under
+// the old one.
+function CompressionStatusPanel({ refreshKey }: { refreshKey: string }) {
+  const [status, setStatus] = useState<api.CompressionStatus | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const timers: ReturnType<typeof setTimeout>[] = []
+
+    const fetchOnce = async () => {
+      try {
+        const s = await api.getCompressionStatus()
+        if (!cancelled) { setStatus(s); setFailed(false) }
+      } catch {
+        if (!cancelled) setFailed(true)
+      }
+    }
+
+    fetchOnce()
+    timers.push(setTimeout(fetchOnce, 3000))
+    timers.push(setTimeout(fetchOnce, 8000))
+    return () => { cancelled = true; timers.forEach(clearTimeout) }
+  }, [refreshKey])
+
+  if (failed) {
+    return (
+      <p className="px-4 pb-3 text-xs text-muted-foreground">
+        Uygulanan sıkıştırma politikası okunamadı.
+      </p>
+    )
+  }
+  if (!status) return null
+
+  if (status.unavailable) {
+    return (
+      <p className="px-4 pb-3 text-xs text-muted-foreground">
+        Bu kurulumda log hypertable yok, dolayısıyla sıkıştırılacak bir şey de yok.
+      </p>
+    )
+  }
+
+  const policies = status.policies ?? []
+  const wanted = (table: string) =>
+    table === 'http_log_bodies' ? status.setting_bodies_days : status.setting_days
+
+  return (
+    <div className="px-4 pb-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground">Şu an diaLOG tarafından uygulanan:</span>
+        {policies.map(p => (
+          <Badge
+            key={p.table}
+            variant="outline"
+            className={cn(
+              'text-[10px] font-mono',
+              (p.has_policy ? p.days : 0) === wanted(p.table)
+                ? 'text-emerald-400 border-emerald-400/40'
+                : 'text-yellow-400 border-yellow-400/40'
+            )}
+          >
+            {p.table} {p.has_policy ? `${p.days} gün` : 'sıkıştırma yok'} · {p.compressed_chunks}/{p.chunks}
+          </Badge>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Rozetteki oran, sıkıştırılmış chunk sayısının toplama oranıdır. Süreyi büyütmek eski
+        chunk'ları geri açmaz, yalnızca bundan sonrakilerin daha uzun beklemesini sağlar.
+      </p>
+      {!status.in_sync && (
+        <p className="text-xs text-yellow-400">
+          Ayarlar {status.setting_days} gün ve gövdeler için {status.setting_bodies_days} gün diyor
+          ama yukarıdaki politikalar farklı. diaLOG değişikliği birkaç saniye içinde uygular; bu
+          böyle kalıyorsa diaLOG kapalıdır veya işleri değiştiremiyordur.
         </p>
       )}
     </div>
@@ -496,7 +602,7 @@ export default function Settings() {
       setRawValues(normalized)
       setSavedValues(normalized)
     } catch {
-      toast.error('Failed to load settings')
+      toast.error('Ayarlar yüklenemedi')
     } finally {
       setLoading(false)
     }
@@ -521,9 +627,9 @@ export default function Settings() {
     try {
       await api.updateSetting(key, value)
       setSavedValues(prev => ({ ...prev, [key]: value }))
-      toast.success(`${key} saved`)
+      toast.success(`${key} kaydedildi`)
     } catch (err) {
-      toast.error(err instanceof api.ApiError ? err.message : 'Save failed')
+      toast.error(err instanceof api.ApiError ? err.message : 'Kaydetme başarısız')
     } finally {
       setSavingKey(null)
     }
@@ -546,8 +652,8 @@ export default function Settings() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-foreground tracking-tight">Settings</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Configure proxy and SIEM behavior</p>
+          <h1 className="text-xl font-bold text-foreground tracking-tight">Ayarlar</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Proxy ve SIEM davranışını yapılandırın</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" onClick={load} className="h-9 w-9 cursor-pointer border-border">
@@ -556,7 +662,7 @@ export default function Settings() {
           {allDirtyKeys.length > 0 && (
             <Button onClick={saveAll} className="gap-2 cursor-pointer">
               <Save className="h-4 w-4" />
-              Save All ({allDirtyKeys.length})
+              Tümünü Kaydet ({allDirtyKeys.length})
             </Button>
           )}
         </div>
@@ -570,7 +676,7 @@ export default function Settings() {
       {allDirtyKeys.length > 0 && (
         <div className="flex items-center gap-3 rounded-lg border border-yellow-400/30 bg-yellow-400/5 px-4 py-3 text-sm text-yellow-400">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>{allDirtyKeys.length} unsaved change{allDirtyKeys.length !== 1 ? 's' : ''}. Remember to save.</span>
+          <span>{allDirtyKeys.length} kaydedilmemiş değişiklik. Kaydetmeyi unutmayın.</span>
         </div>
       )}
 
@@ -619,6 +725,11 @@ export default function Settings() {
               {group.extra === 'retention' && (
                 <RetentionStatusPanel refreshKey={savedValues['retention_days'] ?? ''} />
               )}
+              {group.extra === 'compression' && (
+                <CompressionStatusPanel
+                  refreshKey={`${savedValues['compression_days'] ?? ''}:${savedValues['compression_bodies_days'] ?? ''}`}
+                />
+              )}
             </div>
           ))}
         </div>
@@ -626,12 +737,12 @@ export default function Settings() {
 
       <div className="rounded-lg border border-border bg-card px-4 py-4">
         <p className="text-xs text-muted-foreground">
-          Settings are persisted to the database and picked up automatically: MUVON and diaLOG
-          both reload their snapshot every few seconds. The{' '}
-          <strong className="text-foreground">config reload</strong> button on the Dashboard only
-          forces that immediately and pushes the snapshot to connected agents. Retention is the one
-          setting whose effect lives outside the process, so the badges above show what Timescale
-          actually enforces.
+          Ayarlar veri tabanına yazılır ve kendiliğinden devreye girer: MUVON ve diaLOG
+          anlık görüntülerini birkaç saniyede bir yeniler. Panodaki{' '}
+          <strong className="text-foreground">yapılandırmayı yenile</strong> düğmesi yalnızca bunu
+          hemen zorlar ve anlık görüntüyü bağlı agentlara iletir. Saklama ve sıkıştırma, etkisi
+          sürecin dışında yaşayan iki ayardır; yukarıdaki rozetler Timescale\'in gerçekte ne
+          uyguladığını gösterir.
         </p>
       </div>
     </div>
