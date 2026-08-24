@@ -55,7 +55,10 @@ SELECT h.hypertable_name,
        COALESCE(j.job_id, 0),
        COALESCE(EXTRACT(EPOCH FROM (j.config->>'compress_after')::interval) / 86400, 0)::int,
        j.job_id IS NOT NULL,
-       j.next_start,
+       -- Same guard as retention: an unscheduled job carries -infinity and
+       -- neither infinity fits a time.Time, so both read as "no next run".
+       CASE WHEN j.next_start IN ('-infinity'::timestamptz, 'infinity'::timestamptz)
+            THEN NULL ELSE j.next_start END,
        COALESCE(c.total, 0),
        COALESCE(c.compressed, 0)
 FROM timescaledb_information.hypertables h

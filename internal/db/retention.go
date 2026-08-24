@@ -46,7 +46,11 @@ SELECT h.hypertable_name,
        COALESCE(j.job_id, 0),
        COALESCE(EXTRACT(EPOCH FROM (j.config->>'drop_after')::interval) / 86400, 0)::int,
        j.job_id IS NOT NULL,
-       j.next_start
+       -- Timescale stores a job that has never been scheduled as -infinity,
+       -- and neither infinity fits a time.Time. Both mean "no next run" to a
+       -- reader, so they arrive as NULL rather than failing the scan.
+       CASE WHEN j.next_start IN ('-infinity'::timestamptz, 'infinity'::timestamptz)
+            THEN NULL ELSE j.next_start END
 FROM timescaledb_information.hypertables h
 LEFT JOIN timescaledb_information.jobs j
        ON j.hypertable_schema = h.hypertable_schema
