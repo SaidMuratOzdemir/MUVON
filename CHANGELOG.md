@@ -23,6 +23,55 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-24
+
+### SECURITY
+
+- **İmajlarda taşınan iki zafiyet kapatıldı.** `golang.org/x/crypto`
+  v0.51.0'dan v0.53.0'a, `golang.org/x/net` v0.55.0'dan v0.56.0'a çıktı;
+  aradaki 10 HIGH/CRITICAL kaydı kapandı. `govulncheck` bunlarda sessiz
+  kalıyordu çünkü hiçbiri koddan erişilebilir değil, ki bu farklı bir
+  sorunun doğru cevabı: imajlarımızı tarayan bir operatör binary'nin
+  neyi çağırdığını değil, neyi taşıdığını görür.
+
+- **İmajlar yayınlanmadan önce taranıyor.** `build` işi her servisi önce
+  yerel Docker'a derliyor, sürümü sabitlenmiş trivy ile düzeltilebilir
+  HIGH ve CRITICAL kayıtlara bakıyor ve ancak ondan sonra push ediyor.
+  Push sonrası çalışan bir kapı, itiraz ettiği imajı operatörün eline
+  çoktan vermiş olurdu.
+
+### BUGFIXES
+
+- **Denetim kaydında tarih aralığı seçmek artık gerçekten çalışıyor.**
+  Panelin tarih alanları `datetime-local` üretiyor
+  (`2026-08-24T14:30`), sunucu ise RFC3339 bekliyor ve ayrıştırma
+  hatasını yok sayıyordu. Sıfır zaman da sorgudan tamamen düşürüldüğü
+  için, aralık seçen operatör filtresiz sonuç alıyor ve bunu belirten
+  hiçbir işaret görmüyordu. Panel artık dönüştürerek gönderiyor, uç ise
+  okunamayan değeri parametre adı ve beklenen biçimle birlikte 400 ile
+  geri çeviriyor.
+
+- **Log istatistiklerinde bozuk tarih tüm saklama penceresini
+  açıyordu.** Okunamayan bir `from` değeri 24 saatlik varsayılanı sıfır
+  zamanla eziyor, o da filtreyi düşürüp özeti saklanan verinin tamamı
+  üzerinden hesaplatıyordu. Uç artık aynı 400 kuralını uyguluyor;
+  ayrıca gRPC katmanı okuyamadığı değerde varsayılanı koruyor, yani
+  paneli atlayan bir çağrı da sınırsız pencereye düşmüyor.
+
+### ENHANCEMENTS
+
+- **Entegrasyon testleri artık gerçekten koşuyor.** İki test, birim
+  testlerin ulaşamadığı yeri kapsıyor: `ContainerExecStream` üzerinden
+  alınan bir `pg_dump`'ın `pg_restore` tarafından kabul edilmesi ve
+  retention ifadelerinin gerçek bir Timescale iş kataloğuna işlemesi.
+  İkisi de veri tabanını adlandıran bir ortam değişkeni olmadan kendini
+  atlıyordu. Yeni `integration` işi postgres ve timescale konteynerlerini
+  kaldırıp bu değişkenlerle testleri koşuyor, `build` de ona bağlı.
+
+- **`staticcheck` doğrulama kapısına eklendi.** Bulduğu beş kullanılmayan
+  bildirim silindi; hepsi yerini başka bir yola bırakmış kalıntılardı.
+  Linter, `govulncheck` ile aynı gerekçeyle sürüme sabitlendi.
+
 ## [0.3.0] - 2026-08-23
 
 ### BREAKING
