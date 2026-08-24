@@ -163,6 +163,10 @@ message SearchLogsRequest {
 message SearchLogsResponse {
   repeated LogSummary logs = 1;
   int32 total              = 2;
+  // False when total is a lower bound rather than a count. Searching bodies
+  // cannot be counted to the cap in reasonable time, so the caller shows what
+  // it can prove instead of a number that looks exact.
+  bool total_exact         = 3;
 }
 
 message LogSummary {

@@ -565,9 +565,13 @@ func (x *SearchLogsRequest) GetSearchBodies() bool {
 }
 
 type SearchLogsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Logs          []*LogSummary          `protobuf:"bytes,1,rep,name=logs,proto3" json:"logs,omitempty"`
-	Total         int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Logs  []*LogSummary          `protobuf:"bytes,1,rep,name=logs,proto3" json:"logs,omitempty"`
+	Total int32                  `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	// False when total is a lower bound rather than a count. Searching bodies
+	// cannot be counted to the cap in reasonable time, so the caller shows what
+	// it can prove instead of a number that looks exact.
+	TotalExact    bool `protobuf:"varint,3,opt,name=total_exact,json=totalExact,proto3" json:"total_exact,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -614,6 +618,13 @@ func (x *SearchLogsResponse) GetTotal() int32 {
 		return x.Total
 	}
 	return 0
+}
+
+func (x *SearchLogsResponse) GetTotalExact() bool {
+	if x != nil {
+		return x.TotalExact
+	}
+	return false
 }
 
 type LogSummary struct {
@@ -3306,10 +3317,12 @@ const file_proto_logpb_log_proto_rawDesc = "" +
 	"\x05limit\x18\r \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x0e \x01(\x05R\x06offset\x12\x12\n" +
 	"\x04user\x18\x0f \x01(\tR\x04user\x12#\n" +
-	"\rsearch_bodies\x18\x10 \x01(\bR\fsearchBodies\"Q\n" +
+	"\rsearch_bodies\x18\x10 \x01(\bR\fsearchBodies\"r\n" +
 	"\x12SearchLogsResponse\x12%\n" +
 	"\x04logs\x18\x01 \x03(\v2\x11.logpb.LogSummaryR\x04logs\x12\x14\n" +
-	"\x05total\x18\x02 \x01(\x05R\x05total\"\xa2\x03\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\x12\x1f\n" +
+	"\vtotal_exact\x18\x03 \x01(\bR\n" +
+	"totalExact\"\xa2\x03\n" +
 	"\n" +
 	"LogSummary\x12\x1d\n" +
 	"\n" +

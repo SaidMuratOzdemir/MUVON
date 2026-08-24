@@ -96,10 +96,14 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 		logs = []*pb.LogSummary{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data":   logs,
-		"total":  resp.Total,
-		"limit":  req.Limit,
-		"offset": req.Offset,
+		"data": logs,
+		// total_exact is false when the count is a lower bound, which is what
+		// a body search returns: the panel then shows what came back instead
+		// of a page count derived from a number nobody could produce.
+		"total":       resp.Total,
+		"total_exact": resp.TotalExact,
+		"limit":       req.Limit,
+		"offset":      req.Offset,
 	})
 }
 

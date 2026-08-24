@@ -679,6 +679,7 @@ export default function Logs() {
 
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [total, setTotal] = useState(0)
+  const [totalExact, setTotalExact] = useState(true)
   const [loading, setLoading] = useState(false)
   const [serviceDown, setServiceDown] = useState(false)
   const [pendingFilters, setPendingFilters] = useState<Filters>(filters)
@@ -703,6 +704,7 @@ export default function Logs() {
       const res = await api.searchLogs(filtersToParams(f, off))
       setLogs(res.data ?? [])
       setTotal(res.total)
+      setTotalExact(res.total_exact !== false)
     } catch (err) {
       if (api.isServiceUnavailable(err)) {
         setServiceDown(true)
@@ -801,11 +803,17 @@ export default function Logs() {
     setSelectedLog(null)
   }
 
+  // Without an exact count there is no page count to show: total is only
+  // what the pages walked so far have proven.
   const totalPages = Math.ceil(total / PAGE_SIZE)
   // The API stops counting at 10.000 and returns 10.001 to mean "at least
   // this many", so the exact number is only shown while it is exact.
   const countCapped = total > 10000
-  const totalLabel = countCapped ? '10.000+' : total.toLocaleString()
+  const totalLabel = !totalExact
+    ? `${total.toLocaleString()}+`
+    : countCapped
+      ? '10.000+'
+      : total.toLocaleString()
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
 
   const methodColor = (m: string) => {
@@ -900,7 +908,7 @@ export default function Logs() {
           Live
         </Button>
         <div className="ml-auto text-xs text-muted-foreground">
-          {totalLabel} entries
+          {totalLabel} kayıt
         </div>
       </div>
 
@@ -1130,8 +1138,8 @@ export default function Logs() {
       {/* Pagination */}
       <div className="flex items-center justify-between px-6 py-3 border-t border-border shrink-0">
         <span className="text-xs text-muted-foreground">
-          Page {currentPage} of {totalPages || 1}
-          {' '}&bull; {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {totalLabel}
+          {totalExact ? `Sayfa ${currentPage} / ${totalPages || 1}` : `Sayfa ${currentPage}`}
+          {' '}&bull; {offset + 1}-{Math.min(offset + PAGE_SIZE, total)} / {totalLabel}
           {live && <span className="ml-2 text-primary animate-pulse">● live</span>}
         </span>
         <div className="flex items-center gap-1">
@@ -1144,7 +1152,7 @@ export default function Logs() {
           </Button>
           <Button
             variant="outline" size="icon" className="h-8 w-8 cursor-pointer border-border"
-            disabled={offset + PAGE_SIZE >= total || live}
+            disabled={(totalExact ? offset + PAGE_SIZE >= total : logs.length < PAGE_SIZE) || live}
             onClick={() => setPage(offset + PAGE_SIZE)}
           >
             <ChevronRight className="h-4 w-4" />

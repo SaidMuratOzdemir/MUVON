@@ -23,6 +23,28 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+### BUGFIXES
+
+- **Gövde araması artık zaman aşımına düşmüyor.** Serbest metin sorgusu
+  gövdeleri de kapsadığında koşul `... OR EXISTS (gövdeler)` şeklinde
+  kuruluyordu. Bu, planlayıcının hiçbir trigram indeksini kullanamamasına yol
+  açıyor: ayrık koşullardan biri ilişkili alt sorgu olunca bitmap OR
+  kurulamıyor, pencere baştan sona taranıyor ve her aday satır için gövde
+  tablosuna sonda atılıyor. 90 günlük bir pencerede ölçülen süre 41,6 saniye,
+  yani panelin 30 saniyelik sınırının üstü.
+
+  Koşul artık iki bağımsız dala bölünüyor: biri http_logs üzerindeki indeksli
+  kolonlar, diğeri gövde tablosundan sürülen join. Her dal kendi sırası ve
+  kendi limitiyle çalışıp kendi indeksini kullanıyor. İki dalın en yeni N
+  kaydının birleşimi global en yeni N kaydı kapsadığı için sonuç yaklaşık
+  değil, birebir aynı; sentetik veriyle ilk sayfa ve derin sayfa için ayrı
+  ayrı doğrulandı. Aynı arama üretimde 41,6 saniyeden 2,0 saniyeye indi.
+
+  **Gövde aramasında toplam kayıt sayısı artık alt sınır olarak gösteriliyor.**
+  O dalı tavana kadar saymak makul sürede bitmiyor, bu yüzden panel kesin gibi
+  duran bir sayı uydurmak yerine "50+ kayıt" yazıyor ve sayfa sayısını
+  gizliyor. İleri düğmesi dolu sayfa gelip gelmediğine bakıyor.
+
 ### FEATURES
 
 - **Sıkıştırma penceresi artık panelden yönetiliyor.** İki yeni ayar geldi:

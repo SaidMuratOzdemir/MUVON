@@ -15,17 +15,17 @@ import (
 // --- Host Queries ---
 
 type Host struct {
-	ID             int       `json:"id"`
-	Domain         string    `json:"domain"`
-	IsActive       bool      `json:"is_active"`
-	ForceHTTPS     bool      `json:"force_https"`
+	ID         int    `json:"id"`
+	Domain     string `json:"domain"`
+	IsActive   bool   `json:"is_active"`
+	ForceHTTPS bool   `json:"force_https"`
 	// TLSMode dictates how the listener handles HTTPS for this host:
 	// "off" — HTTP only, no listener on :443
 	// "redirect" — HTTP serves a 301 to HTTPS (also implies ForceHTTPS=true)
 	// "auto" — ACME issuance via Let's Encrypt
 	// "manual" — admin-uploaded cert in tls_certificates; no ACME attempt
-	TLSMode        string    `json:"tls_mode"`
-	TrustedProxies []string  `json:"trusted_proxies"`
+	TLSMode        string   `json:"tls_mode"`
+	TrustedProxies []string `json:"trusted_proxies"`
 	// Per-host JWT identity override. When JWTIdentityEnabled is false the
 	// pipeline falls back to the global setting. When true, Secret and
 	// Claims on this row take priority. The secret is stored encrypted in
@@ -38,12 +38,12 @@ type Host struct {
 	// token. Defaults to "Authorization". Hosts that authenticate with
 	// "X-Auth-Token" / "X-Access-Token" override this so identity
 	// enrichment doesn't silently skip the whole host.
-	IdentityHeaderName string    `json:"identity_header_name"`
+	IdentityHeaderName string `json:"identity_header_name"`
 	// StoreRawJWT opts a host into persisting the original bearer token
 	// alongside the log row. Off by default — saving signed tokens is a
 	// high-value secret leak if the DB is ever exfiltrated. Reveal flows
 	// require an admin auth + audit log entry per access.
-	StoreRawJWT       bool      `json:"store_raw_jwt"`
+	StoreRawJWT bool `json:"store_raw_jwt"`
 	// TargetKind decides which MUVON instance is allowed to terminate
 	// traffic for this host:
 	//   "central" — handled by the central MUVON binary
@@ -53,14 +53,14 @@ type Host struct {
 	// instance returns 421 Misdirected Request instead of being silently
 	// served — that way an operator who pointed DNS at the wrong machine
 	// sees the mistake immediately.
-	TargetKind     string  `json:"target_kind"`
-	TargetAgentID  *string `json:"target_agent_id,omitempty"`
+	TargetKind    string  `json:"target_kind"`
+	TargetAgentID *string `json:"target_agent_id,omitempty"`
 	// RUMEnabled opts this host into accepting browser telemetry beacons at
 	// the reserved /__muvon/rum path. Off by default — the edge treats the
 	// path as a normal (unmatched) route until an operator turns it on.
-	RUMEnabled     bool      `json:"rum_enabled"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	RUMEnabled bool      `json:"rum_enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 const hostSelectCols = `id, domain, is_active, force_https, tls_mode, trusted_proxies,
@@ -268,47 +268,47 @@ func (d *DB) DeleteHost(ctx context.Context, id int) error {
 // --- Route Queries ---
 
 type Route struct {
-	ID                 int               `json:"id"`
-	HostID             int               `json:"host_id"`
-	PathPrefix         string            `json:"path_prefix"`
-	RouteType          string            `json:"route_type"`
-	BackendURL         *string           `json:"backend_url,omitempty"`
-	BackendURLs        []string          `json:"backend_urls"`
-	ManagedComponentID *int              `json:"managed_component_id,omitempty"`
-	StaticRoot         *string           `json:"static_root,omitempty"`
-	StaticSPA          bool              `json:"static_spa"`
-	RedirectURL        *string           `json:"redirect_url,omitempty"`
+	ID                 int      `json:"id"`
+	HostID             int      `json:"host_id"`
+	PathPrefix         string   `json:"path_prefix"`
+	RouteType          string   `json:"route_type"`
+	BackendURL         *string  `json:"backend_url,omitempty"`
+	BackendURLs        []string `json:"backend_urls"`
+	ManagedComponentID *int     `json:"managed_component_id,omitempty"`
+	StaticRoot         *string  `json:"static_root,omitempty"`
+	StaticSPA          bool     `json:"static_spa"`
+	RedirectURL        *string  `json:"redirect_url,omitempty"`
 	// RedirectPreservePath, when true on a redirect route, appends the
 	// incoming request's path + raw query to RedirectURL before issuing
 	// the 301. Default false keeps the literal-redirect behavior — only
 	// matters for route_type='redirect'.
-	RedirectPreservePath bool            `json:"redirect_preserve_path"`
-	StripPrefix        bool              `json:"strip_prefix"`
-	RewritePattern     *string           `json:"rewrite_pattern,omitempty"`
-	RewriteTo          *string           `json:"rewrite_to,omitempty"`
-	Priority           int               `json:"priority"`
-	IsActive           bool              `json:"is_active"`
-	LogEnabled         bool              `json:"log_enabled"`
-	RateLimitRPS       int               `json:"rate_limit_rps"`
-	RateLimitBurst     int               `json:"rate_limit_burst"`
-	ReqHeadersAdd      map[string]string `json:"req_headers_add"`
-	ReqHeadersDel      []string          `json:"req_headers_del"`
-	RespHeadersAdd     map[string]string `json:"resp_headers_add"`
-	RespHeadersDel     []string          `json:"resp_headers_del"`
-	AccelRoot          *string           `json:"accel_root,omitempty"`
-	AccelSignedSecret  *string           `json:"accel_signed_secret,omitempty"`
-	MaxBodyBytes       int64             `json:"max_body_bytes"`
-	TimeoutSeconds     int               `json:"timeout_seconds"`
-	CORSEnabled        bool              `json:"cors_enabled"`
-	CORSOrigins        string            `json:"cors_origins"`
-	CORSMethods        string            `json:"cors_methods"`
-	CORSHeaders        string            `json:"cors_headers"`
-	CORSMaxAge         int               `json:"cors_max_age"`
-	CORSCredentials    bool              `json:"cors_credentials"`
-	ErrorPage4xx       *string           `json:"error_page_4xx,omitempty"`
-	ErrorPage5xx       *string           `json:"error_page_5xx,omitempty"`
-	CreatedAt          time.Time         `json:"created_at"`
-	UpdatedAt          time.Time         `json:"updated_at"`
+	RedirectPreservePath bool              `json:"redirect_preserve_path"`
+	StripPrefix          bool              `json:"strip_prefix"`
+	RewritePattern       *string           `json:"rewrite_pattern,omitempty"`
+	RewriteTo            *string           `json:"rewrite_to,omitempty"`
+	Priority             int               `json:"priority"`
+	IsActive             bool              `json:"is_active"`
+	LogEnabled           bool              `json:"log_enabled"`
+	RateLimitRPS         int               `json:"rate_limit_rps"`
+	RateLimitBurst       int               `json:"rate_limit_burst"`
+	ReqHeadersAdd        map[string]string `json:"req_headers_add"`
+	ReqHeadersDel        []string          `json:"req_headers_del"`
+	RespHeadersAdd       map[string]string `json:"resp_headers_add"`
+	RespHeadersDel       []string          `json:"resp_headers_del"`
+	AccelRoot            *string           `json:"accel_root,omitempty"`
+	AccelSignedSecret    *string           `json:"accel_signed_secret,omitempty"`
+	MaxBodyBytes         int64             `json:"max_body_bytes"`
+	TimeoutSeconds       int               `json:"timeout_seconds"`
+	CORSEnabled          bool              `json:"cors_enabled"`
+	CORSOrigins          string            `json:"cors_origins"`
+	CORSMethods          string            `json:"cors_methods"`
+	CORSHeaders          string            `json:"cors_headers"`
+	CORSMaxAge           int               `json:"cors_max_age"`
+	CORSCredentials      bool              `json:"cors_credentials"`
+	ErrorPage4xx         *string           `json:"error_page_4xx,omitempty"`
+	ErrorPage5xx         *string           `json:"error_page_5xx,omitempty"`
+	CreatedAt            time.Time         `json:"created_at"`
+	UpdatedAt            time.Time         `json:"updated_at"`
 }
 
 const routeSelectCols = `id, host_id, path_prefix, route_type, backend_url, backend_urls, managed_component_id, static_root, static_spa, redirect_url, redirect_preserve_path,
@@ -836,15 +836,15 @@ type LogSearchParams struct {
 	// the admin can type "alice@foo.com" or a raw user id and get every
 	// request attributed to that actor, regardless of which claim key the
 	// upstream app happens to populate.
-	UserQuery       string
+	UserQuery string
 	// SearchBodies extends Query to the captured request and response bodies.
 	// Off by default: bodies live in their own hypertable, so matching them
 	// turns the search into a per-row EXISTS probe that no index on http_logs
 	// can serve. On a production window it measured about three thousand times
 	// slower than the same search across the other columns.
-	SearchBodies    bool
-	Limit           int
-	Offset          int
+	SearchBodies bool
+	Limit        int
+	Offset       int
 }
 
 type LogEntry struct {
@@ -872,7 +872,7 @@ type LogEntry struct {
 	// JSONB column populated by the log pipeline's identity enricher.
 	// Kept as RawMessage so the admin panel receives the exact shape the
 	// enricher produced (claims, verified, source, exp_expired).
-	UserIdentity    json.RawMessage `json:"user_identity,omitempty"`
+	UserIdentity json.RawMessage `json:"user_identity,omitempty"`
 }
 
 type LogBody struct {
@@ -897,7 +897,11 @@ const (
 	searchWindowWithBodies = 7 * 24 * time.Hour
 )
 
-func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int, error) {
+// SearchLogs returns a page of matching entries, how many matched, and
+// whether that number is exact. It is not exact when bodies are searched: the
+// body branch cannot be counted to the cap in reasonable time, so the caller
+// gets a lower bound and has to say so rather than render a total it made up.
+func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int, bool, error) {
 	if p.Limit <= 0 || p.Limit > 500 {
 		p.Limit = 100
 	}
@@ -905,6 +909,11 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 	baseWhere := "WHERE 1=1"
 	args := []any{}
 	argIdx := 1
+	// Set when a free-text query is present. cheapText covers the indexed
+	// columns on http_logs; bodyText covers the body columns and is only set
+	// when the caller opted into searching them.
+	var cheapText, bodyText string
+	var likeIdx, fromIdx, toIdx int
 
 	if p.Host != "" {
 		baseWhere += fmt.Sprintf(" AND l.host = $%d", argIdx)
@@ -951,43 +960,36 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 			if p.SearchBodies {
 				window = searchWindowWithBodies
 			}
+			// Set only; the bound below appends it once for everyone.
 			p.From = time.Now().Add(-window)
-			baseWhere += fmt.Sprintf(" AND l.timestamp >= $%d", argIdx)
-			args = append(args, p.From)
-			argIdx++
 		}
 		// Text that an operator would recognise: URL, host, user agent, client
 		// address and the enriched identity (JSONB cast to text, which is how
-		// user ids and emails become searchable).
-		like := "%" + p.Query + "%"
-		clause := ` AND (
+		// user ids and emails become searchable). The clause is built here and
+		// attached further down, because with bodies it becomes two branches
+		// instead of one disjunction.
+		likeIdx = argIdx
+		args = append(args, "%"+p.Query+"%")
+		argIdx++
+		cheapText = fmt.Sprintf(`(
 				l.path             ILIKE $%[1]d
 				OR l.host          ILIKE $%[1]d
 				OR l.user_agent    ILIKE $%[1]d
 				OR l.client_ip     ILIKE $%[1]d
-				OR l.user_identity::text ILIKE $%[1]d`
+				OR l.user_identity::text ILIKE $%[1]d
+			)`, likeIdx)
 		if p.SearchBodies {
-			// EXISTS rather than a join so one log with several body rows
-			// cannot appear twice in the result.
-			clause += `
-				OR EXISTS (
-					SELECT 1 FROM http_log_bodies b
-					WHERE b.log_id = l.id
-					  AND (b.request_body ILIKE $%[1]d OR b.response_body ILIKE $%[1]d)
-				)`
+			bodyText = fmt.Sprintf(`(b.request_body ILIKE $%[1]d OR b.response_body ILIKE $%[1]d)`, likeIdx)
 		}
-		clause += `
-			)`
-		baseWhere += fmt.Sprintf(clause, argIdx)
-		args = append(args, like)
-		argIdx++
 	}
 	if !p.From.IsZero() {
+		fromIdx = argIdx
 		baseWhere += fmt.Sprintf(" AND l.timestamp >= $%d", argIdx)
 		args = append(args, p.From)
 		argIdx++
 	}
 	if !p.To.IsZero() {
+		toIdx = argIdx
 		baseWhere += fmt.Sprintf(" AND l.timestamp <= $%d", argIdx)
 		args = append(args, p.To)
 		argIdx++
@@ -1029,36 +1031,93 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 		argIdx += 3
 	}
 
+	// With no body branch the text clause is just another filter.
+	if cheapText != "" && bodyText == "" {
+		baseWhere += " AND " + cheapText
+	}
+
+	// With one, the disjunction is split. `a OR b OR EXISTS(bodies)` reads
+	// well but stops the planner from using any trigram index: measured on a
+	// 90 day window it produced zero index nodes and scanned the whole range
+	// with a probe per row, 41 s against 6 ms and 1.9 s for the same two
+	// halves run separately. Each branch is ordered and limited on its own, so
+	// each uses its own index; the union of two top-N sets contains the global
+	// top-N, which makes this exact rather than an approximation.
+	reach := p.Offset + p.Limit
+	if reach > SearchCountCap {
+		reach = SearchCountCap
+	}
+	matched := ""
+	if bodyText != "" {
+		bodyWhere := baseWhere
+		// The body row carries its log's timestamp, so repeating the bound on
+		// b lets Timescale exclude chunks before the join.
+		if fromIdx > 0 {
+			bodyWhere += fmt.Sprintf(" AND b.timestamp >= $%d", fromIdx)
+		}
+		if toIdx > 0 {
+			bodyWhere += fmt.Sprintf(" AND b.timestamp <= $%d", toIdx)
+		}
+		matched = fmt.Sprintf(`WITH matched AS (
+			(SELECT l.id FROM http_logs l %[1]s AND %[2]s
+			  ORDER BY l.timestamp DESC LIMIT %[5]d)
+			UNION
+			(SELECT l.id FROM http_log_bodies b JOIN http_logs l ON l.id = b.log_id
+			  %[3]s AND %[4]s
+			  ORDER BY b.timestamp DESC LIMIT %[5]d)
+		) `, baseWhere, cheapText, bodyWhere, bodyText, reach)
+	}
+
 	// The count is capped. An exact COUNT(*) has to visit every matching row,
 	// so it costs at least as much as the page query itself and grows with
-	// retention: on a wide filter it is the slowest part of a search. The
-	// pager only needs "roughly how many pages", so counting stops at
-	// SearchCountCap and the caller renders anything at the cap as "N+".
+	// retention. The pager only needs "roughly how many pages", so counting
+	// stops at SearchCountCap and the caller renders anything at the cap as
+	// "N+".
+	//
+	// A body search does not get a count at all. Counting its branch to the
+	// cap does not finish in any time worth waiting for, so the caller is told
+	// the number is a lower bound instead of being handed one that looks
+	// exact.
 	var total int
-	countQuery := fmt.Sprintf(
-		"SELECT count(*) FROM (SELECT 1 FROM http_logs l %s LIMIT %d) capped",
-		baseWhere, SearchCountCap+1)
-	if err := d.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("search logs count: %w", err)
+	exact := bodyText == ""
+	if exact {
+		countQuery := fmt.Sprintf(
+			"SELECT count(*) FROM (SELECT 1 FROM http_logs l %s LIMIT %d) capped",
+			baseWhere, SearchCountCap+1)
+		if err := d.Pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+			return nil, 0, false, fmt.Errorf("search logs count: %w", err)
+		}
 	}
 
 	// Headers and bodies are deliberately absent: the caller turns each row
 	// into a LogSummary, which carries neither, and both are JSONB wide enough
 	// to dominate the read. The detail endpoint fetches them for one row.
-	query := fmt.Sprintf(
-		`SELECT l.id::text, l.timestamp, l.host, l.client_ip, l.method, l.path, l.query_string,
+	const pageCols = `SELECT l.id::text, l.timestamp, l.host, l.client_ip, l.method, l.path, l.query_string,
 		        l.response_status, l.response_time_ms,
 		        l.request_size, l.response_size, l.user_agent, l.error,
-		        l.is_starred, n.note, l.country, l.city, l.user_identity
-		 FROM http_logs l
-		 LEFT JOIN log_notes n ON n.log_id = l.id
-		 %s ORDER BY l.timestamp DESC LIMIT $%d OFFSET $%d`,
-		baseWhere, argIdx, argIdx+1)
+		        l.is_starred, n.note, l.country, l.city, l.user_identity`
+	var query string
+	if matched != "" {
+		query = fmt.Sprintf(
+			`%s%s
+			 FROM matched m
+			 JOIN http_logs l ON l.id = m.id
+			 LEFT JOIN log_notes n ON n.log_id = l.id
+			 ORDER BY l.timestamp DESC LIMIT $%d OFFSET $%d`,
+			matched, pageCols, argIdx, argIdx+1)
+	} else {
+		query = fmt.Sprintf(
+			`%s
+			 FROM http_logs l
+			 LEFT JOIN log_notes n ON n.log_id = l.id
+			 %s ORDER BY l.timestamp DESC LIMIT $%d OFFSET $%d`,
+			pageCols, baseWhere, argIdx, argIdx+1)
+	}
 	args = append(args, p.Limit, p.Offset)
 
 	rows, err := d.Pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("search logs: %w", err)
+		return nil, 0, false, fmt.Errorf("search logs: %w", err)
 	}
 	defer rows.Close()
 
@@ -1070,12 +1129,18 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 			&e.ResponseTimeMs, &e.RequestSize, &e.ResponseSize, &e.UserAgent, &e.Error,
 			&e.IsStarred, &e.Note, &e.Country, &e.City,
 			&e.UserIdentity); err != nil {
-			return nil, 0, fmt.Errorf("search logs scan: %w", err)
+			return nil, 0, false, fmt.Errorf("search logs scan: %w", err)
 		}
 		entries = append(entries, e)
 	}
 
-	return entries, total, rows.Err()
+	// Without a count, the total is what this page proves: everything skipped
+	// plus what came back. The caller renders it as a lower bound.
+	if !exact {
+		total = p.Offset + len(entries)
+	}
+
+	return entries, total, exact, rows.Err()
 }
 
 // GetLogRawJWT fetches the raw bearer token captured for a single log row,

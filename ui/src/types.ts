@@ -214,6 +214,10 @@ export interface SystemStats {
 export interface PaginatedResponse<T> {
   data: T[];
   total: number;
+  // Absent on endpoints that always count exactly. Log search sets it to
+  // false when total is a lower bound, which is what searching bodies
+  // returns: that branch cannot be counted to the cap in usable time.
+  total_exact?: boolean;
   limit: number;
   offset: number;
 }

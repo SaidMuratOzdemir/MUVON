@@ -104,12 +104,12 @@ func (s *Server) SearchLogs(ctx context.Context, req *pb.SearchLogsRequest) (*pb
 	}
 	params.SearchBodies = req.SearchBodies
 
-	logs, total, err := s.database.SearchLogs(ctx, params)
+	logs, total, exact, err := s.database.SearchLogs(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("search logs: %w", err)
 	}
 
-	resp := &pb.SearchLogsResponse{Total: int32(total)}
+	resp := &pb.SearchLogsResponse{Total: int32(total), TotalExact: exact}
 	for _, l := range logs {
 		summary := &pb.LogSummary{
 			RequestId:      l.ID,
