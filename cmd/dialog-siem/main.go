@@ -247,10 +247,10 @@ func main() {
 	})
 	corrEngine.Run(pipeline)
 
-	// Certificate expiry watch. Days-left has always been visible in the
-	// panel, and a fleet-wide renewal failure still went unnoticed for three
-	// months because seeing it required someone to go looking. This turns it
-	// into something that arrives on its own.
+	// Certificate expiry watch. Days-left is visible in the panel, but only
+	// to someone who goes looking; renewal is due at 30 days, so a
+	// certificate still inside 14 means renewal is broken rather than merely
+	// approaching. This raises that through the normal alerting path.
 	go runCertExpiryWatch(ctx, database, alertMgr)
 
 	// gRPC server on Unix socket
