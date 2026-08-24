@@ -323,15 +323,49 @@ func (s *Service) HandleListPrunableImages(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "component_id is required"})
 		return
 	}
-	refs, err := s.db.ListPrunableImageRefsForAgent(r.Context(), agentID, req.ComponentID, req.KeepN)
+	images, err := s.db.ListPrunableImageRefsForAgent(r.Context(), agentID, req.ComponentID, req.KeepN)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if refs == nil {
-		refs = []string{}
+	if images == nil {
+		images = []db.PrunableImage{}
 	}
-	writeJSON(w, http.StatusOK, map[string][]string{"image_refs": refs})
+	// image_refs is kept for an agent older than the image id column; a newer
+	// one reads images and prunes by ID, which is what survives a reference
+	// moving off an image.
+	refs := make([]string, 0, len(images))
+	for _, img := range images {
+		refs = append(refs, img.Ref)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"image_refs": refs, "images": images})
+}
+
+// HandleRecordImageID stores the local image ID an edge deployer resolved for
+// a release component. Ownership is enforced the same way the rest of this
+// surface is: the update joins through deploy_components and filters by
+// agent_id, so an agent cannot write against somebody else's component.
+// POST /api/v1/agent/deployer/image-id  body: {release_uuid, component_id, image_id}
+func (s *Service) HandleRecordImageID(w http.ResponseWriter, r *http.Request) {
+	agentID := agentDeployerCtx(r)
+	var req struct {
+		ReleaseUUID string `json:"release_uuid"`
+		ComponentID int    `json:"component_id"`
+		ImageID     string `json:"image_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	if req.ReleaseUUID == "" || req.ComponentID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "release_uuid and component_id are required"})
+		return
+	}
+	if err := s.db.RecordImageIDForAgent(r.Context(), agentID, req.ReleaseUUID, req.ComponentID, req.ImageID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // ── Scheduled job runs ──────────────────────────────────────────────────

@@ -263,6 +263,7 @@ func (s *Server) Handler() http.Handler {
 		agentMux.HandleFunc("GET /api/v1/agent/deployer/drainable", s.agentSvc.HandleListDrainable)
 		agentMux.HandleFunc("GET /api/v1/agent/deployer/live-containers", s.agentSvc.HandleListLiveContainers)
 		agentMux.HandleFunc("POST /api/v1/agent/deployer/prunable-images", s.agentSvc.HandleListPrunableImages)
+		agentMux.HandleFunc("POST /api/v1/agent/deployer/image-id", s.agentSvc.HandleRecordImageID)
 		// Scheduled job runs — edge deployer claims and reports runs the
 		// central scheduler produced for this agent's components.
 		agentMux.HandleFunc("POST /api/v1/agent/deployer/job/claim", s.agentSvc.HandleJobClaim)

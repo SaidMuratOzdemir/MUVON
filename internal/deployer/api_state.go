@@ -203,13 +203,38 @@ func (s *APIState) ListLiveManagedContainerIDs(ctx context.Context) (map[string]
 	return out, nil
 }
 
-func (s *APIState) ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]string, error) {
+func (s *APIState) ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]db.PrunableImage, error) {
 	var resp struct {
-		ImageRefs []string `json:"image_refs"`
+		// image_refs stays for a central that predates image ids; a newer one
+		// fills images and the agent prefers it.
+		ImageRefs []string           `json:"image_refs"`
+		Images    []db.PrunableImage `json:"images"`
 	}
 	body := map[string]int{"component_id": componentID, "keep_n": keepN}
-	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/prunable-images", body, &resp)
-	return resp.ImageRefs, err
+	if _, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/prunable-images", body, &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Images) > 0 {
+		return resp.Images, nil
+	}
+	out := make([]db.PrunableImage, 0, len(resp.ImageRefs))
+	for _, ref := range resp.ImageRefs {
+		out = append(out, db.PrunableImage{Ref: ref})
+	}
+	return out, nil
+}
+
+func (s *APIState) RecordImageID(ctx context.Context, releaseUUID string, componentID int, imageID string) error {
+	if imageID == "" {
+		return nil
+	}
+	body := map[string]any{
+		"release_uuid": releaseUUID,
+		"component_id": componentID,
+		"image_id":     imageID,
+	}
+	_, err := s.do(ctx, http.MethodPost, "/api/v1/agent/deployer/image-id", body, nil)
+	return err
 }
 
 // ── Scheduled jobs ──────────────────────────────────────────────────────

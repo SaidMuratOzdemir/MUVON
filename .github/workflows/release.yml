@@ -105,6 +105,13 @@ jobs:
           MUVON_TEST_PG_DSN: postgres://muvon:test@localhost:55432/muvon?sslmode=disable
         run: go test ./internal/db -run TestApplyRetentionAgainstTimescale -v
 
+      # Deleting the wrong image takes down whatever is running on it, so the
+      # rules that decide what may be pruned run against a real planner.
+      - name: Image prune keeps what is in use
+        env:
+          MUVON_TEST_PG_DSN: postgres://muvon:test@localhost:55432/muvon?sslmode=disable
+        run: go test ./internal/db -run TestListPrunableImages -v
+
   build:
     needs: [verify, integration]
     runs-on: ubuntu-latest

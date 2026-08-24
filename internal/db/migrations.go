@@ -1364,4 +1364,16 @@ INSERT INTO settings (key, value) VALUES
     ('compression_bodies_days', '7')
 ON CONFLICT (key) DO NOTHING;`,
 	},
+	// image_id is the local Docker image ID a reference resolved to when the
+	// deployment pulled it. Pruning by reference cannot collect an image whose
+	// reference has moved: a re-pulled tag leaves the previous image with no
+	// tag and no repo digest, so nothing that looks it up by name finds it
+	// again and it stays on disk forever. The ID is the handle that survives
+	// that. Rows written before this column carry '' and fall back to the
+	// reference, which is all the old behaviour ever had.
+	{
+		name: "add_deploy_release_components_image_id", product: "muvon",
+		sql: `ALTER TABLE deploy_release_components
+		  ADD COLUMN IF NOT EXISTS image_id TEXT NOT NULL DEFAULT '';`,
+	},
 }

@@ -190,6 +190,16 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 		if err := s.docker.ImagePull(ctx, imageRef); err != nil {
 			return fmt.Errorf("pull %s: %w", imageRef, err)
 		}
+		// Record what the reference resolved to. A reference is not a durable
+		// handle: pulling a tag that moves leaves the previous image with no
+		// tag and no repo digest, and pruning by name can never see it again.
+		// Best effort, because a deployment that pulled and is about to start
+		// should not fail over a bookkeeping write.
+		if imageID, err := s.docker.ImageID(ctx, imageRef); err != nil {
+			slog.Warn("resolve image id failed", "component", component.Slug, "image", imageRef, "error", err)
+		} else if err := s.state.RecordImageID(ctx, item.Release.ReleaseUUID, component.ID, imageID); err != nil {
+			slog.Warn("record image id failed", "component", component.Slug, "image", imageRef, "error", err)
+		}
 
 		env, err := s.loadComponentEnv(ctx, component)
 		if err != nil {
@@ -285,29 +295,58 @@ func (s *Service) processDeployment(ctx context.Context, deploymentID string) er
 	return nil
 }
 
-// pruneImagesAfterPromote drops image refs from the local Docker daemon
-// that fall outside each component's keep_releases window and aren't
-// still bound to a live instance. The query side handles the in-use
-// exclusion; here we just iterate and call Docker. Docker's own refcount
-// catches anything the SQL missed (returns 409 → ImageRemove swallows).
+// pruneImagesAfterPromote drops images from the local Docker daemon that fall
+// outside each component's keep_releases window and are not bound to a live
+// instance. The query side handles both exclusions, by reference and by image
+// ID, so a reference shared with a kept release cannot be removed here.
+//
+// Two things make this different from asking Docker about every historical
+// reference. The daemon's own image list is read once and only images actually
+// present are attempted, which keeps the work proportional to what is on disk
+// rather than to how many times the component has ever been deployed. And an
+// image is removed by the ID recorded at pull time when there is one, because
+// that is the handle that survives a tag moving; the reference is the fallback
+// for rows written before the ID was recorded.
+//
+// Nothing is forced. A container still holding an image answers 409, which is
+// almost always the draining instance from this very promote, and it goes away
+// on its own once the drain completes.
 func (s *Service) pruneImagesAfterPromote(ctx context.Context, plan db.DeploymentPlan) {
+	local, err := s.docker.LocalImageIDs(ctx)
+	if err != nil {
+		slog.Warn("image prune skipped: cannot list local images", "error", err)
+		return
+	}
+
 	for _, item := range plan.Components {
 		component := item.Component
 		keep := component.KeepReleases
 		if keep < 1 {
 			keep = 3
 		}
-		refs, err := s.state.ListPrunableImageRefs(ctx, component.ID, keep)
+		images, err := s.state.ListPrunableImageRefs(ctx, component.ID, keep)
 		if err != nil {
 			slog.Warn("image prune query failed", "component", component.Slug, "error", err)
 			continue
 		}
-		for _, ref := range refs {
-			if err := s.docker.ImageRemove(ctx, ref, false); err != nil {
-				slog.Warn("image prune remove failed", "component", component.Slug, "image", ref, "error", err)
+		for _, img := range images {
+			target := img.ID
+			if target == "" {
+				// Pre-dates the recorded ID. Attempt by reference, which is
+				// what this always did; if the reference has already moved,
+				// Docker answers absent and nothing is logged as removed.
+				target = img.Ref
+			} else if _, present := local[img.ID]; !present {
 				continue
 			}
-			slog.Info("pruned image", "component", component.Slug, "image", ref)
+			outcome, err := s.docker.ImageRemove(ctx, target, false)
+			if err != nil {
+				slog.Warn("image prune remove failed", "component", component.Slug, "image", img.Ref, "error", err)
+				continue
+			}
+			if outcome == ImageDeleted {
+				slog.Info("pruned image", "component", component.Slug, "image", img.Ref)
+			}
 		}
 	}
 }

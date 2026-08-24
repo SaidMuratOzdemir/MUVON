@@ -90,12 +90,12 @@ type restartPolicy struct {
 // omitempty keeps unused options out of the wire payload so Docker
 // applies its own defaults.
 type dockerMount struct {
-	Type          string                     `json:"Type"`
-	Source        string                     `json:"Source,omitempty"`
-	Target        string                     `json:"Target"`
-	ReadOnly      bool                       `json:"ReadOnly,omitempty"`
-	BindOptions   *dockerMountBindOptions    `json:"BindOptions,omitempty"`
-	VolumeOptions *dockerMountVolumeOptions  `json:"VolumeOptions,omitempty"`
+	Type          string                    `json:"Type"`
+	Source        string                    `json:"Source,omitempty"`
+	Target        string                    `json:"Target"`
+	ReadOnly      bool                      `json:"ReadOnly,omitempty"`
+	BindOptions   *dockerMountBindOptions   `json:"BindOptions,omitempty"`
+	VolumeOptions *dockerMountVolumeOptions `json:"VolumeOptions,omitempty"`
 }
 
 type dockerMountBindOptions struct {
@@ -324,27 +324,105 @@ func (c *DockerClient) ContainerRemove(ctx context.Context, id string, force boo
 	return nil
 }
 
-// ImageRemove deletes an image by reference (e.g. "ghcr.io/org/app:abc123").
-// 404 (already gone) and 409 (still referenced by another container/image)
-// are treated as success — the call is best-effort cleanup, the next tick
-// retries anything still standing. Other 4xx/5xx return a real error.
-func (c *DockerClient) ImageRemove(ctx context.Context, imageRef string, force bool) error {
+// ImageOutcome is what Docker did with a removal request. The three cases
+// need different handling and used to be collapsed into one: reporting
+// "absent" and "in use" as success made the caller log a deletion that never
+// happened and retry the same reference on every deployment.
+type ImageOutcome int
+
+const (
+	// ImageDeleted means Docker removed or untagged something.
+	ImageDeleted ImageOutcome = iota
+	// ImageAbsent means there is nothing here by that name (404). Not an
+	// error: the image was already gone.
+	ImageAbsent
+	// ImageInUse means a container or another image still references it
+	// (409). Also not an error, and deliberately not forced: the reference
+	// is usually a draining container that is about to go away on its own.
+	ImageInUse
+)
+
+func (o ImageOutcome) String() string {
+	switch o {
+	case ImageDeleted:
+		return "deleted"
+	case ImageAbsent:
+		return "absent"
+	case ImageInUse:
+		return "in use"
+	}
+	return "unknown"
+}
+
+// ImageRemove deletes an image by reference or ID. It reports which of the
+// three outcomes happened; only a real transport or server failure is an
+// error.
+func (c *DockerClient) ImageRemove(ctx context.Context, imageRef string, force bool) (ImageOutcome, error) {
 	q := ""
 	if force {
 		q = "?force=true"
 	}
 	resp, err := c.do(ctx, http.MethodDelete, "/images/"+url.PathEscape(imageRef)+q, nil)
 	if err != nil {
-		return err
+		return ImageAbsent, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusConflict {
-		return nil
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return ImageAbsent, nil
+	case resp.StatusCode == http.StatusConflict:
+		return ImageInUse, nil
+	case resp.StatusCode >= 300:
+		return ImageAbsent, dockerError(resp)
 	}
+	return ImageDeleted, nil
+}
+
+// ImageID resolves a reference to the local image ID it currently points at.
+// Recorded at deploy time because it is the only handle that survives the
+// reference moving: a re-pulled tag leaves the previous image with no tag and
+// no repo digest, and nothing that looks it up by name can find it again.
+func (c *DockerClient) ImageID(ctx context.Context, imageRef string) (string, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/images/"+url.PathEscape(imageRef)+"/json", nil)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return dockerError(resp)
+		return "", dockerError(resp)
 	}
-	return nil
+	var out struct {
+		ID string `json:"Id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("decode image inspect: %w", err)
+	}
+	return out.ID, nil
+}
+
+// LocalImageIDs is the set of image IDs this daemon holds. The prune reads it
+// once so it can skip every historical reference that is not here, instead of
+// asking Docker about each one.
+func (c *DockerClient) LocalImageIDs(ctx context.Context) (map[string]struct{}, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/images/json?all=false", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, dockerError(resp)
+	}
+	var list []struct {
+		ID string `json:"Id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		return nil, fmt.Errorf("decode image list: %w", err)
+	}
+	out := make(map[string]struct{}, len(list))
+	for _, img := range list {
+		out[img.ID] = struct{}{}
+	}
+	return out, nil
 }
 
 type ContainerSummary struct {
@@ -631,12 +709,12 @@ const (
 // always set; the rest is best-effort (Docker's events stream gives us
 // labels + image on the same payload).
 type ContainerEvent struct {
-	Time    time.Time
-	Kind    ContainerEventKind
-	ID      string
-	Name    string
-	Image   string
-	Labels  map[string]string
+	Time   time.Time
+	Kind   ContainerEventKind
+	ID     string
+	Name   string
+	Image  string
+	Labels map[string]string
 }
 
 // EventsStream subscribes to /events?type=container and emits one

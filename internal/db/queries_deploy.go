@@ -1187,6 +1187,39 @@ func (d *DB) PromoteDeployInstances(ctx context.Context, deploymentID string, ca
 	return tx.Commit(ctx)
 }
 
+// RecordImageID stores the local Docker image ID a reference resolved to, so
+// the image stays findable after the reference moves. Best effort by design:
+// the deployment is already underway and a missing ID only costs the next
+// prune its precision, so callers log a failure rather than abort on it.
+func (d *DB) RecordImageID(ctx context.Context, releaseUUID string, componentID int, imageID string) error {
+	return d.RecordImageIDForAgent(ctx, "", releaseUUID, componentID, imageID)
+}
+
+// RecordImageIDForAgent is the agent-scoped variant. The component filter is
+// what stops one agent writing against another's rows, matching how the rest
+// of this surface enforces ownership.
+func (d *DB) RecordImageIDForAgent(ctx context.Context, agentID, releaseUUID string, componentID int, imageID string) error {
+	if imageID == "" {
+		return nil
+	}
+	filter := "AND c.agent_id IS NULL"
+	args := []any{releaseUUID, componentID, imageID}
+	if agentID != "" {
+		filter = "AND c.agent_id = $4"
+		args = append(args, agentID)
+	}
+	_, err := d.Pool.Exec(ctx,
+		`UPDATE deploy_release_components rc
+		    SET image_id = $3, updated_at = now()
+		   FROM deploy_components c
+		  WHERE c.id = rc.component_id
+		    AND rc.release_uuid = $1::uuid AND rc.component_id = $2 `+filter, args...)
+	if err != nil {
+		return fmt.Errorf("record image id: %w", err)
+	}
+	return nil
+}
+
 func (d *DB) FailDeployment(ctx context.Context, deploymentID, message string) error {
 	tx, err := d.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -1369,11 +1402,19 @@ func (d *DB) ListLiveManagedContainerIDsForAgent(ctx context.Context, agentID st
 // Scoped via the central wrapper (NULL agent_id). Edge agents reach this
 // through the *ForAgent variant which restricts results to their own
 // components, so each side only prunes images on its own Docker daemon.
-func (d *DB) ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]string, error) {
+// PrunableImage is one candidate for removal. ID is the local Docker image ID
+// recorded when the deployment pulled it, and is empty for rows written before
+// that column existed; the caller falls back to Ref for those.
+type PrunableImage struct {
+	Ref string `json:"ref"`
+	ID  string `json:"id"`
+}
+
+func (d *DB) ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]PrunableImage, error) {
 	return d.ListPrunableImageRefsForAgent(ctx, "", componentID, keepN)
 }
 
-func (d *DB) ListPrunableImageRefsForAgent(ctx context.Context, agentID string, componentID, keepN int) ([]string, error) {
+func (d *DB) ListPrunableImageRefsForAgent(ctx context.Context, agentID string, componentID, keepN int) ([]PrunableImage, error) {
 	if keepN < 1 {
 		keepN = 1
 	}
@@ -1389,7 +1430,7 @@ func (d *DB) ListPrunableImageRefsForAgent(ctx context.Context, agentID string, 
 	}
 	rows, err := d.Pool.Query(ctx,
 		`WITH keep AS (
-		    SELECT rc.image_ref
+		    SELECT rc.image_ref, rc.image_id
 		      FROM deploy_release_components rc
 		      JOIN deploy_releases r ON r.id = rc.release_uuid
 		      JOIN deploy_components c ON c.id = rc.component_id
@@ -1398,7 +1439,7 @@ func (d *DB) ListPrunableImageRefsForAgent(ctx context.Context, agentID string, 
 		     ORDER BY r.created_at DESC
 		     LIMIT $2
 		 ), in_use AS (
-		    SELECT DISTINCT rc.image_ref
+		    SELECT DISTINCT rc.image_ref, rc.image_id
 		      FROM deploy_instances i
 		      JOIN deploy_release_components rc
 		           ON rc.release_uuid = i.release_uuid AND rc.component_id = i.component_id
@@ -1406,25 +1447,34 @@ func (d *DB) ListPrunableImageRefsForAgent(ctx context.Context, agentID string, 
 		     WHERE i.component_id = $1
 		       AND i.state IN ('warming','active','draining')
 		       AND rc.image_ref != '' `+filter+`
+		 ), keep_ids AS (
+		    SELECT image_id FROM keep WHERE image_id != ''
+		 ), in_use_ids AS (
+		    SELECT image_id FROM in_use WHERE image_id != ''
 		 )
-		 SELECT DISTINCT rc.image_ref
+		 SELECT DISTINCT rc.image_ref, rc.image_id
 		   FROM deploy_release_components rc
 		   JOIN deploy_components c ON c.id = rc.component_id
 		  WHERE rc.component_id = $1 AND rc.image_ref != ''
 		    AND rc.image_ref NOT IN (SELECT image_ref FROM keep)
 		    AND rc.image_ref NOT IN (SELECT image_ref FROM in_use)
+		    -- Two references can resolve to one image, so an ID kept or in
+		    -- use has to be excluded even when this row's reference is not.
+		    AND (rc.image_id = '' OR (
+		         rc.image_id NOT IN (SELECT image_id FROM keep_ids)
+		     AND rc.image_id NOT IN (SELECT image_id FROM in_use_ids)))
 		    `+filter, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list prunable image refs: %w", err)
 	}
 	defer rows.Close()
-	var out []string
+	var out []PrunableImage
 	for rows.Next() {
-		var ref string
-		if err := rows.Scan(&ref); err != nil {
+		var img PrunableImage
+		if err := rows.Scan(&img.Ref, &img.ID); err != nil {
 			return nil, fmt.Errorf("list prunable image refs scan: %w", err)
 		}
-		out = append(out, ref)
+		out = append(out, img)
 	}
 	return out, rows.Err()
 }

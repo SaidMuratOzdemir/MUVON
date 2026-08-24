@@ -23,6 +23,28 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+### BUGFIXES
+
+- **İmaj temizliği imajın kimliğiyle çalışıyor.** Deploy sırasında adın
+  çözüldüğü yerel imaj kimliği kaydediliyor ve temizlik bunun üzerinden
+  yürüyor. Ad kalıcı bir tutamak değildir: hareketli bir etiket yeniden
+  çekildiğinde önceki imaj hem etiketini hem repo digest'ini bırakır ve adıyla
+  aranınca bulunmaz. Bu kolondan önce yazılmış satırlar boş kimlik taşır ve
+  adla denenir.
+
+  Aday sorgusu, saklama penceresindeki ve canlı bir instance'a bağlı imajları
+  adıyla olduğu kadar kimliğiyle de dışarıda tutuyor. İki ad tek bir imaja
+  çözülebildiği için gerekli: aynı içerik yeni bir etiketle yayınlandığında
+  çalışan imaj aday sayılmamalı.
+
+  `ImageRemove` silindi, zaten yok ve kullanımda durumlarını ayrı bildiriyor;
+  yalnız gerçek silme loglanıyor. Silme zorlanmıyor, çünkü 409 çoğunlukla aynı
+  promote'un draining instance'ıdır ve drain bitince kendiliğinden kalkar.
+
+  **Operatör notu:** adı kalmamış imajların kayıtlı kimliği olmadığı için
+  temizlik onları kapsamaz. Diskte yer açmak isterseniz `docker image prune`
+  kullanabilirsiniz.
+
 ## [0.4.0] - 2026-08-24
 
 ### BUGFIXES

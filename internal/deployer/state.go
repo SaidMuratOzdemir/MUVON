@@ -81,12 +81,18 @@ type State interface {
 	// in this set are orphans from a crashed deployment.
 	ListLiveManagedContainerIDs(ctx context.Context) (map[string]struct{}, error)
 
-	// ListPrunableImageRefs returns image refs for a component that are
-	// safe to drop from the local Docker daemon — outside the last keepN
-	// succeeded releases and not bound to any live instance. Called
-	// best-effort after each successful promote; errors are logged but
-	// don't fail the deployment.
-	ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]string, error)
+	// ListPrunableImageRefs returns the images for a component that are safe
+	// to drop from the local Docker daemon: outside the last keepN succeeded
+	// releases and not bound to any live instance, by reference and by image
+	// ID. Called best-effort after each successful promote; errors are logged
+	// but don't fail the deployment.
+	ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]db.PrunableImage, error)
+
+	// RecordImageID stores the local image ID a reference resolved to at pull
+	// time. Without it a reference that later moves takes the image out of
+	// reach: an untagged image has no name and no repo digest, so nothing can
+	// find it again and it stays on disk.
+	RecordImageID(ctx context.Context, releaseUUID string, componentID int, imageID string) error
 
 	// ── Scheduled jobs ──────────────────────────────────────────────────
 	// The scheduler (central muvon) produces pending scheduled_job_runs;
@@ -177,8 +183,12 @@ func (s *dbState) ListLiveManagedContainerIDs(ctx context.Context) (map[string]s
 	return s.db.ListLiveManagedContainerIDsForAgent(ctx, s.agentID)
 }
 
-func (s *dbState) ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]string, error) {
+func (s *dbState) ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]db.PrunableImage, error) {
 	return s.db.ListPrunableImageRefsForAgent(ctx, s.agentID, componentID, keepN)
+}
+
+func (s *dbState) RecordImageID(ctx context.Context, releaseUUID string, componentID int, imageID string) error {
+	return s.db.RecordImageID(ctx, releaseUUID, componentID, imageID)
 }
 
 func (s *dbState) ClaimJobRun(ctx context.Context) (db.ScheduledJobRun, bool, error) {
