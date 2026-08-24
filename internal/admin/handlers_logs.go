@@ -145,6 +145,21 @@ func (s *Server) handleLogStats(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from := q.Get("from")
 	to := q.Get("to")
+	// Same rule as the search endpoint. It matters more here: the stats query
+	// drops a bound it cannot read, so an unparseable value turns a one day
+	// summary into an aggregate over the whole retention window.
+	for _, tb := range []struct {
+		name string
+		val  string
+	}{{"from", from}, {"to", to}} {
+		if tb.val == "" {
+			continue
+		}
+		if err := validTimeBound(tb.name, tb.val); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	if from == "" {
 		from = time.Now().Add(-24 * time.Hour).Format(time.RFC3339)
 	}

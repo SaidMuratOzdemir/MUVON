@@ -62,3 +62,11 @@ export function statusBadgeVariant(status: number): 'default' | 'secondary' | 'd
   if (status < 500) return 'outline'
   return 'destructive'
 }
+
+// `datetime-local` inputs yield "2026-08-23T14:30" in the operator's own
+// timezone. Every API time bound takes RFC3339 and refuses anything else, so
+// the conversion belongs at the call site rather than sending the raw value.
+export function toRFC3339(local: string): string {
+  const d = new Date(local)
+  return isNaN(d.getTime()) ? '' : d.toISOString()
+}

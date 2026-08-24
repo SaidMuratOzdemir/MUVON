@@ -239,14 +239,8 @@ func (s *Server) GetLog(ctx context.Context, req *pb.GetLogRequest) (*pb.LogDeta
 }
 
 func (s *Server) GetLogStats(ctx context.Context, req *pb.GetLogStatsRequest) (*pb.LogStatsResponse, error) {
-	from := time.Now().Add(-24 * time.Hour)
-	to := time.Now()
-	if req.From != "" {
-		from, _ = time.Parse(time.RFC3339, req.From)
-	}
-	if req.To != "" {
-		to, _ = time.Parse(time.RFC3339, req.To)
-	}
+	from := boundOr(req.From, time.Now().Add(-24*time.Hour))
+	to := boundOr(req.To, time.Now())
 
 	stats, err := s.database.GetLogStats(ctx, from, to, s.displayClaimsForHost(req.Host))
 	if err != nil {
@@ -517,4 +511,22 @@ func rawJSONToStringMap(raw json.RawMessage) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// boundOr parses an RFC3339 time bound, keeping the fallback when the value is
+// empty or unreadable. Assigning the parse result directly would replace the
+// fallback with the zero time, and GetLogStats omits a zero bound from its
+// WHERE clause: a caller sending a malformed "from" would silently get an
+// aggregate over everything retained instead of the window it asked for. The
+// admin handler rejects such a value outright; this keeps the failure bounded
+// for any other caller.
+func boundOr(value string, fallback time.Time) time.Time {
+	if value == "" {
+		return fallback
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return fallback
+	}
+	return t
 }

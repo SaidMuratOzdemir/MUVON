@@ -448,11 +448,22 @@ func (s *Server) handleListAudit(w http.ResponseWriter, r *http.Request) {
 	params := db.AuditSearchParams{
 		Action: q.Get("action"),
 	}
-	if v := q.Get("from"); v != "" {
-		params.From, _ = time.Parse(time.RFC3339, v)
-	}
-	if v := q.Get("to"); v != "" {
-		params.To, _ = time.Parse(time.RFC3339, v)
+	// Refused rather than dropped: ListAuditLog skips a zero bound, so an
+	// unparseable value would widen the search to everything while the caller
+	// believes it asked for a day.
+	for _, tb := range []struct {
+		name string
+		dst  *time.Time
+	}{{"from", &params.From}, {"to", &params.To}} {
+		v := q.Get(tb.name)
+		if v == "" {
+			continue
+		}
+		if err := validTimeBound(tb.name, v); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		*tb.dst, _ = time.Parse(time.RFC3339, v)
 	}
 	if v := q.Get("limit"); v != "" {
 		params.Limit, _ = strconv.Atoi(v)

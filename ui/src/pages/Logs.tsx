@@ -18,7 +18,7 @@ import {
 import {
   Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
 } from '@/components/ui/sheet'
-import { cn, statusClass, statusBadgeVariant, formatBytes, relativeTime } from '@/lib/utils'
+import { cn, statusClass, statusBadgeVariant, formatBytes, relativeTime, toRFC3339 } from '@/lib/utils'
 import { EmptyState } from '@/components/EmptyState'
 import * as api from '@/api'
 import type { LogEntry, LogBody } from '@/types'
@@ -203,14 +203,6 @@ function hasFilters(f: Filters) {
     f.response_time_min !== '' || f.status_group !== '' || f.user !== '' ||
     f.search_bodies
   )
-}
-
-// The date inputs are `datetime-local`, which yields "2026-08-23T14:30" in the
-// operator's own timezone. The API takes RFC3339 and refuses anything else, so
-// the conversion happens here rather than being sent verbatim and rejected.
-function toRFC3339(local: string): string {
-  const d = new Date(local)
-  return isNaN(d.getTime()) ? '' : d.toISOString()
 }
 
 // How far back a free-text search reaches when the operator has not chosen a

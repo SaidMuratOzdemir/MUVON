@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn, relativeTime } from '@/lib/utils'
+import { cn, relativeTime, toRFC3339 } from '@/lib/utils'
 import * as api from '@/api'
 import type { AuditEntry } from '@/types'
 
@@ -75,8 +75,8 @@ export default function AuditLog() {
       const res = await api.listAuditLog({
         limit: PAGE_SIZE,
         offset: off,
-        from: filters.from || undefined,
-        to: filters.to || undefined,
+        from: filters.from ? toRFC3339(filters.from) : undefined,
+        to: filters.to ? toRFC3339(filters.to) : undefined,
         action: filters.action || undefined,
       })
       setEntries(res.data)
