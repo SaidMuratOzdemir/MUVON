@@ -114,6 +114,35 @@ jobs:
             echo "value=$(cat VERSION 2>/dev/null || echo dev)" >> "$GITHUB_OUTPUT"
           fi
 
+      # Built into the local daemon first so the scan happens before the push.
+      # A gate that runs afterwards has already handed operators the image it
+      # objects to. The push step below reuses this build from the cache.
+      - name: Build image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: |
+            SERVICE=${{ matrix.service }}
+            VERSION=${{ steps.version.outputs.value }}
+            COMMIT=${{ github.sha }}
+          load: true
+          tags: scan-target:${{ matrix.service }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      # govulncheck in the verify job asks whether a vulnerability is
+      # reachable from this code; this asks whether it is present in the
+      # shipped binary at all. The two disagree on purpose, and the second
+      # question is the one an operator scanning our images will ask.
+      # Unfixed findings are skipped: they are noise until upstream ships
+      # something to move to.
+      - name: Scan image
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.58.1 image --scanners vuln \
+            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            scan-target:${{ matrix.service }}
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
