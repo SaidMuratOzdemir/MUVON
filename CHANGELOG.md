@@ -23,6 +23,8 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-24
+
 ### BUGFIXES
 
 - **Gövde araması artık zaman aşımına düşmüyor.** Serbest metin sorgusu
@@ -67,6 +69,12 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   Hiçbir yol veriyi geri açmaz.
 
 ### ENHANCEMENTS
+
+- **Yükseltme notu.** Migration otomatik uygulanır, operatör adımı yoktur.
+  Yeni sıkıştırma ayarları bugünkü davranışla aynı değerle gelir (ikisi de
+  7 gün), yani yükseltme tek başına hiçbir politikayı değiştirmez. Log arama
+  ucunu doğrudan tüketen bir aracınız varsa: gövde aramasında `total` artık
+  alt sınırdır ve yanıt bunu `total_exact` alanıyla bildirir.
 
 - **Ayarlar ekranı Türkçeleştirildi.** Panel yüzeyinin dili tek dosyada
   karışık kalmasın diye `Settings.tsx` içindeki tüm başlıklar, alan adları ve
