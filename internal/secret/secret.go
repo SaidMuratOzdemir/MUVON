@@ -19,11 +19,10 @@ var (
 )
 
 // Box performs AES-256-GCM encryption and decryption. A Box always holds a
-// key: there is no passthrough mode. One used to exist, and it turned a
-// missing MUVON_ENCRYPTION_KEY into secrets written to the database in the
-// clear while the panel kept masking them, so the operator saw "********"
-// over a readable row. A service that cannot encrypt now refuses to start
-// instead.
+// key and there is no passthrough mode: the read path masks secret values
+// unconditionally, so a Box that stored plaintext would show "********" over
+// a readable row and the weaker mode would be invisible from the panel. A
+// service that cannot encrypt refuses to start instead.
 type Box struct {
 	key [32]byte
 }

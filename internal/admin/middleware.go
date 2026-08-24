@@ -51,8 +51,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 // sessionAccepted reports whether a correctly signed access token should still
 // be honoured. Kept separate from the middleware so the rule can be tested
 // without a database: "the signature is valid" and "the session is still
-// alive" are different questions, and conflating them is what let a revoked
-// session keep working until its TTL ran out.
+// alive" are different questions, and only the second one decides whether a
+// revoked session stops before its TTL runs out.
 func sessionAccepted(user db.AdminUser, claims *Claims) bool {
 	return user.IsActive && user.TokenVersion == claims.TokenVersion
 }
