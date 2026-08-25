@@ -335,7 +335,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Feature | Notes |
 |---------|-------|
 | HTTP Logs | Full request/response capture: headers, bodies, timing, user identity, geolocation |
-| TimescaleDB Hypertables | Daily chunks, 7-day compression, retention from the `retention_days` setting (default 30 days, `0` = keep forever) |
+| TimescaleDB Hypertables | Daily chunks. Compression from the `compression_days` and `compression_bodies_days` settings (default 7 days each, `0` = never compress), retention from `retention_days` (default 30 days, `0` = keep forever) |
 | Full-Text Search | pg_trgm trigram GIN indexes, queried with `ILIKE`, across path, host, user-agent, client IP and `user_identity`; the captured bodies are searched only when the caller opts in, since that is the expensive shape. BM25 was dropped in an early migration because pg_search's operator did not propagate from a TimescaleDB hypertable to its chunks, so root-level queries returned nothing, and the extension itself is now dropped too |
 | UUIDv7 IDs | Time-ordered, K-sortable, no separate timestamp index |
 | SSE Live Tail | Real-time log stream over Server-Sent Events |
@@ -482,9 +482,14 @@ values are read once at startup.
 
 ## Build & Release
 
-`.github/workflows/release.yml` runs a `verify` job first: `go vet`,
-`go test -race -count=1 ./...` and `govulncheck`. The build job depends on it,
-so nothing is published while the gate is red. Operators upgrade to these
+`.github/workflows/release.yml` runs two jobs before anything is published.
+`verify` builds the UI (the binary embeds it), then runs `go vet`,
+`go test -race -count=1 ./...`, `staticcheck` and `govulncheck`. `integration`
+starts a postgres and a timescale container and runs the two tests that need
+real infrastructure: a `pg_dump` taken through the exec stream that
+`pg_restore` accepts, and the retention and image prune rules against a real
+planner. The build job depends on both, and each image is scanned by trivy for
+fixable high and critical advisories before it is pushed, not after. Operators upgrade to these
 images with one click, and a broken test noticed afterwards is noticed too
 late.
 
@@ -584,6 +589,7 @@ access token's lifetime.
 | `POST` | `/api/system/reload` | Reload config from DB and push the change to connected agents over SSE. A snapshot identical to the current one is a no-op |
 | `GET` | `/api/system/retention` | Live retention policies read from the Timescale job catalog, not from the migration |
 | `GET` | `/api/system/version` | Running binary's version + image digest |
+| `GET` | `/api/system/compression` | Enforced compression window per hypertable |
 | `GET` | `/api/system/version/latest` | GHCR `:latest` manifest digest (5 min cache) |
 | `POST` | `/api/system/backup` | Take a `pg_dump -Fc` backup now, verified with `pg_restore -l`; 409 while an upgrade or another backup holds the lock |
 | `GET` | `/api/system/backups` | List the dumps on disk (last 5 are kept) |

@@ -761,12 +761,13 @@ INSERT INTO settings (key, value) VALUES
     ('correlation_export_window_seconds',     '300')
 ON CONFLICT (key) DO NOTHING;`,
 	},
-	// One-shot cleanup for stored string settings whose JSON value got saved
-	// with surrounding whitespace before the admin-side trim landed (a single
-	// leading space in geoip_db_path silently disabled the loader for weeks).
-	// We rebuild the JSONB scalar from a trimmed Go string via to_jsonb so
-	// objects/numbers/booleans are left untouched even though jsonb_typeof
-	// already filters them.
+	// One-shot cleanup for stored string settings that carry surrounding
+	// whitespace, from before the admin side trimmed on write. A path or a
+	// hostname with a leading space is read as a different value than the one
+	// on screen, and nothing about the row shows it. The JSONB scalar is
+	// rebuilt from a trimmed Go string via to_jsonb, so objects, numbers and
+	// booleans are left untouched even though jsonb_typeof already filters
+	// them.
 	{
 		name: "trim_whitespace_in_string_settings", product: "muvon",
 		sql: `

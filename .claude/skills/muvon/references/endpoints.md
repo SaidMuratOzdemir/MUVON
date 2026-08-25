@@ -43,8 +43,8 @@ Every authenticated request re-reads the user row and compares `token_version`, 
 
 | Method | Path | Note |
 |---|---|---|
-| GET | `/api/logs` | Filters: `host`, `path`, `method`, `client_ip`, `user`, `q` (or `search`; free text, trigram `ILIKE`), `status_min`, `status_max`, `from`, `to`, `starred`, `response_time_min`, `response_time_max`, `limit`, `offset`. **There is no `since`, `until` or `status` parameter**: times are absolute RFC3339 in `from`/`to`, and a status range needs `status_min` plus `status_max`. Unknown parameters are ignored silently, so a typo returns unfiltered results rather than an error |
-| GET | `/api/logs/stats` | Aggregations |
+| GET | `/api/logs` | Filters: `host`, `path`, `method`, `client_ip`, `user`, `q` (or `search`; free text, trigram `ILIKE`), `search_bodies` (opt in to searching captured bodies), `status_min`, `status_max`, `from`, `to`, `starred`, `response_time_min`, `response_time_max`, `limit`, `offset`. **There is no `since`, `until` or `status` parameter**: times are absolute RFC3339 in `from`/`to`, and a status range needs `status_min` plus `status_max`. A `from`/`to` that is not RFC3339, and a numeric filter that is not a whole number of zero or more, are refused with 400 naming the parameter. Unknown parameters are still ignored silently, so a typo returns unfiltered results rather than an error |
+| GET | `/api/logs/stats` | Aggregations. Takes `host`, `from`, `to`; the bounds follow the same RFC3339 rule and default to the last 24 hours |
 | GET | `/api/logs/stream` | **SSE**, `text/event-stream`. Use EventSource or `curl -N` |
 | GET | `/api/logs/{id}` | One log with bodies |
 | PUT | `/api/logs/{id}/note` | Operator note |
@@ -54,11 +54,17 @@ Every authenticated request re-reads the user row and compares `token_version`, 
 A handy query looks like
 `/api/logs?limit=20&status_min=500&from=2026-08-23T09:00:00Z`.
 
-**Free text narrows itself to seven days.** When `q` is set and `from` is
-empty, the server silently restricts the search to the last seven days,
-because trigram indexes stop helping once a chunk is compressed. Nothing in
-the response says so, so an empty result does not mean "not found": pass an
-explicit `from` before concluding anything.
+**Free text narrows itself when no range is given.** With `q` set and `from`
+empty the server applies a default window: thirty days, or seven when
+`search_bodies` is on, because a compressed chunk cannot use a trigram index
+and the body branch costs far more per row. An empty result therefore does not
+mean "not found"; pass an explicit `from` before concluding anything. The panel
+shows which window is in force, the API does not.
+
+**`total` is a lower bound when bodies are searched.** The response carries
+`total_exact`; when it is false the body branch could not be counted to the cap
+in usable time and `total` is only what the pages walked so far prove. Search
+does not paginate past 10000 either way.
 
 ## Container logs
 
@@ -116,6 +122,7 @@ Sending `********` back for a secret key is rejected, so a masked read cannot be
 | GET | `/api/system/retention` | Live retention policies read from the Timescale job catalog, not from the migration |
 | POST | `/api/system/reload` | **Side effect**: rehydrates the config holder and pushes over SSE to agents. A snapshot identical to the current one is a no-op |
 | GET | `/api/system/version` | Running binary version and image digest |
+| GET | `/api/system/compression` | Compression window per hypertable as Timescale enforces it, plus how many chunks are already columnar |
 | GET | `/api/system/version/latest` | GHCR `:latest` manifest digest, anonymous HEAD, 5 minute cache |
 | POST | `/api/system/backup` | Takes a verified `pg_dump -Fc` now. 409 while an upgrade or another backup holds the lock |
 | GET | `/api/system/backups` | Lists the dumps on disk (the last 5 are kept) |
@@ -140,7 +147,7 @@ Command state machine: `pending → dispatched → succeeded|failed|expired`. A 
 
 | Method | Path | Note |
 |---|---|---|
-| GET | `/api/audit` | `?limit=N&offset=N` |
+| GET | `/api/audit` | `?limit=N&offset=N&action=X&from=RFC3339&to=RFC3339`. A bound that is not RFC3339 is refused with 400 rather than dropped |
 
 **Warning**: the audit log does not currently distinguish an agent from a human admin (`admin_user: admin` for both). See the discipline section in SKILL.md.
 

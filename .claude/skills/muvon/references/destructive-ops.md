@@ -78,8 +78,8 @@ Note the ownership order: an operator-uploaded certificate wins over autocert, a
 Before calling:
 
 - Read the running version with `GET /api/system/version`.
-- Get the GHCR `:latest` digest with `GET /api/system/version/latest`.
-- If the digests match there is nothing to upgrade; say so.
+- Ask `GET /api/system/version/latest` what the newest published tag is.
+- Trust `update_available` from that response, which is a semver comparison. Do not compare digests: two CI runs on one commit produce different ones, so equality proves nothing either way.
 - Is `take_backup=true`? **It is on by default. Do not turn it off.**
 - Is `target_tag` well formed? (`latest`, `v0`, `v0.1`, `v0.1.0`, or a commit SHA.)
 - Concurrent upgrades are refused with 409. A stream EOF is expected, because the helper container recreates the deployer itself; the handler then polls `127.0.0.1:9443/health` before declaring success.

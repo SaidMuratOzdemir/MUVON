@@ -22,7 +22,7 @@ One Go module (`muvon`), four independent binaries:
 
 One PostgreSQL 18 instance with **schema isolation**. Extensions in use:
 
-- **TimescaleDB**: `http_logs`, `http_log_bodies`, `alerts`, `container_logs` and `client_events` hypertables, 7-day compression. Retention comes from the `retention_days` setting (default 30 days, `0` keeps forever); dialog-siem reconciles the Timescale job catalog against that setting. `GET /api/system/retention` returns what is actually applied.
+- **TimescaleDB**: `http_logs`, `http_log_bodies`, `alerts`, `container_logs` and `client_events` hypertables. Compression and retention both come from settings that dialog-siem reconciles into the Timescale job catalog: `compression_days` and `compression_bodies_days` (default 7 days each, `0` never compresses) and `retention_days` (default 30 days, `0` keeps forever). `GET /api/system/compression` and `GET /api/system/retention` return what is actually applied. A compressed chunk cannot use a GIN index, so the uncompressed window is also the window where trigram search stays indexed.
 - **pg_trgm**: GIN trigram indexes queried with `ILIKE` over path, host, user_agent, client_ip and `user_identity::text`. This is all of log search; there is no BM25. Body columns are indexed the same way but only searched when the caller passes `search_bodies`.
 - **pg_uuidv7**: primary keys are time-ordered, so `ORDER BY id` is chronological.
 
@@ -82,7 +82,7 @@ Code is shared through the `internal/deployer/State` interface:
 
 **Secret env vars:** values for keys listed in `deploy_components.env_secret_keys` are `enc:`-prefixed AES-256-GCM ciphertext. The deployer decrypts them when starting the container. Central's `MUVON_ENCRYPTION_KEY`, the deployer's copy and the edge's `AGENT_ENCRYPTION_KEY` must be **identical**, or the container cannot start.
 
-**Cleanup and image prune.** Every tick starts with three maintenance steps: (1) `cleanupDraining` stops and force-removes draining containers, retrying on the next tick if removal fails (the row stays `draining` until Docker confirms); (2) `reconcileOrphanContainers` lists `muvon.managed=true` containers with `ContainerListAll(all=1)` and removes those the DB does not consider live, exited carcasses included; (3) `CleanupStaleWarming` marks instances left warming after their deployment ended as unhealthy. After a successful promote, `pruneImagesAfterPromote` runs: per component, image refs outside `keep_releases` (default 3, SQL CHECK >= 1) and not bound to a live instance are removed locally. Docker's own refcount plus the SQL-side `in_use` filter are the two safety nets; 409 (in use) and 404 (already gone) are swallowed.
+**Cleanup and image prune.** Every tick starts with three maintenance steps: (1) `cleanupDraining` stops and force-removes draining containers, retrying on the next tick if removal fails (the row stays `draining` until Docker confirms); (2) `reconcileOrphanContainers` lists `muvon.managed=true` containers with `ContainerListAll(all=1)` and removes those the DB does not consider live, exited carcasses included; (3) `CleanupStaleWarming` marks instances left warming after their deployment ended as unhealthy. After a successful promote, `pruneImagesAfterPromote` runs: per component, images outside `keep_releases` (default 3, SQL CHECK >= 1) and not bound to a live instance are removed locally. Removal works from the image ID recorded at pull time, because a reference stops reaching the image once a tag moves off it. Docker reports removed, absent or in use, and only the first counts as a deletion; in use is left alone, since it is usually the draining instance from that same promote.
 
 ### Anatomy of an edge agent host
 
@@ -122,7 +122,7 @@ Destructive commands (`agent.revoke`, `agent.restart`, `agent.self_upgrade`, `ag
 
 One-click upgrade from Settings, "Sistem" panel. The flow:
 
-1. `GET /api/system/version` returns the running binary's version; `GET /api/system/version/latest` returns the GHCR `:latest` digest via an anonymous manifest HEAD (5 minute cache). The UI compares them.
+1. `GET /api/system/version` returns the running binary's version; `GET /api/system/version/latest` returns the newest published tag and reports `update_available` from a semver comparison. The digest travels along for display only: two CI runs on one commit produce different digests, so digest equality is not a usable signal.
 2. `POST /api/system/upgrade {target_tag, take_backup}` goes from admin to the deployer over the gRPC `SystemUpgrade` server-streaming RPC.
 3. The deployer takes an in-process mutex (409 on concurrent), normalises the target tag (strips a leading `v`), streams `pg_dump -Fc` out of the postgres container, and spawns a `docker:27-cli` helper container mounting the Docker socket plus `/opt/muvon:/host/muvon:rw`.
 4. The helper script refreshes the compose file from GitHub raw with `wget`, rewrites `:latest` to `:<target>` with `sed`, runs `compose pull`, then `compose up -d --no-deps --wait muvon dialog-siem`, and finally `compose up -d --no-deps --wait muvon-deployer` (last, because the deployer is the helper's own spawner).
