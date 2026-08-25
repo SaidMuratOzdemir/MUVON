@@ -23,7 +23,30 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-25
+
 ### BUGFIXES
+
+- **Log aramasında sayısal filtreler okunamayan değeri reddediyor.**
+  `status_min`, `status_max`, `limit`, `offset` ve yanıt süresi çifti artık
+  tarih sınırlarıyla aynı kuralı izliyor: okunamayan veya negatif bir değer,
+  parametre adını ve değeri söyleyen bir 400 ile geri dönüyor. `offset` ve
+  `limit` doğrudan SQL'e gittiği için negatifi orada sözdizimi hatasıdır ve
+  çağırana içinde veri tabanı mesajı olan bir 500 olarak ulaşır.
+
+  Sayfalama da tavana bağlandı. Gövde araması sorguyu her biri `offset+limit`
+  ile sınırlı iki dala bölüyor ve iki dalın en yeni N kaydının birleşimi ancak
+  N istenen sayfayı kapsadığı sürece global en yeni N kaydı içerir. Tavanın
+  ötesinde dallar istenen sayfaya yetişemez ve satırlar sessizce eksilirdi.
+  Arama iki modda da 10.000'in ötesine sayfalamıyor, ki sayım zaten orada
+  "N+" diyor.
+
+- **Zamanlanmamış bir Timescale işi okunurken tarama düşmüyor.**
+  `next_start` sütunu, henüz zamanlanmamış bir iş için `-infinity` taşıyabilir
+  ve iki sonsuzluk da `*time.Time` içine sığmaz, bu da politika kataloğunu
+  okuyan çağrının tamamını düşürür. Okuyan taraf için ikisi de "sıradaki
+  çalışma yok" demek olduğundan sorgu bunları NULL'a çeviriyor. Sıkıştırma
+  aynı kataloğu aynı şekilde okuyor ve aynı korumayı taşıyor.
 
 - **İmaj temizliği imajın kimliğiyle çalışıyor.** Deploy sırasında adın
   çözüldüğü yerel imaj kimliği kaydediliyor ve temizlik bunun üzerinden
@@ -44,6 +67,38 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   **Operatör notu:** adı kalmamış imajların kayıtlı kimliği olmadığı için
   temizlik onları kapsamaz. Diskte yer açmak isterseniz `docker image prune`
   kullanabilirsiniz.
+
+### ENHANCEMENTS
+
+- **Panel artık kendi kapısından geçiyor.** `eslint`, doğrulama işine eklendi.
+  Panel ürünün yarısı ve dört Go kapısı yeşilken SPA'da bir lint hatası
+  imaja ulaşabiliyordu. `src/components/ui` altındaki shadcn/ui dosyaları
+  hariç tutuldu, çünkü onları linter'a uydurmak takip ettikleri upstream'den
+  ayrışmak demek. `react-hooks/set-state-in-effect` hata değil uyarı: bir
+  dialog ve iki listede, konusu değişince state'i sıfırlayıp veri çeken
+  desende tetikleniyor ve doğru düzeltmesi bileşeni `key` ile yeniden mount
+  etmek, yani bilerek yapılıp bakılması gereken görsel bir değişiklik.
+
+- **Ulaşılmayan kod kaldırıldı.** Çağıranı olmayan altı dışa açık metot,
+  tüketicisi kalmamış `SelfImageDigest` gRPC zinciri (proto, sunucu, istemci
+  ve altındaki `ContainerImageDigest`) ve ileride yazılacak bir handler için
+  canlı tutulan `os/exec` bağı silindi. `staticcheck` yalnız dışa kapalı
+  bildirimleri gördüğü için bu sınıfı yakalamıyor.
+
+- **`deploy.abort` komutu kaldırıldı.** Handler koşulsuz başarısızlık
+  döndürüyordu, panel menüsünde ve dökümanlarda yer almıyordu, ama `AllKinds`
+  içinde olduğu için admin API onu kabul ediyordu. Bir kind bu listeye, bir
+  agent onu yerine getirebildiğinde girer. `POST /api/agents/:id/commands`
+  artık `deploy.abort` için 400 döner; iptal yeteneği eklendiğinde geri gelir.
+
+- **Referans dökümanları kodla hizalandı.** Log uçlarındaki filtre listesinde
+  `search_bodies` yoktu, serbest metin penceresi yedi gün diye yazıyordu
+  (gövdesiz otuz, gövdeli yedi) ve `total`ın gövde aramasında alt sınır
+  olabileceği hiçbir yerde geçmiyordu. Denetim kaydı ucu `from`, `to` ve
+  `action` alıyor. Yükseltme akışı üç yerde digest karşılaştırması diye
+  anlatılıyordu, oysa semver karşılaştırması okunuyor. `GET
+  /api/system/compression` hiçbir uç listesinde yoktu ve sıkıştırma sabit yedi
+  gün diye yazıyordu.
 
 ## [0.4.0] - 2026-08-24
 
