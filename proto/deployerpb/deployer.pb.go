@@ -289,7 +289,7 @@ func (x *ListBackupsResponse) GetKeepLimit() int32 {
 type ListContainersRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// managed_only=true restricts the result to containers labelled
-// muvon.managed=true.
+	// muvon.managed=true.
 	ManagedOnly bool   `protobuf:"varint,1,opt,name=managed_only,json=managedOnly,proto3" json:"managed_only,omitempty"`
 	Project     string `protobuf:"bytes,2,opt,name=project,proto3" json:"project,omitempty"`
 	Component   string `protobuf:"bytes,3,opt,name=component,proto3" json:"component,omitempty"`
@@ -403,7 +403,7 @@ func (x *ListContainersResponse) GetContainers() []*ContainerDetail {
 
 type GetContainerRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ContainerId   string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"` // full ID veya prefix
+	ContainerId   string                 `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"` // full ID or a prefix
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -454,7 +454,7 @@ type ContainerDetail struct {
 	// state is one of Docker's canonical values: created, running, paused,
 	// restarting, removing, exited, dead.
 	State string `protobuf:"bytes,5,opt,name=state,proto3" json:"state,omitempty"`
-	// status — Docker UI'inin gosterdigi insan-okunabilir cumle, ornek:
+	// status is the human-readable sentence Docker shows, for example
 	// "Up 5 minutes (healthy)".
 	Status string            `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
 	Labels map[string]string `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
@@ -600,11 +600,12 @@ type StreamContainerLogsRequest struct {
 	// only; a negative value means the whole existing log, which is expensive
 	// to start with and should not be used.
 	Tail int32 `protobuf:"varint,2,opt,name=tail,proto3" json:"tail,omitempty"`
-	// follow=true bagli kalir ve container son bulana kadar yeni satirlari
-	// surekli gonderir.
+	// follow=true keeps the stream open and keeps sending new lines until the
+	// container ends.
 	Follow bool `protobuf:"varint,3,opt,name=follow,proto3" json:"follow,omitempty"`
-	// streams: bos = "stdout,stderr"; yoksa istenenleri filtrele. Docker
-	// API tarafindaki ayar; sunucu varsayilani stdout+stderr.
+	// streams: empty means "stdout,stderr", otherwise filter to what is asked
+	// for. This maps to the Docker API setting; the server default is
+	// stdout plus stderr.
 	Streams []string `protobuf:"bytes,4,rep,name=streams,proto3" json:"streams,omitempty"`
 	// since is RFC3339: send only lines after that time. Empty falls back to
 	// docker logs' own default behaviour.
@@ -686,7 +687,7 @@ type ContainerLogChunk struct {
 	Stream string `protobuf:"bytes,2,opt,name=stream,proto3" json:"stream,omitempty"`
 	// line is a single log line with its newline stripped.
 	Line string `protobuf:"bytes,3,opt,name=line,proto3" json:"line,omitempty"`
-	// truncated=true: kaynak satir max_line'i astigi icin server tarafindan
+	// truncated=true means the source line exceeded max_line and the server
 	// split it. The UI may join such lines with an ellipsis.
 	Truncated bool `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"`
 	// seq is a monotonic counter inside the server's tail goroutine, used to
@@ -816,8 +817,8 @@ type HealthResponse struct {
 	LastTickAgeSeconds int64 `protobuf:"varint,2,opt,name=last_tick_age_seconds,json=lastTickAgeSeconds,proto3" json:"last_tick_age_seconds,omitempty"`
 	// active_tail_streams is how many StreamContainerLogs calls are live.
 	ActiveTailStreams int32 `protobuf:"varint,3,opt,name=active_tail_streams,json=activeTailStreams,proto3" json:"active_tail_streams,omitempty"`
-	// shipper_active = logship aktif container sayisi (persistans icin
-	// tail edilenler).
+	// shipper_active_containers is how many containers logship is tailing for
+	// persistence.
 	ShipperActiveContainers int32 `protobuf:"varint,4,opt,name=shipper_active_containers,json=shipperActiveContainers,proto3" json:"shipper_active_containers,omitempty"`
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
@@ -881,88 +882,6 @@ func (x *HealthResponse) GetShipperActiveContainers() int32 {
 	return 0
 }
 
-type SelfImageDigestRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SelfImageDigestRequest) Reset() {
-	*x = SelfImageDigestRequest{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[13]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SelfImageDigestRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SelfImageDigestRequest) ProtoMessage() {}
-
-func (x *SelfImageDigestRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[13]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SelfImageDigestRequest.ProtoReflect.Descriptor instead.
-func (*SelfImageDigestRequest) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{13}
-}
-
-type SelfImageDigestResponse struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// The image digest each service's container is running.
-	// A missing service means unknown: no container, or Docker errored.
-	Digests       map[string]string `protobuf:"bytes,1,rep,name=digests,proto3" json:"digests,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SelfImageDigestResponse) Reset() {
-	*x = SelfImageDigestResponse{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[14]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SelfImageDigestResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SelfImageDigestResponse) ProtoMessage() {}
-
-func (x *SelfImageDigestResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[14]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SelfImageDigestResponse.ProtoReflect.Descriptor instead.
-func (*SelfImageDigestResponse) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{14}
-}
-
-func (x *SelfImageDigestResponse) GetDigests() map[string]string {
-	if x != nil {
-		return x.Digests
-	}
-	return nil
-}
-
 type SystemUpgradeRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// target_tag is ":latest" (the default), ":v0.1.0" and so on. It is
@@ -977,7 +896,7 @@ type SystemUpgradeRequest struct {
 
 func (x *SystemUpgradeRequest) Reset() {
 	*x = SystemUpgradeRequest{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[15]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -989,7 +908,7 @@ func (x *SystemUpgradeRequest) String() string {
 func (*SystemUpgradeRequest) ProtoMessage() {}
 
 func (x *SystemUpgradeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[15]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1002,7 +921,7 @@ func (x *SystemUpgradeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SystemUpgradeRequest.ProtoReflect.Descriptor instead.
 func (*SystemUpgradeRequest) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{15}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *SystemUpgradeRequest) GetTargetTag() string {
@@ -1037,7 +956,7 @@ type UpgradeEvent struct {
 
 func (x *UpgradeEvent) Reset() {
 	*x = UpgradeEvent{}
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[16]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1049,7 +968,7 @@ func (x *UpgradeEvent) String() string {
 func (*UpgradeEvent) ProtoMessage() {}
 
 func (x *UpgradeEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_deployerpb_deployer_proto_msgTypes[16]
+	mi := &file_proto_deployerpb_deployer_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1062,7 +981,7 @@ func (x *UpgradeEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpgradeEvent.ProtoReflect.Descriptor instead.
 func (*UpgradeEvent) Descriptor() ([]byte, []int) {
-	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{16}
+	return file_proto_deployerpb_deployer_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *UpgradeEvent) GetStep() string {
@@ -1175,13 +1094,7 @@ const file_proto_deployerpb_deployer_proto_rawDesc = "" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x121\n" +
 	"\x15last_tick_age_seconds\x18\x02 \x01(\x03R\x12lastTickAgeSeconds\x12.\n" +
 	"\x13active_tail_streams\x18\x03 \x01(\x05R\x11activeTailStreams\x12:\n" +
-	"\x19shipper_active_containers\x18\x04 \x01(\x05R\x17shipperActiveContainers\"\x18\n" +
-	"\x16SelfImageDigestRequest\"\xa1\x01\n" +
-	"\x17SelfImageDigestResponse\x12J\n" +
-	"\adigests\x18\x01 \x03(\v20.deployerpb.SelfImageDigestResponse.DigestsEntryR\adigests\x1a:\n" +
-	"\fDigestsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"V\n" +
+	"\x19shipper_active_containers\x18\x04 \x01(\x05R\x17shipperActiveContainers\"V\n" +
 	"\x14SystemUpgradeRequest\x12\x1d\n" +
 	"\n" +
 	"target_tag\x18\x01 \x01(\tR\ttargetTag\x12\x1f\n" +
@@ -1192,13 +1105,12 @@ const file_proto_deployerpb_deployer_proto_rawDesc = "" +
 	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
 	"\ttimestamp\x18\x04 \x01(\tR\ttimestamp\x12\x12\n" +
-	"\x04done\x18\x05 \x01(\bR\x04done2\xa7\x05\n" +
+	"\x04done\x18\x05 \x01(\bR\x04done2\xcb\x04\n" +
 	"\x0fDeployerService\x12W\n" +
 	"\x0eListContainers\x12!.deployerpb.ListContainersRequest\x1a\".deployerpb.ListContainersResponse\x12L\n" +
 	"\fGetContainer\x12\x1f.deployerpb.GetContainerRequest\x1a\x1b.deployerpb.ContainerDetail\x12^\n" +
 	"\x13StreamContainerLogs\x12&.deployerpb.StreamContainerLogsRequest\x1a\x1d.deployerpb.ContainerLogChunk0\x01\x12?\n" +
-	"\x06Health\x12\x19.deployerpb.HealthRequest\x1a\x1a.deployerpb.HealthResponse\x12Z\n" +
-	"\x0fSelfImageDigest\x12\".deployerpb.SelfImageDigestRequest\x1a#.deployerpb.SelfImageDigestResponse\x12M\n" +
+	"\x06Health\x12\x19.deployerpb.HealthRequest\x1a\x1a.deployerpb.HealthResponse\x12M\n" +
 	"\rSystemUpgrade\x12 .deployerpb.SystemUpgradeRequest\x1a\x18.deployerpb.UpgradeEvent0\x01\x12Q\n" +
 	"\fCreateBackup\x12\x1f.deployerpb.CreateBackupRequest\x1a .deployerpb.CreateBackupResponse\x12N\n" +
 	"\vListBackups\x12\x1e.deployerpb.ListBackupsRequest\x1a\x1f.deployerpb.ListBackupsResponseB\x18Z\x16muvon/proto/deployerpbb\x06proto3"
@@ -1215,7 +1127,7 @@ func file_proto_deployerpb_deployer_proto_rawDescGZIP() []byte {
 	return file_proto_deployerpb_deployer_proto_rawDescData
 }
 
-var file_proto_deployerpb_deployer_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_proto_deployerpb_deployer_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_proto_deployerpb_deployer_proto_goTypes = []any{
 	(*CreateBackupRequest)(nil),        // 0: deployerpb.CreateBackupRequest
 	(*CreateBackupResponse)(nil),       // 1: deployerpb.CreateBackupResponse
@@ -1230,39 +1142,33 @@ var file_proto_deployerpb_deployer_proto_goTypes = []any{
 	(*ContainerLogChunk)(nil),          // 10: deployerpb.ContainerLogChunk
 	(*HealthRequest)(nil),              // 11: deployerpb.HealthRequest
 	(*HealthResponse)(nil),             // 12: deployerpb.HealthResponse
-	(*SelfImageDigestRequest)(nil),     // 13: deployerpb.SelfImageDigestRequest
-	(*SelfImageDigestResponse)(nil),    // 14: deployerpb.SelfImageDigestResponse
-	(*SystemUpgradeRequest)(nil),       // 15: deployerpb.SystemUpgradeRequest
-	(*UpgradeEvent)(nil),               // 16: deployerpb.UpgradeEvent
-	nil,                                // 17: deployerpb.ContainerDetail.LabelsEntry
-	nil,                                // 18: deployerpb.SelfImageDigestResponse.DigestsEntry
+	(*SystemUpgradeRequest)(nil),       // 13: deployerpb.SystemUpgradeRequest
+	(*UpgradeEvent)(nil),               // 14: deployerpb.UpgradeEvent
+	nil,                                // 15: deployerpb.ContainerDetail.LabelsEntry
 }
 var file_proto_deployerpb_deployer_proto_depIdxs = []int32{
 	2,  // 0: deployerpb.ListBackupsResponse.backups:type_name -> deployerpb.BackupInfo
 	8,  // 1: deployerpb.ListContainersResponse.containers:type_name -> deployerpb.ContainerDetail
-	17, // 2: deployerpb.ContainerDetail.labels:type_name -> deployerpb.ContainerDetail.LabelsEntry
-	18, // 3: deployerpb.SelfImageDigestResponse.digests:type_name -> deployerpb.SelfImageDigestResponse.DigestsEntry
-	5,  // 4: deployerpb.DeployerService.ListContainers:input_type -> deployerpb.ListContainersRequest
-	7,  // 5: deployerpb.DeployerService.GetContainer:input_type -> deployerpb.GetContainerRequest
-	9,  // 6: deployerpb.DeployerService.StreamContainerLogs:input_type -> deployerpb.StreamContainerLogsRequest
-	11, // 7: deployerpb.DeployerService.Health:input_type -> deployerpb.HealthRequest
-	13, // 8: deployerpb.DeployerService.SelfImageDigest:input_type -> deployerpb.SelfImageDigestRequest
-	15, // 9: deployerpb.DeployerService.SystemUpgrade:input_type -> deployerpb.SystemUpgradeRequest
-	0,  // 10: deployerpb.DeployerService.CreateBackup:input_type -> deployerpb.CreateBackupRequest
-	3,  // 11: deployerpb.DeployerService.ListBackups:input_type -> deployerpb.ListBackupsRequest
-	6,  // 12: deployerpb.DeployerService.ListContainers:output_type -> deployerpb.ListContainersResponse
-	8,  // 13: deployerpb.DeployerService.GetContainer:output_type -> deployerpb.ContainerDetail
-	10, // 14: deployerpb.DeployerService.StreamContainerLogs:output_type -> deployerpb.ContainerLogChunk
-	12, // 15: deployerpb.DeployerService.Health:output_type -> deployerpb.HealthResponse
-	14, // 16: deployerpb.DeployerService.SelfImageDigest:output_type -> deployerpb.SelfImageDigestResponse
-	16, // 17: deployerpb.DeployerService.SystemUpgrade:output_type -> deployerpb.UpgradeEvent
-	1,  // 18: deployerpb.DeployerService.CreateBackup:output_type -> deployerpb.CreateBackupResponse
-	4,  // 19: deployerpb.DeployerService.ListBackups:output_type -> deployerpb.ListBackupsResponse
-	12, // [12:20] is the sub-list for method output_type
-	4,  // [4:12] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	15, // 2: deployerpb.ContainerDetail.labels:type_name -> deployerpb.ContainerDetail.LabelsEntry
+	5,  // 3: deployerpb.DeployerService.ListContainers:input_type -> deployerpb.ListContainersRequest
+	7,  // 4: deployerpb.DeployerService.GetContainer:input_type -> deployerpb.GetContainerRequest
+	9,  // 5: deployerpb.DeployerService.StreamContainerLogs:input_type -> deployerpb.StreamContainerLogsRequest
+	11, // 6: deployerpb.DeployerService.Health:input_type -> deployerpb.HealthRequest
+	13, // 7: deployerpb.DeployerService.SystemUpgrade:input_type -> deployerpb.SystemUpgradeRequest
+	0,  // 8: deployerpb.DeployerService.CreateBackup:input_type -> deployerpb.CreateBackupRequest
+	3,  // 9: deployerpb.DeployerService.ListBackups:input_type -> deployerpb.ListBackupsRequest
+	6,  // 10: deployerpb.DeployerService.ListContainers:output_type -> deployerpb.ListContainersResponse
+	8,  // 11: deployerpb.DeployerService.GetContainer:output_type -> deployerpb.ContainerDetail
+	10, // 12: deployerpb.DeployerService.StreamContainerLogs:output_type -> deployerpb.ContainerLogChunk
+	12, // 13: deployerpb.DeployerService.Health:output_type -> deployerpb.HealthResponse
+	14, // 14: deployerpb.DeployerService.SystemUpgrade:output_type -> deployerpb.UpgradeEvent
+	1,  // 15: deployerpb.DeployerService.CreateBackup:output_type -> deployerpb.CreateBackupResponse
+	4,  // 16: deployerpb.DeployerService.ListBackups:output_type -> deployerpb.ListBackupsResponse
+	10, // [10:17] is the sub-list for method output_type
+	3,  // [3:10] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_proto_deployerpb_deployer_proto_init() }
@@ -1276,7 +1182,7 @@ func file_proto_deployerpb_deployer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_deployerpb_deployer_proto_rawDesc), len(file_proto_deployerpb_deployer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   19,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

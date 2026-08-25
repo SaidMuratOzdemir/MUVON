@@ -846,7 +846,6 @@ export type AgentCommandKind =
   | "cert.renew"
   | "container.restart"
   | "agent.drain"
-  | "deploy.abort"
   | "agent.restart"
   | "agent.self_upgrade"
   | "agent.revoke"

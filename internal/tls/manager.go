@@ -20,8 +20,8 @@ import (
 )
 
 type Manager struct {
-	autocertMgr *autocert.Manager
-	certStore   *CertStore
+	autocertMgr  *autocert.Manager
+	certStore    *CertStore
 	configHolder *config.Holder
 	// agentSync is set on agent binaries to consult central for a manual
 	// cert before falling back to ACME, and to push freshly-issued ACME
@@ -196,10 +196,6 @@ func (m *Manager) HTTPHandler(fallback http.Handler) http.Handler {
 
 func (m *Manager) TLSConfig() *tls.Config {
 	return HardenedTLSConfig(m.GetCertificate)
-}
-
-func (m *Manager) AutocertManager() *autocert.Manager {
-	return m.autocertMgr
 }
 
 func (m *Manager) InvalidateCache(domain string) {
@@ -377,8 +373,8 @@ func NewManagerNoDB(configHolder *config.Holder, cacheDir string, sync *AgentCer
 	cache = NewReportingCache(cache, sync)
 
 	am := &autocert.Manager{
-		Prompt:     autocert.AcceptTOS,
-		Cache:      cache,
+		Prompt: autocert.AcceptTOS,
+		Cache:  cache,
 		// Agents are scoped already by config payload filtering — any host
 		// they see is theirs to terminate. Pass selfKind/agentID empty so
 		// the policy only enforces tls_mode rules, not ownership.

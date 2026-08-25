@@ -525,15 +525,6 @@ func (d *DB) LoadActiveRoutes(ctx context.Context) ([]Host, map[int][]Route, err
 
 // --- Settings ---
 
-func (d *DB) GetSetting(ctx context.Context, key string) (string, error) {
-	var val string
-	err := d.Pool.QueryRow(ctx, `SELECT value FROM muvon.settings WHERE key = $1`, key).Scan(&val)
-	if err != nil {
-		return "", fmt.Errorf("get setting %s: %w", key, err)
-	}
-	return val, nil
-}
-
 func (d *DB) GetAllSettings(ctx context.Context) (map[string]json.RawMessage, error) {
 	rows, err := d.Pool.Query(ctx, `SELECT key, value FROM muvon.settings ORDER BY key`)
 	if err != nil {
@@ -724,16 +715,6 @@ func (d *DB) AcmeCacheGet(ctx context.Context, key string) ([]byte, error) {
 		return nil, fmt.Errorf("acme cache get %s: %w", key, err)
 	}
 	return data, nil
-}
-
-func (d *DB) AcmeCachePut(ctx context.Context, key string, data []byte) error {
-	_, err := d.Pool.Exec(ctx,
-		`INSERT INTO acme_cache (key, data, updated_at)
-		 VALUES ($1, $2, now())
-		 ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
-		key, data,
-	)
-	return err
 }
 
 func (d *DB) AcmeCacheDelete(ctx context.Context, key string) error {

@@ -35,25 +35,25 @@ type Agent struct {
 	// uses when telling the operator what to point DNS at, because
 	// LastRemoteAddr in private-network topologies is the agent's
 	// private interface and useless for DNS verification.
-	PublicIP         string     `json:"public_ip"`
+	PublicIP string `json:"public_ip"`
 	// ExtraMounts are operator-defined host paths the agent should bind
 	// read-only into its container so the embedded deployer can read
 	// env files / managed-component mount sources sitting anywhere on
 	// the host filesystem. UI-managed; agent picks the list up on every
 	// config pull and applies it via agent.self_upgrade.
-	ExtraMounts      []string   `json:"extra_mounts"`
+	ExtraMounts []string `json:"extra_mounts"`
 	// HostID is the string the agent reports as `container_logs.host_id`
 	// when it ships docker logs to dialog. Stamped automatically on each
 	// auth'd request via the X-Muvon-Host-Id header. Used by the central
 	// container log handler to map a container's host_id back to an
 	// agent row so it can dial DeployerAddr for live tail.
-	HostID           string     `json:"host_id"`
+	HostID string `json:"host_id"`
 	// DeployerAddr is "host:port" of the agent's deployer gRPC TCP
 	// listener — operator-set in the UI (private network IP). Empty
 	// means live tail for this agent's containers is unavailable.
-	DeployerAddr     string     `json:"deployer_addr"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	DeployerAddr string    `json:"deployer_addr"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // hashAPIKey returns the SHA-256 digest used for api_key_hash lookups.
@@ -121,10 +121,6 @@ func (d *DB) CreateAgent(ctx context.Context, name, apiKey string) (Agent, error
 	// later reads (ListAgents) will never expose it again.
 	a.APIKey = apiKey
 	return a, nil
-}
-
-func (d *DB) TouchAgentLastSeen(ctx context.Context, id string) {
-	d.Pool.Exec(ctx, `UPDATE muvon.agents SET last_seen_at = now() WHERE id = $1`, id)
 }
 
 // RecordAgentConfigPull stamps the agent row with the latest config it pulled.

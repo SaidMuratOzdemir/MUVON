@@ -5,16 +5,16 @@
 //
 // Architecture in one paragraph:
 //
-//   The central admin server enqueues commands as rows in
-//   muvon.agent_commands (Postgres). Each command carries an HMAC
-//   signature so the receiving agent can verify it came from a peer
-//   that holds the shared encryption key. The agent runs a long-poll
-//   loop hitting GET /api/v1/agent/commands; the server wakes pending
-//   polls via an in-memory per-agent bus when a new row arrives. The
-//   agent dispatches the command through a Registry of idempotent
-//   handlers, then POSTs the Result back. State transitions are
-//   pending → dispatched → succeeded|failed, with a sweeper marking
-//   stale rows as expired.
+//	The central admin server enqueues commands as rows in
+//	muvon.agent_commands (Postgres). Each command carries an HMAC
+//	signature so the receiving agent can verify it came from a peer
+//	that holds the shared encryption key. The agent runs a long-poll
+//	loop hitting GET /api/v1/agent/commands; the server wakes pending
+//	polls via an in-memory per-agent bus when a new row arrives. The
+//	agent dispatches the command through a Registry of idempotent
+//	handlers, then POSTs the Result back. State transitions are
+//	pending → dispatched → succeeded|failed, with a sweeper marking
+//	stale rows as expired.
 //
 // Why a separate package: the types are used by three call sites —
 // the admin HTTP handlers, the agent's poll loop, and the Postgres
@@ -66,26 +66,21 @@ const (
 	// Payload: {"instance_id": "<uuid>"}.
 	KindContainerRestart CommandKind = "container.restart"
 
-	// KindDeployAbort cancels a running deployment if it hasn't yet
-	// reached "promoted". Payload: {"deployment_id": "<uuid>"}.
-	KindDeployAbort CommandKind = "deploy.abort"
-
 	// KindAgentRevoke is terminal — the agent acknowledges, then
 	// exits with a non-zero code so Docker's restart policy doesn't
 	// bounce it. No payload.
 	KindAgentRevoke CommandKind = "agent.revoke"
 )
 
-// AllKinds is the master list for handler registration sanity checks
-// and admin UI dropdowns. Order matches the operator-facing severity
-// (least-destructive first).
+// AllKinds is what the admin API validates an enqueue request against, so a
+// kind belongs here only once an agent can carry it out. Order matches the
+// operator-facing severity, least destructive first.
 var AllKinds = []CommandKind{
 	KindAgentCacheFlush,
 	KindAgentSetLogLevel,
 	KindCertRenew,
 	KindContainerRestart,
 	KindAgentDrain,
-	KindDeployAbort,
 	KindAgentRestart,
 	KindAgentSelfUpgrade,
 	KindAgentRevoke,
@@ -107,7 +102,7 @@ const (
 // through the central's signing path (defence against a compromised
 // admin DB connection that an attacker bypassed the API layer with).
 type Command struct {
-	ID        string          `json:"id"`         // UUIDv7, hex
+	ID        string          `json:"id"` // UUIDv7, hex
 	Kind      CommandKind     `json:"kind"`
 	Payload   json.RawMessage `json:"payload"`    // schema-per-kind
 	ExpiresAt time.Time       `json:"expires_at"` // RFC3339 on the wire

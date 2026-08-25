@@ -23,7 +23,6 @@ const (
 	DeployerService_GetContainer_FullMethodName        = "/deployerpb.DeployerService/GetContainer"
 	DeployerService_StreamContainerLogs_FullMethodName = "/deployerpb.DeployerService/StreamContainerLogs"
 	DeployerService_Health_FullMethodName              = "/deployerpb.DeployerService/Health"
-	DeployerService_SelfImageDigest_FullMethodName     = "/deployerpb.DeployerService/SelfImageDigest"
 	DeployerService_SystemUpgrade_FullMethodName       = "/deployerpb.DeployerService/SystemUpgrade"
 	DeployerService_CreateBackup_FullMethodName        = "/deployerpb.DeployerService/CreateBackup"
 	DeployerService_ListBackups_FullMethodName         = "/deployerpb.DeployerService/ListBackups"
@@ -53,18 +52,14 @@ type DeployerServiceClient interface {
 	// Health is a simple liveness probe. The admin UI ties its "deployer down"
 	// banner to this failing.
 	Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error)
-	// SelfImageDigest returns the current image digests of the MUVON
-	// containers the deployer runs alongside, itself included. The admin UI
-	// uses it for the "a new version is available" comparison.
-	SelfImageDigest(ctx context.Context, in *SelfImageDigestRequest, opts ...grpc.CallOption) (*SelfImageDigestResponse, error)
 	// SystemUpgrade starts the pull-and-recreate flow, returning one event per
 	// step on the stream (pull, backup, restart, done). The admin endpoint
 	// POST /api/system/upgrade proxies this call and reflects the events to the
 	// UI over SSE.
 	SystemUpgrade(ctx context.Context, in *SystemUpgradeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[UpgradeEvent], error)
-	// CreateBackup takes a pg_dump -Fc and verifies it. It is independent of
-	// an upgrade: the only way to get a backup used to be starting one, so
-	// there was no way to take a backup when there was nothing to upgrade.
+	// CreateBackup takes a pg_dump -Fc and verifies it, independently of an
+	// upgrade, so a backup can be taken before any risky work rather than only
+	// as a side effect of upgrading.
 	CreateBackup(ctx context.Context, in *CreateBackupRequest, opts ...grpc.CallOption) (*CreateBackupResponse, error)
 	// ListBackups returns the backups on disk, newest first.
 	ListBackups(ctx context.Context, in *ListBackupsRequest, opts ...grpc.CallOption) (*ListBackupsResponse, error)
@@ -121,16 +116,6 @@ func (c *deployerServiceClient) Health(ctx context.Context, in *HealthRequest, o
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthResponse)
 	err := c.cc.Invoke(ctx, DeployerService_Health_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *deployerServiceClient) SelfImageDigest(ctx context.Context, in *SelfImageDigestRequest, opts ...grpc.CallOption) (*SelfImageDigestResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SelfImageDigestResponse)
-	err := c.cc.Invoke(ctx, DeployerService_SelfImageDigest_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -200,18 +185,14 @@ type DeployerServiceServer interface {
 	// Health is a simple liveness probe. The admin UI ties its "deployer down"
 	// banner to this failing.
 	Health(context.Context, *HealthRequest) (*HealthResponse, error)
-	// SelfImageDigest returns the current image digests of the MUVON
-	// containers the deployer runs alongside, itself included. The admin UI
-	// uses it for the "a new version is available" comparison.
-	SelfImageDigest(context.Context, *SelfImageDigestRequest) (*SelfImageDigestResponse, error)
 	// SystemUpgrade starts the pull-and-recreate flow, returning one event per
 	// step on the stream (pull, backup, restart, done). The admin endpoint
 	// POST /api/system/upgrade proxies this call and reflects the events to the
 	// UI over SSE.
 	SystemUpgrade(*SystemUpgradeRequest, grpc.ServerStreamingServer[UpgradeEvent]) error
-	// CreateBackup takes a pg_dump -Fc and verifies it. It is independent of
-	// an upgrade: the only way to get a backup used to be starting one, so
-	// there was no way to take a backup when there was nothing to upgrade.
+	// CreateBackup takes a pg_dump -Fc and verifies it, independently of an
+	// upgrade, so a backup can be taken before any risky work rather than only
+	// as a side effect of upgrading.
 	CreateBackup(context.Context, *CreateBackupRequest) (*CreateBackupResponse, error)
 	// ListBackups returns the backups on disk, newest first.
 	ListBackups(context.Context, *ListBackupsRequest) (*ListBackupsResponse, error)
@@ -236,9 +217,6 @@ func (UnimplementedDeployerServiceServer) StreamContainerLogs(*StreamContainerLo
 }
 func (UnimplementedDeployerServiceServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
-}
-func (UnimplementedDeployerServiceServer) SelfImageDigest(context.Context, *SelfImageDigestRequest) (*SelfImageDigestResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SelfImageDigest not implemented")
 }
 func (UnimplementedDeployerServiceServer) SystemUpgrade(*SystemUpgradeRequest, grpc.ServerStreamingServer[UpgradeEvent]) error {
 	return status.Error(codes.Unimplemented, "method SystemUpgrade not implemented")
@@ -335,24 +313,6 @@ func _DeployerService_Health_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
-func _DeployerService_SelfImageDigest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SelfImageDigestRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(DeployerServiceServer).SelfImageDigest(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: DeployerService_SelfImageDigest_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(DeployerServiceServer).SelfImageDigest(ctx, req.(*SelfImageDigestRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _DeployerService_SystemUpgrade_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(SystemUpgradeRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -418,10 +378,6 @@ var DeployerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Health",
 			Handler:    _DeployerService_Health_Handler,
-		},
-		{
-			MethodName: "SelfImageDigest",
-			Handler:    _DeployerService_SelfImageDigest_Handler,
 		},
 		{
 			MethodName: "CreateBackup",

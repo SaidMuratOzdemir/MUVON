@@ -28,20 +28,15 @@ service DeployerService {
   // banner to this failing.
   rpc Health(HealthRequest) returns (HealthResponse);
 
-  // SelfImageDigest returns the current image digests of the MUVON
-  // containers the deployer runs alongside, itself included. The admin UI
-  // uses it for the "a new version is available" comparison.
-  rpc SelfImageDigest(SelfImageDigestRequest) returns (SelfImageDigestResponse);
-
   // SystemUpgrade starts the pull-and-recreate flow, returning one event per
   // step on the stream (pull, backup, restart, done). The admin endpoint
   // POST /api/system/upgrade proxies this call and reflects the events to the
   // UI over SSE.
   rpc SystemUpgrade(SystemUpgradeRequest) returns (stream UpgradeEvent);
 
-  // CreateBackup takes a pg_dump -Fc and verifies it. It is independent of
-  // an upgrade: the only way to get a backup used to be starting one, so
-  // there was no way to take a backup when there was nothing to upgrade.
+  // CreateBackup takes a pg_dump -Fc and verifies it, independently of an
+  // upgrade, so a backup can be taken before any risky work rather than only
+  // as a side effect of upgrading.
   rpc CreateBackup(CreateBackupRequest) returns (CreateBackupResponse);
 
   // ListBackups returns the backups on disk, newest first.
@@ -177,16 +172,6 @@ message HealthResponse {
   // shipper_active_containers is how many containers logship is tailing for
   // persistence.
   int32 shipper_active_containers = 4;
-}
-
-// ===== SelfImageDigest =====
-
-message SelfImageDigestRequest {}
-
-message SelfImageDigestResponse {
-  // The image digest each service's container is running.
-  // A missing service means unknown: no container, or Docker errored.
-  map<string, string> digests = 1;
 }
 
 // ===== SystemUpgrade =====

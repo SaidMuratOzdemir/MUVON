@@ -134,23 +134,6 @@ func (r *RemoteDeployer) Health(ctx context.Context) (*pb.HealthResponse, error)
 	return r.client.Health(ctx, &pb.HealthRequest{})
 }
 
-// SelfImageDigest returns the image digest of the currently-running
-// muvon container so the admin UI can compare it against the registry.
-// Convenience wrapper around the gRPC; returns "" + error on failure
-// so callers can degrade gracefully (handler shows "unknown" badge).
-func (r *RemoteDeployer) SelfImageDigest(ctx context.Context) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	resp, err := r.client.SelfImageDigest(ctx, &pb.SelfImageDigestRequest{})
-	if err != nil {
-		return "", err
-	}
-	if d, ok := resp.GetDigests()["muvon"]; ok {
-		return d, nil
-	}
-	return "", nil
-}
-
 // SystemUpgrade opens the streaming upgrade RPC. The admin SSE handler
 // pumps every event straight to the operator's browser.
 func (r *RemoteDeployer) SystemUpgrade(ctx context.Context, req *pb.SystemUpgradeRequest) (pb.DeployerService_SystemUpgradeClient, error) {

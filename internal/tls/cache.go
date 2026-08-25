@@ -225,9 +225,3 @@ func (cs *CertStore) Invalidate(domain string) {
 	delete(cs.certs, domain)
 	cs.mu.Unlock()
 }
-
-func (cs *CertStore) InvalidateAll() {
-	cs.mu.Lock()
-	cs.certs = make(map[string]storedCert)
-	cs.mu.Unlock()
-}

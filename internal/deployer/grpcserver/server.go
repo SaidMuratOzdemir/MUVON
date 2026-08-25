@@ -249,28 +249,6 @@ func (s *Server) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthRespo
 	return resp, nil
 }
 
-// --- SelfImageDigest ---
-//
-// This RPC reports the image digest each muvon-* container is running, which
-// the admin panel compares against the GHCR :latest digest. The field read out
-// of ContainerInspect is Image (sha256:...). A missing or failing container is
-// not reported as an empty string: its key is absent from the map, so the
-// caller sees a lookup miss.
-func (s *Server) SelfImageDigest(ctx context.Context, _ *pb.SelfImageDigestRequest) (*pb.SelfImageDigestResponse, error) {
-	out := &pb.SelfImageDigestResponse{Digests: make(map[string]string)}
-	// The canonical compose names (`muvon-<service>-1`). This list is fixed:
-	// the compose project name follows the operator's INSTALL_DIR, and
-	// deriving it from this container's hostname would break as soon as the
-	// project is not named "muvon". Three known services, listed plainly.
-	for _, name := range []string{"muvon-muvon-1", "muvon-dialog-siem-1", "muvon-muvon-deployer-1"} {
-		key := strings.TrimSuffix(strings.TrimPrefix(name, "muvon-"), "-1")
-		if digest, err := s.docker.ContainerImageDigest(ctx, name); err == nil && digest != "" {
-			out.Digests[key] = digest
-		}
-	}
-	return out, nil
-}
-
 // --- limits ---
 
 func (s *Server) acquire(containerID string) bool {

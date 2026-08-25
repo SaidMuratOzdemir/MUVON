@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -66,7 +65,6 @@ func buildCommandRegistry(deps agentCommandDeps) *agentctrl.Registry {
 	reg.Register(agentctrl.KindAgentRevoke, handleRevoke())
 	reg.Register(agentctrl.KindCertRenew, handleCertRenew(deps))
 	reg.Register(agentctrl.KindContainerRestart, handleContainerRestart(deps))
-	reg.Register(agentctrl.KindDeployAbort, handleDeployAbort(deps))
 
 	return reg
 }
@@ -100,8 +98,8 @@ func handleCacheFlush(deps agentCommandDeps) agentctrl.Handler {
 func handleSetLogLevel(deps agentCommandDeps) agentctrl.Handler {
 	return func(ctx context.Context, cmd agentctrl.Command) (agentctrl.Result, error) {
 		var p struct {
-			Level       string `json:"level"`
-			TTLSeconds  int    `json:"ttl_seconds"`
+			Level      string `json:"level"`
+			TTLSeconds int    `json:"ttl_seconds"`
 		}
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 			return agentctrl.Result{}, fmt.Errorf("invalid payload: %w", err)
@@ -440,31 +438,4 @@ func handleContainerRestart(deps agentCommandDeps) agentctrl.Handler {
 	}
 }
 
-// handleDeployAbort is a placeholder for v1: today the deployer state
-// machine doesn't expose a cancel hook, so we just record the intent
-// in the result. Future work: thread context cancellation through
-// internal/deployer/service.go's processDeployment.
-func handleDeployAbort(_ agentCommandDeps) agentctrl.Handler {
-	return func(_ context.Context, cmd agentctrl.Command) (agentctrl.Result, error) {
-		var p struct {
-			DeploymentID string `json:"deployment_id"`
-		}
-		_ = json.Unmarshal(cmd.Payload, &p)
-		// TODO: implement once the deployer state machine accepts
-		// per-deployment cancel signals. For now: signal the central
-		// via a structured failure that the abort wasn't honoured.
-		return agentctrl.Result{
-			State:  agentctrl.StateFailed,
-			Error:  "deploy abort not yet implemented in agent — pause the component instead",
-			Output: "deployment_id=" + p.DeploymentID,
-		}, nil
-	}
-}
-
 // ── Helpers ──────────────────────────────────────────────────────────────
-
-// unusedExec keeps os/exec linkable for future handlers (e.g. running
-// a diagnostic curl). Lints don't flag this when at least one handler
-// references it directly; today none do. Kept here so the import
-// doesn't churn when we add the first one.
-var _ = exec.Command

@@ -197,18 +197,3 @@ func (d *DB) UpdateAgentCommandSignature(ctx context.Context, id string, signatu
 	}
 	return nil
 }
-
-// GetAgentCommand fetches a single command by id, scoped to the
-// requesting agent (so an attacker who guesses a UUID can't pull
-// another agent's command body). Admin queries use the dedicated
-// admin-side path without the agent scope.
-func (d *DB) GetAgentCommandForAgent(ctx context.Context, agentID, id string) (AgentCommand, error) {
-	c, err := scanAgentCommand(d.Pool.QueryRow(ctx,
-		`SELECT `+agentCommandSelectCols+`
-		 FROM agent_commands
-		 WHERE id = $1 AND agent_id = $2`, id, agentID).Scan)
-	if err != nil {
-		return c, fmt.Errorf("get agent command: %w", err)
-	}
-	return c, nil
-}

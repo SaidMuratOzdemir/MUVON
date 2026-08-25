@@ -623,17 +623,6 @@ func (c *DockerClient) ContainerInspect(ctx context.Context, id string) (Contain
 	return out, nil
 }
 
-// ContainerImageDigest returns the image digest (sha256:...) that the
-// container is currently running. Convenience wrapper over Inspect
-// for the SelfImageDigest RPC which only needs the digest field.
-func (c *DockerClient) ContainerImageDigest(ctx context.Context, id string) (string, error) {
-	insp, err := c.ContainerInspect(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	return insp.Image, nil
-}
-
 // ContainerLogsOptions configures the /containers/{id}/logs streaming
 // request. Mirrors the Docker Engine API querystring; zero values mean
 // "use API default" (e.g. Tail=0 == "all").
