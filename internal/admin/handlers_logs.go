@@ -33,19 +33,38 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 		User:     q.Get("user"),
 	}
 
-	if v := q.Get("status_min"); v != "" {
-		n, _ := strconv.Atoi(v)
-		req.StatusMin = int32(n)
-	}
-	if v := q.Get("status_max"); v != "" {
-		n, _ := strconv.Atoi(v)
-		req.StatusMax = int32(n)
+	// The numeric filters follow the same rule as the time bounds: a value the
+	// server cannot read is refused, not dropped. Dropping one widens the
+	// search, and a negative offset reaches Postgres as a negative OFFSET and
+	// comes back to the caller as a 500 carrying a raw database message.
+	for _, np := range []struct {
+		name string
+		dst  *int32
+	}{
+		{"status_min", &req.StatusMin},
+		{"status_max", &req.StatusMax},
+		{"limit", &req.Limit},
+		{"offset", &req.Offset},
+		{"response_time_min", &req.RespTimeMin},
+		{"response_time_max", &req.RespTimeMax},
+	} {
+		v := q.Get(np.name)
+		if v == "" {
+			continue
+		}
+		n, err := validCount(np.name, v)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		*np.dst = n
 	}
 	// A time bound that cannot be parsed is refused rather than dropped. The
-	// pipeline parses these with a strict RFC3339 and ignores the error, so a
-	// value like "2026-08-23T14:30" used to disable the filter silently: the
-	// caller believed it had narrowed the search and got a window it never
-	// asked for.
+	// pipeline parses these with a strict RFC3339 and ignores the error, and a
+	// dropped bound widens the search instead of narrowing it, which is the
+	// opposite of what the caller asked for and carries no sign that it
+	// happened. "2026-08-23T14:30", what a `datetime-local` input produces, is
+	// the value that makes this concrete.
 	for _, tb := range []struct {
 		name string
 		dst  *string
@@ -60,14 +79,6 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		*tb.dst = v
 	}
-	if v := q.Get("limit"); v != "" {
-		n, _ := strconv.Atoi(v)
-		req.Limit = int32(n)
-	}
-	if v := q.Get("offset"); v != "" {
-		n, _ := strconv.Atoi(v)
-		req.Offset = int32(n)
-	}
 	if v := q.Get("starred"); v == "true" || v == "1" {
 		req.Starred = true
 	}
@@ -75,14 +86,6 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 	// asked for.
 	if v := q.Get("search_bodies"); v == "true" || v == "1" {
 		req.SearchBodies = true
-	}
-	if v := q.Get("response_time_min"); v != "" {
-		n, _ := strconv.Atoi(v)
-		req.RespTimeMin = int32(n)
-	}
-	if v := q.Get("response_time_max"); v != "" {
-		n, _ := strconv.Atoi(v)
-		req.RespTimeMax = int32(n)
 	}
 
 	resp, err := s.logClient.SearchLogs(r.Context(), req)
@@ -98,8 +101,8 @@ func (s *Server) handleSearchLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": logs,
 		// total_exact is false when the count is a lower bound, which is what
-		// a body search returns: the panel then shows what came back instead
-		// of a page count derived from a number nobody could produce.
+		// a body search returns. The panel then shows what came back rather
+		// than a page count derived from a total it cannot obtain.
 		"total":       resp.Total,
 		"total_exact": resp.TotalExact,
 		"limit":       req.Limit,
@@ -363,6 +366,18 @@ func (s *Server) handleToggleLogStar(w http.ResponseWriter, r *http.Request) {
 // these with a strict RFC3339 and drops the error, so an unparseable bound
 // would disable the filter instead of narrowing it. Refusing it here keeps
 // that failure visible to the caller.
+// validCount checks a numeric query value. Negative is refused along with
+// unreadable: `offset` and `limit` reach SQL directly, where a negative one is
+// a syntax error the caller would receive as a 500 with a database message in
+// it, and a negative bound on a status or a duration cannot match anything.
+func validCount(name, v string) (int32, error) {
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s must be a whole number of zero or more (got %q)", name, v)
+	}
+	return int32(n), nil
+}
+
 func validTimeBound(name, v string) error {
 	if _, err := time.Parse(time.RFC3339, v); err != nil {
 		return fmt.Errorf("%s must be RFC3339, for example 2026-08-23T14:30:00Z (got %q)", name, v)

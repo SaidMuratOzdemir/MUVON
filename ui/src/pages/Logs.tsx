@@ -929,7 +929,7 @@ export default function Logs() {
         </div>
       )}
 
-      {/* Search window notice — the one thing that used to be invisible */}
+      {/* Search window notice: the range in force when none was chosen */}
       {autoWindow && (
         <div className="flex flex-wrap items-center gap-2 px-6 py-2 border-b border-border bg-amber-500/10 shrink-0">
           <span className="text-[11px] text-amber-400">

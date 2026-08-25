@@ -1351,11 +1351,11 @@ EXCEPTION WHEN OTHERS THEN
     RAISE WARNING 'pg_search left in place: %', SQLERRM;
 END $$;`,
 	},
-	// Compression used to be whatever the migrations installed, which meant the
-	// panel could not answer "how far back is search still indexed" without an
-	// operator reading the job catalog. These two seed the setting the
-	// reconciler enforces. They carry the value the migrations already used, so
-	// applying them changes nothing until an operator moves them.
+	// Compression is owned by two settings, so the panel can answer how far
+	// back search stays indexed without anyone reading the job catalog by
+	// hand. These seed what the reconciler enforces, at the value the
+	// migrations install, so applying them changes nothing until an operator
+	// moves them.
 	{
 		name: "seed_compression_settings", product: "muvon",
 		sql: `
@@ -1365,12 +1365,10 @@ INSERT INTO settings (key, value) VALUES
 ON CONFLICT (key) DO NOTHING;`,
 	},
 	// image_id is the local Docker image ID a reference resolved to when the
-	// deployment pulled it. Pruning by reference cannot collect an image whose
-	// reference has moved: a re-pulled tag leaves the previous image with no
-	// tag and no repo digest, so nothing that looks it up by name finds it
-	// again and it stays on disk forever. The ID is the handle that survives
-	// that. Rows written before this column carry '' and fall back to the
-	// reference, which is all the old behaviour ever had.
+	// deployment pulled it, and it is what the prune works from. A reference
+	// is not a durable handle: a re-pulled tag leaves the previous image with
+	// no tag and no repo digest, so a lookup by name no longer reaches it.
+	// Rows written before this column carry '' and are attempted by reference.
 	{
 		name: "add_deploy_release_components_image_id", product: "muvon",
 		sql: `ALTER TABLE deploy_release_components

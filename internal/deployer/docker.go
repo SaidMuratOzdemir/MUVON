@@ -324,10 +324,10 @@ func (c *DockerClient) ContainerRemove(ctx context.Context, id string, force boo
 	return nil
 }
 
-// ImageOutcome is what Docker did with a removal request. The three cases
-// need different handling and used to be collapsed into one: reporting
-// "absent" and "in use" as success made the caller log a deletion that never
-// happened and retry the same reference on every deployment.
+// ImageOutcome is what Docker did with a removal request. Keep the three
+// apart: absent and in use are both "no error" and neither is a deletion, so
+// a caller that folds them into success logs work it did not do and puts the
+// same reference back on its next run.
 type ImageOutcome int
 
 const (

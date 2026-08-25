@@ -899,8 +899,8 @@ const (
 
 // SearchLogs returns a page of matching entries, how many matched, and
 // whether that number is exact. It is not exact when bodies are searched: the
-// body branch cannot be counted to the cap in reasonable time, so the caller
-// gets a lower bound and has to say so rather than render a total it made up.
+// body branch cannot be counted to the cap in any usable time, so the caller
+// gets a lower bound and is expected to present it as one.
 func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int, bool, error) {
 	if p.Limit <= 0 || p.Limit > 500 {
 		p.Limit = 100
@@ -1041,8 +1041,18 @@ func (d *DB) SearchLogs(ctx context.Context, p LogSearchParams) ([]LogEntry, int
 	// 90 day window it produced zero index nodes and scanned the whole range
 	// with a probe per row, 41 s against 6 ms and 1.9 s for the same two
 	// halves run separately. Each branch is ordered and limited on its own, so
-	// each uses its own index; the union of two top-N sets contains the global
-	// top-N, which makes this exact rather than an approximation.
+	// each uses its own index.
+	//
+	// The union of two top-N sets contains the global top-N, so the page is
+	// exact rather than approximate, but only while N covers the page being
+	// asked for. N is offset+limit, and it is capped, so the offset has to be
+	// capped with it: past SearchCountCap the branches would each stop short
+	// of the requested page and rows would go missing with nothing to say so.
+	// Search does not paginate beyond the cap in either mode, which is the
+	// same boundary the count already reports as "N+".
+	if p.Offset > SearchCountCap {
+		p.Offset = SearchCountCap
+	}
 	reach := p.Offset + p.Limit
 	if reach > SearchCountCap {
 		reach = SearchCountCap

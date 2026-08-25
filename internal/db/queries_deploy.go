@@ -1391,17 +1391,6 @@ func (d *DB) ListLiveManagedContainerIDsForAgent(ctx context.Context, agentID st
 	return out, rows.Err()
 }
 
-// ListPrunableImageRefs returns image references that can be safely
-// removed from the local Docker daemon for a single component: every
-// image_ref recorded in deploy_release_components for that component,
-// MINUS (a) image_refs of the last keepN succeeded releases for that
-// component and (b) image_refs still bound to a warming/active/draining
-// instance. Caller passes results to Docker's ImageRemove (errors are
-// non-fatal — already-gone or still-in-use returns are ignored).
-//
-// Scoped via the central wrapper (NULL agent_id). Edge agents reach this
-// through the *ForAgent variant which restricts results to their own
-// components, so each side only prunes images on its own Docker daemon.
 // PrunableImage is one candidate for removal. ID is the local Docker image ID
 // recorded when the deployment pulled it, and is empty for rows written before
 // that column existed; the caller falls back to Ref for those.
@@ -1410,6 +1399,19 @@ type PrunableImage struct {
 	ID  string `json:"id"`
 }
 
+// ListPrunableImageRefs returns the images that can be removed from the local
+// Docker daemon for a single component: everything recorded in
+// deploy_release_components for it, minus the last keepN succeeded releases
+// and minus anything bound to a warming, active or draining instance. Both
+// exclusions apply by reference and by image ID, because two references can
+// resolve to one image.
+//
+// The caller decides what to do with each result: Docker reports removed,
+// absent or in use, and only the first is a deletion.
+//
+// Scoped via the central wrapper (NULL agent_id). Edge agents reach this
+// through the *ForAgent variant which restricts results to their own
+// components, so each side only prunes images on its own Docker daemon.
 func (d *DB) ListPrunableImageRefs(ctx context.Context, componentID, keepN int) ([]PrunableImage, error) {
 	return d.ListPrunableImageRefsForAgent(ctx, "", componentID, keepN)
 }
