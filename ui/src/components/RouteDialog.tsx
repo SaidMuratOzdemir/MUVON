@@ -213,7 +213,7 @@ export type RouteFormData = {
   resp_headers_del: string[]
 }
 
-export const defaultRouteForm = (): RouteFormData => ({
+const defaultRouteForm = (): RouteFormData => ({
   path_prefix: '/',
   route_type: 'proxy',
   backend_url: '',

@@ -41,6 +41,11 @@ jobs:
           npm --prefix ui ci --prefer-offline
           make ui-build
 
+      # The panel is half the product and had no gate of its own, so a lint
+      # error could reach an image while four Go gates stayed green.
+      - name: eslint
+        run: npm --prefix ui run lint
+
       - name: go vet
         run: go vet ./...
 

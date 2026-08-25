@@ -206,14 +206,15 @@ function hasFilters(f: Filters) {
 }
 
 // How far back a free-text search reaches when the operator has not chosen a
-// range. These mirror the server's own defaults, but sending the value
-// explicitly is what makes the window visible here instead of silently
+// range. These mirror the server's own defaults (searchWindowNoBodies and
+// searchWindowWithBodies in internal/db/queries.go); sending the value
+// explicitly is what makes the window visible here rather than silently
 // applied. Searching bodies gets a much tighter window because it costs
-// orders of magnitude more per row.
-export const SEARCH_WINDOW_DAYS = 30
-export const SEARCH_WINDOW_DAYS_BODIES = 7
+// orders of magnitude more per row. Change one side and change the other.
+const SEARCH_WINDOW_DAYS = 30
+const SEARCH_WINDOW_DAYS_BODIES = 7
 
-export function windowStart(days: number): string {
+function windowStart(days: number): string {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
 }
 
