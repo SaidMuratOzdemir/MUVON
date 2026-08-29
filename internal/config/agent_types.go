@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"muvon/internal/blocklist"
 	"muvon/internal/db"
 )
 
@@ -26,6 +27,11 @@ type AgentPayload struct {
 	// initial install can still pass --mount on install-agent.sh but
 	// the source of truth is the agents.extra_mounts column.
 	ExtraMounts []string `json:"extra_mounts,omitempty"`
+	// Blocking carries the edge blocking surface: thresholds, patterns and
+	// the blocks central has already decided. The agent scores requests
+	// itself, so the decision needs these values on the machine that
+	// terminates the traffic rather than only on central.
+	Blocking *AgentBlocking `json:"blocking,omitempty"`
 	// Version is an opaque short string identifying this snapshot. Agents
 	// echo it back via X-Config-Version on the next pull / SSE reconnect
 	// so central can distinguish "agent missed the push" from "agent
@@ -52,6 +58,24 @@ type AgentSettings struct {
 	// signing secret. Sending it would leak a high-value credential to
 	// every edge node.
 	JWTSecret string `json:"-"`
+}
+
+// AgentBlocking is the wire form of the edge blocking surface. Agents score
+// with exactly the patterns and thresholds central is using, so a scanner that
+// walks the fleet meets the same rules everywhere.
+type AgentBlocking struct {
+	Enabled    bool     `json:"enabled"`
+	Threshold  int      `json:"threshold"`
+	WindowSec  int      `json:"window_seconds"`
+	TTLSec     int      `json:"ttl_seconds"`
+	TTLMaxSec  int      `json:"ttl_max_seconds"`
+	MaxEntries int      `json:"max_entries"`
+	Allowlist  []string `json:"allowlist,omitempty"`
+
+	Patterns []blocklist.Pattern `json:"patterns,omitempty"`
+	// Active is what central has already decided, so an agent that has never
+	// seen the offender still refuses it.
+	Active []blocklist.Block `json:"active,omitempty"`
 }
 
 // AgentPayloadFromConfig builds an AgentPayload tailored to a specific
@@ -90,18 +114,48 @@ func AgentPayloadFromConfig(cfg *Config, agentID string) AgentPayload {
 	for _, b := range backendsByID {
 		managed = append(managed, b)
 	}
+	bs := cfg.Blocking.Settings
 	return AgentPayload{
 		Hosts:           hosts,
 		Routes:          routes,
 		Settings:        globalToAgentSettings(cfg.Global),
 		ManagedBackends: managed,
-		UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
+		Blocking: &AgentBlocking{
+			Enabled:    bs.Enabled,
+			Threshold:  bs.Threshold,
+			WindowSec:  int(bs.Window / time.Second),
+			TTLSec:     int(bs.BaseTTL / time.Second),
+			TTLMaxSec:  int(bs.MaxTTL / time.Second),
+			MaxEntries: bs.MaxEntries,
+			Allowlist:  bs.Allowlist,
+			Patterns:   cfg.Blocking.Patterns,
+			Active:     cfg.Blocking.Active,
+		},
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
 // ToConfig converts an AgentPayload back to the in-memory Config representation.
 func (p AgentPayload) ToConfig() *Config {
 	cfg := &Config{Hosts: make(map[string]*HostConfig)}
+
+	// A payload from a central that predates blocking leaves this nil, and the
+	// agent then runs with blocking off rather than with half a configuration.
+	if p.Blocking != nil {
+		cfg.Blocking = BlockingConfig{
+			Settings: db.BlocklistSettings{
+				Enabled:    p.Blocking.Enabled,
+				Threshold:  p.Blocking.Threshold,
+				Window:     time.Duration(p.Blocking.WindowSec) * time.Second,
+				BaseTTL:    time.Duration(p.Blocking.TTLSec) * time.Second,
+				MaxTTL:     time.Duration(p.Blocking.TTLMaxSec) * time.Second,
+				MaxEntries: p.Blocking.MaxEntries,
+				Allowlist:  p.Blocking.Allowlist,
+			},
+			Patterns: p.Blocking.Patterns,
+			Active:   p.Blocking.Active,
+		}
+	}
 
 	routesByHost := make(map[int][]db.Route)
 	for _, r := range p.Routes {

@@ -23,6 +23,47 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-29
+
+Engelleme yapılandırması edge agent'lara taşınıyor. Şema değişikliği yok.
+
+### BUGFIXES
+
+- **Engelleme ayarları ve desenleri agent config anlık görüntüsüne eklendi.**
+  Agent'ların aldığı anlık görüntü ayrı bir yapıdır (`AgentPayload`) ve artık
+  eşiği, pencereyi, süreleri, izin listesini, desenleri ve merkezin verdiği
+  aktif engelleri taşır. Böylece bir agent, merkezin kullandığı kuralların
+  aynısıyla puanlar.
+
+  Bu, host'ları edge agent'larda sonlanan kurulumlar için gereklidir: trafiği
+  sonlandıran makine agent olduğunda karar da orada verilir.
+
+  Engelleme alanı taşımayan bir anlık görüntü (yükseltilmemiş merkez) agent'ta
+  özelliği kapalı bırakır, yarım yapılandırmayla çalıştırmaz.
+
+  `agent_payload_test.go` yükü gidiş dönüş çevirip alanların korunduğunu
+  doğrular ve desenlerin agent tarafında da derlendiğini kontrol eder.
+
+### Upgrade notları
+
+Şema değişikliği yok. Önce merkezi, sonra her agent'ı güncelleyin. Bu sürüm
+agent tarafını ilgilendirdiği için engelleme kararının verildiği makinelerin
+güncellenmesi gerekir.
+
+Engelleme açıksa, agent'lar yükseltildikten sonra bir sonraki config çekimiyle
+(birkaç saniye) devreye girer. Panelde Engelleme sayfasından ilk engeller
+izlenebilir.
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.5.1
+
+# Agent (her edge sunucusunda):
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.5.1
+```
+
+---
+
 ## [0.5.0] - 2026-08-29
 
 Kenarda tarama trafiğini durduran bir katman geldi. Minor sürüm, çünkü yeni bir
