@@ -74,6 +74,8 @@ Weights are tiered so a single credential probe blocks on its own (100, threshol
 
 **Fleet propagation.** A block decided on an edge is enforced there immediately and reported to central (`POST /api/v1/agent/blocklist`, ownership taken from the authenticated agent, never the body). Central persists it and it reaches the rest of the fleet in the config snapshot, capped at `config.MaxSyncedBlocks`. Deliberately not the command channel: that carries one-off events, not a continuously changing set.
 
+**A refusal is logged, on a budget.** The check runs before route matching, so `logRefusal` in `internal/proxy/proxy.go` writes the row the normal path would have written: status `403`, with the address, host, path and headers. It does not consult the route's `log_enabled`, because the request reached no route, and a route that opts out of logging is opting out of its own traffic rather than of the edge refusing a scanner on its behalf. `Decision.Log` carries the budget (`maxLoggedPerBlock`, 20 per block, reset when the block goes): a refused request costs one map lookup, and a row for every one of them would hand that cost back, letting a client that keeps going after being blocked write more than it did while it was allowed through. Enforcement never depends on the budget, only the record does.
+
 ### Managed deploy (hybrid topology)
 Routes can bind to a managed component. The proxy selects only `active` instances (never warming/draining). The deploy lifecycle — image pull → migration container → candidate start → health check → atomic promote (old `active` → `draining`, candidate → `active`) → graceful drain — is shared code in `internal/deployer/service.go`, sitting behind a `State` interface:
 

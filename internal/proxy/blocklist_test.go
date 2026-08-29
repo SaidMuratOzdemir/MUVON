@@ -3,12 +3,14 @@ package proxy
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"muvon/internal/blocklist"
 	"muvon/internal/config"
 	"muvon/internal/db"
+	"muvon/internal/logger"
 )
 
 // blockTestHandler wires a Handler with one host, one catch-all static route
@@ -122,5 +124,79 @@ func TestProxyEnforcesCentrallyAppliedBlock(t *testing.T) {
 
 	if rec := doRequest(h, "203.0.113.10:5555", "/"); rec.Code != http.StatusForbidden {
 		t.Fatalf("status %d, want 403 for a fleet-applied block", rec.Code)
+	}
+}
+
+// recordingSink captures shipped log entries so a test can assert on the row
+// the operator will read, not only on the status code the client saw.
+type recordingSink struct {
+	mu      sync.Mutex
+	entries []logger.Entry
+}
+
+func (s *recordingSink) Send(e logger.Entry) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries = append(s.entries, e)
+}
+
+func (s *recordingSink) SendClientEvents(logger.ClientEventBatch) {}
+
+func (s *recordingSink) snapshot() []logger.Entry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]logger.Entry(nil), s.entries...)
+}
+
+// A refusal is the event the operator opens the log to find, so it has to be
+// written even though the request never reached a route.
+func TestProxyLogsRefusedRequest(t *testing.T) {
+	h, _ := blockTestHandler(t, true)
+	sink := &recordingSink{}
+	h.logSink = sink
+
+	if rec := doRequest(h, "203.0.113.7:5555", "/.env"); rec.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", rec.Code)
+	}
+
+	got := sink.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("shipped %d entries, want 1", len(got))
+	}
+	e := got[0]
+	if e.ResponseStatus != http.StatusForbidden {
+		t.Errorf("logged status %d, want 403", e.ResponseStatus)
+	}
+	if e.Path != "/.env" {
+		t.Errorf("logged path %q, want /.env", e.Path)
+	}
+	if e.ClientIP != "203.0.113.7" {
+		t.Errorf("logged client %q, want 203.0.113.7", e.ClientIP)
+	}
+	if e.Host != "shop.example.com" {
+		t.Errorf("logged host %q, want shop.example.com", e.Host)
+	}
+}
+
+// Enforcement must not depend on the log budget: once it is spent the client
+// is still refused, it just stops producing rows.
+func TestProxyKeepsRefusingAfterLogBudget(t *testing.T) {
+	h, _ := blockTestHandler(t, true)
+	sink := &recordingSink{}
+	h.logSink = sink
+
+	const requests = 300
+	for i := 0; i < requests; i++ {
+		if rec := doRequest(h, "203.0.113.7:5555", "/.env"); rec.Code != http.StatusForbidden {
+			t.Fatalf("request %d: status %d, want 403", i, rec.Code)
+		}
+	}
+
+	n := len(sink.snapshot())
+	if n == 0 {
+		t.Fatal("no refusal was logged at all")
+	}
+	if n >= requests {
+		t.Errorf("logged %d of %d refusals, want a bounded subset", n, requests)
 	}
 }

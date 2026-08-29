@@ -14,7 +14,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
 import { EmptyState } from '@/components/EmptyState'
-import { cn, relativeTime } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import * as api from '@/api'
 import type { BlockPattern, BlockPatternKind, IPBlock } from '@/types'
 
@@ -37,6 +37,34 @@ const RULE_LABELS: Record<string, string> = {
   exploit_probe: 'Zafiyet denemesi',
   admin_probe: 'Yönetim paneli',
   artifact_probe: 'Sızıntı dosyası',
+}
+
+// An expiry is read to decide whether to wait it out or lift it, so the exact
+// moment is the useful part and the countdown is the aid beside it.
+function formatExpiry(dateStr: string): string {
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('tr-TR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+function remainingLabel(dateStr: string): string {
+  const ms = new Date(dateStr).getTime() - Date.now()
+  if (Number.isNaN(ms)) return ''
+  if (ms <= 0) return '(süresi doldu)'
+  const seconds = Math.floor(ms / 1000)
+  if (seconds < 60) return `(${seconds} sn kaldı)`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `(${minutes} dk kaldı)`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `(${hours} sa kaldı)`
+  return `(${Math.floor(hours / 24)} gün kaldı)`
 }
 
 function scoreTone(score: number) {
@@ -357,8 +385,15 @@ export default function Security() {
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{b.score}</TableCell>
                     <TableCell className="text-right tabular-nums">{b.ban_count}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {b.permanent ? 'Kalıcı' : relativeTime(b.expires_at)}
+                    <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                      {b.permanent ? (
+                        'Kalıcı'
+                      ) : (
+                        <>
+                          <span className="tabular-nums">{formatExpiry(b.expires_at)}</span>
+                          <span className="ml-2 opacity-70">{remainingLabel(b.expires_at)}</span>
+                        </>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="sm" onClick={() => void release(b.key)}>

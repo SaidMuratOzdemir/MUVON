@@ -53,6 +53,12 @@ type banRecord struct {
 // waiting out their longest ban.
 const banMemory = 30 * 24 * time.Hour
 
+// maxLoggedPerBlock bounds how many refused requests one block writes to the
+// log store. The first is the one that matters, because it carries the path
+// that crossed the threshold; the rest are repetition. The count itself is
+// kept, so the operator still sees how hard a client kept trying.
+const maxLoggedPerBlock = 20
+
 // Block is one active decision. It is also the row shape the store persists and
 // the panel renders, so the operator can always answer "why is this address
 // blocked and what did it ask for".
@@ -75,6 +81,13 @@ type Decision struct {
 	Score       int    // running total for this client
 	Rule        string // rule of the pattern that matched this request, if any
 	Pattern     string
+	// Log says whether this refusal is still within the block's log budget.
+	// A refused request costs one map lookup, and writing a log row for every
+	// one of them would hand the cost back: a scanner that keeps going after
+	// being blocked would write more rows than it did while it was allowed
+	// through. The budget keeps the refusal visible in the panel without
+	// letting an offender choose how much storage they consume.
+	Log bool
 }
 
 // Scorer keeps the sliding-window scores and the active blocks. It lives in the
@@ -88,8 +101,12 @@ type Scorer struct {
 	// if the count survives the block it produced, so an offender who comes
 	// back an hour after their first ban gets the longer second one rather
 	// than starting over.
-	bans  map[string]banRecord
-	allow []*net.IPNet
+	bans map[string]banRecord
+	// refused counts requests turned away per active block, so the log budget
+	// is spent per block rather than per client lifetime. Cleared with the
+	// block, which is what lets a returning offender be seen again.
+	refused map[string]int
+	allow   []*net.IPNet
 
 	// patterns is swapped wholesale on config reload; the hot path only ever
 	// reads it under the same lock it already takes.
@@ -122,6 +139,7 @@ func New(cfg Config, allowCIDRs []string, patterns *Set) *Scorer {
 		hits:     make(map[string]*record),
 		blocks:   make(map[string]*Block),
 		bans:     make(map[string]banRecord),
+		refused:  make(map[string]int),
 		patterns: patterns,
 		cfg:      cfg,
 		now:      time.Now,
@@ -191,10 +209,11 @@ func (s *Scorer) Observe(clientIP, path string) Decision {
 	// Already blocked? Answer before doing any pattern work.
 	if b, ok := s.blocks[key]; ok {
 		if b.Permanent || b.ExpiresAt.After(now) {
-			return Decision{Blocked: true, Block: *b}
+			return Decision{Blocked: true, Block: *b, Log: s.noteRefusalLocked(key)}
 		}
 		// Expired. Keep the ban count: it is what makes the next block longer.
 		delete(s.blocks, key)
+		delete(s.refused, key)
 	}
 
 	m := s.patterns.Score(path)
@@ -226,6 +245,7 @@ func (s *Scorer) Observe(clientIP, path string) Decision {
 	d.Blocked = true
 	d.JustBlocked = true
 	d.Block = b
+	d.Log = s.noteRefusalLocked(key)
 
 	// Fire outside the lock: the callback persists to the database, and holding
 	// the scorer's mutex across a network round trip would stall every other
@@ -234,6 +254,14 @@ func (s *Scorer) Observe(clientIP, path string) Decision {
 		go fn(b)
 	}
 	return d
+}
+
+// noteRefusalLocked counts one refused request and reports whether it is still
+// inside the block's log budget. Caller holds mu.
+func (s *Scorer) noteRefusalLocked(key string) bool {
+	n := s.refused[key] + 1
+	s.refused[key] = n
+	return n <= maxLoggedPerBlock
 }
 
 // blockLocked records a block and applies the doubling ladder. Caller holds mu.
@@ -295,6 +323,7 @@ func (s *Scorer) Apply(b Block) {
 	defer s.mu.Unlock()
 	s.blocks[b.Key] = &b
 	delete(s.hits, b.Key)
+	delete(s.refused, b.Key)
 }
 
 // Remove lifts a block. Returns false when there was nothing to lift.
@@ -304,6 +333,7 @@ func (s *Scorer) Remove(key string) bool {
 	_, ok := s.blocks[key]
 	delete(s.blocks, key)
 	delete(s.hits, key)
+	delete(s.refused, key)
 	// Lifting a block is an operator saying "this one was wrong", so the
 	// penalty ladder resets too. Otherwise the next honest mistake would be
 	// punished twice as long.
@@ -320,6 +350,7 @@ func (s *Scorer) Flush() int {
 	s.blocks = make(map[string]*Block)
 	s.hits = make(map[string]*record)
 	s.bans = make(map[string]banRecord)
+	s.refused = make(map[string]int)
 	return n
 }
 
@@ -347,6 +378,7 @@ func (s *Scorer) Sweep() {
 	for k, b := range s.blocks {
 		if !b.Permanent && !b.ExpiresAt.After(now) {
 			delete(s.blocks, k)
+			delete(s.refused, k)
 		}
 	}
 	cutoff := now.Add(-s.cfg.Window)

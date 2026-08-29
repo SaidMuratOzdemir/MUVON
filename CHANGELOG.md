@@ -23,6 +23,52 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-29
+
+Engellenen istekler artık log akışında görünüyor. Şema değişikliği yok.
+
+### ENHANCEMENTS
+
+- **Reddedilen istekler loglanıyor.** Engelleme, route eşleşmesinden önce
+  çalıştığı için reddedilen istek log satırı yazılmadan dönüyordu. Artık `403`
+  olarak kaydediliyor: adres, host, yol, sorgu, başlıklar, kullanıcı aracısı ve
+  Cloudflare konumu. Loglar sayfasında `4xx` filtresiyle görülebilir.
+
+  Kayıt route'un `log_enabled` ayarına bakmaz. İstek zaten hiçbir route'a
+  ulaşmadı, ve loglamayı kapatan bir route kendi trafiğini kapatmıştır, uçtaki
+  tarayıcı reddini değil.
+
+  **Engel başına log bütçesi var (20 satır).** Reddedilen istek bir map
+  aramasına mal olur; her biri için satır yazmak bu kazancı geri verir ve
+  engellendikten sonra devam eden bir tarayıcının, izin verildiği dönemden daha
+  fazla kayıt üretmesine yol açardı. Bütçe dolduğunda istekler reddedilmeye
+  devam eder, yalnız kayıt üretmez. Bütçe engelle birlikte sıfırlanır, yani
+  süresi dolduktan sonra geri dönen bir istemci yeniden görünür olur.
+
+### BUGFIXES
+
+- **Engelleme sayfasında bitiş zamanı okunabilir hale geldi.** Kolon geçmiş
+  zaman için yazılmış bir yardımcıyı gelecekteki bir tarihe uyguluyor ve
+  `-468s ago` gibi bir değer üretiyordu. Artık tam tarih ve saat yazıyor,
+  yanında kalan süre parantez içinde duruyor. Yardımcının kendisi de tarihin
+  hangi yönde olduğunu okuyor, böylece başka bir gelecek tarih verildiğinde
+  negatif yaş üretmiyor.
+
+### Upgrade notları
+
+Şema değişikliği yok. Merkez ve agent'lar güncellenmeli; engelleme kararı
+agent'ta verildiği için log kaydı da orada oluşur.
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.5.2
+
+# Agent (her edge sunucusunda):
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.5.2
+```
+
+---
+
 ## [0.5.1] - 2026-08-29
 
 Engelleme yapılandırması edge agent'lara taşınıyor. Şema değişikliği yok.

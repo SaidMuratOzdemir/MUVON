@@ -393,3 +393,60 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// Refusing a request costs one map lookup. Writing a log row for each one hands
+// that cost back, so the budget bounds what a single block can produce while
+// still surfacing the probe that caused it.
+func TestRefusalLoggingIsBudgeted(t *testing.T) {
+	s, _ := newTestScorer(t)
+	const ip = "203.0.113.7"
+
+	d := s.Observe(ip, "/.env")
+	if !d.Blocked || !d.JustBlocked {
+		t.Fatal("a credential probe should block on its own")
+	}
+	if !d.Log {
+		t.Fatal("the request that caused the block must be logged")
+	}
+
+	logged := 1
+	for i := 0; i < 500; i++ {
+		d := s.Observe(ip, "/")
+		if !d.Blocked {
+			t.Fatalf("request %d: client should still be refused", i)
+		}
+		if d.Log {
+			logged++
+		}
+	}
+	if logged != maxLoggedPerBlock {
+		t.Errorf("logged %d refusals out of 501, want %d", logged, maxLoggedPerBlock)
+	}
+}
+
+// The budget belongs to the block, not to the client. An offender who comes
+// back after one expires has to be visible again, otherwise the second visit
+// would be enforced silently.
+func TestRefusalBudgetResetsWithTheBlock(t *testing.T) {
+	s, clock := newTestScorer(t)
+	const ip = "203.0.113.8"
+
+	s.Observe(ip, "/.env")
+	for i := 0; i < maxLoggedPerBlock+5; i++ {
+		s.Observe(ip, "/")
+	}
+	if d := s.Observe(ip, "/"); d.Log {
+		t.Fatal("budget should be spent by now")
+	}
+
+	*clock = clock.Add(2 * time.Hour) // past the first ban
+	s.Sweep()
+
+	d := s.Observe(ip, "/.env")
+	if !d.Blocked {
+		t.Fatal("a returning offender should be blocked again")
+	}
+	if !d.Log {
+		t.Error("the new block must be able to log its own probe")
+	}
+}

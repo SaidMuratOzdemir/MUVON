@@ -35,18 +35,20 @@ export function formatNumber(n: number): string {
   return n.toString()
 }
 
+// A timestamp handed to this helper can sit on either side of now: most are in
+// the past, but an expiry is not. Reading the sign keeps a future date from
+// rendering as a negative age.
 export function relativeTime(dateStr: string): string {
-  const date = new Date(dateStr)
-  const now = new Date()
-  const diff = now.getTime() - date.getTime()
-  const seconds = Math.floor(diff / 1000)
-  if (seconds < 60) return `${seconds}s ago`
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const future = diff < 0
+  const fmt = (n: number, unit: string) => (future ? `in ${n}${unit}` : `${n}${unit} ago`)
+  const seconds = Math.floor(Math.abs(diff) / 1000)
+  if (seconds < 60) return fmt(seconds, 's')
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
+  if (minutes < 60) return fmt(minutes, 'm')
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
+  if (hours < 24) return fmt(hours, 'h')
+  return fmt(Math.floor(hours / 24), 'd')
 }
 
 export function statusClass(status: number): string {

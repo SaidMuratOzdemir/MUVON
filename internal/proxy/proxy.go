@@ -117,6 +117,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					"until", d.Block.ExpiresAt)
 			}
 			http.Error(w, "forbidden", http.StatusForbidden)
+			if d.Log {
+				h.logRefusal(r, host, clientIP, start)
+			}
 			return
 		}
 	}
@@ -377,6 +380,37 @@ func (h *Handler) serveProxy(w http.ResponseWriter, r *http.Request, route *conf
 	if h.logSink != nil {
 		h.logSink.Send(entry)
 	}
+}
+
+// logRefusal records a request the blocker turned away, so a refusal is
+// visible where the operator already looks for traffic rather than only in the
+// block list. The refusal happens before route matching, so there is no route
+// whose log_enabled could be consulted: the request never reached one. It is
+// recorded either way, because a request that was refused is the event the
+// operator opened the log for, and a route that opts out of logging is opting
+// out of its own traffic, not of the edge refusing a scanner on its behalf.
+//
+// The scorer decides which refusals get here; see Decision.Log.
+func (h *Handler) logRefusal(r *http.Request, host, clientIP string, start time.Time) {
+	if h.logSink == nil {
+		return
+	}
+	country, city := CloudflareLocation(r)
+	h.logSink.Send(logger.Entry{
+		RequestID:      uuid.Must(uuid.NewV7()).String(),
+		Timestamp:      start,
+		Host:           host,
+		ClientIP:       clientIP,
+		Method:         r.Method,
+		Path:           r.URL.Path,
+		QueryString:    r.URL.RawQuery,
+		RequestHeaders: captureHeaders(r.Header),
+		ResponseStatus: http.StatusForbidden,
+		ResponseTimeMs: int(time.Since(start).Milliseconds()),
+		UserAgent:      r.UserAgent(),
+		Country:        country,
+		City:           city,
+	})
 }
 
 func (h *Handler) serveRedirect(w http.ResponseWriter, r *http.Request, route *config.RouteRule) {
