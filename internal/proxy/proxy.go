@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"muvon/internal/blocklist"
 	"muvon/internal/config"
 	"muvon/internal/db"
 	"muvon/internal/health"
@@ -51,7 +52,18 @@ type Handler struct {
 	// "" = enforcement disabled (don't use except in tests).
 	selfKind    string
 	selfAgentID string
+
+	// blocker refuses clients that have scored past the threshold. Optional:
+	// nil means the feature is not wired in (tests, and any caller that has no
+	// use for it). It lives here rather than in the correlation engine because
+	// that engine runs in dialog-siem, after the log row is written, which is
+	// far too late to refuse a request.
+	blocker *blocklist.Scorer
 }
+
+// SetBlocker attaches the edge blocker. Called once at startup and left alone;
+// the scorer picks up config changes through its own SetConfig/SetPatterns.
+func (h *Handler) SetBlocker(s *blocklist.Scorer) { h.blocker = s }
 
 func NewHandler(ch *config.Holder, logSink LogSink, transport http.RoundTripper, hm *health.Manager, instanceTracker InstanceTracker, selfKind, selfAgentID string) *Handler {
 	cfg := ch.Get()
@@ -85,6 +97,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !h.ownsHost(hc.Host) {
 		writeMisdirected(w, r, hc.Host)
 		return
+	}
+
+	// Edge blocking. Runs before route matching so a refused client costs one
+	// map lookup and nothing else, and before the RUM intercept so a blocked
+	// scanner cannot keep feeding the telemetry pipeline either.
+	//
+	// The address is resolved with the same trust gate the logger uses: behind
+	// Cloudflare the CDN's own edge addresses must never be the thing that gets
+	// scored, or one scanner would take the whole zone down with it.
+	if h.blocker != nil {
+		clientIP := clientIPFor(r, hc.Host.TrustedProxies)
+		if d := h.blocker.Observe(clientIP, r.URL.Path); d.Blocked {
+			if d.JustBlocked {
+				slog.Warn("blocked client",
+					"ip", clientIP, "host", host, "path", r.URL.Path,
+					"rule", d.Block.Rule, "pattern", d.Block.Pattern,
+					"score", d.Block.Score, "ban_count", d.Block.BanCount,
+					"until", d.Block.ExpiresAt)
+			}
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 	}
 
 	// Reserved RUM ingest — intercepted before route matching so a tenant's

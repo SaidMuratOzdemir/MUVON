@@ -152,6 +152,15 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/logs/{id}/jwt", s.handleRevealLogJWT)
 
 	// Settings
+	// Edge blocking. Patterns are data the operator owns, so they get a proper
+	// CRUD surface rather than living in the binary.
+	api.HandleFunc("GET /api/security/patterns", s.handleListBlockPatterns)
+	api.HandleFunc("POST /api/security/patterns", s.handleUpsertBlockPattern)
+	api.HandleFunc("DELETE /api/security/patterns", s.handleDeleteBlockPattern)
+	api.HandleFunc("GET /api/security/blocks", s.handleListBlocks)
+	api.HandleFunc("DELETE /api/security/blocks/{key}", s.handleDeleteBlock)
+	api.HandleFunc("POST /api/security/blocks/flush", s.handleFlushBlocks)
+
 	api.HandleFunc("GET /api/settings", s.handleGetSettings)
 	api.HandleFunc("PUT /api/settings/{key}", s.handleUpdateSetting)
 
@@ -244,6 +253,8 @@ func (s *Server) Handler() http.Handler {
 		agentMux.HandleFunc("POST /api/v1/agent/cert/{domain}", s.agentSvc.HandleUploadCert)
 		agentMux.HandleFunc("GET /api/v1/agent/cert/{domain}", s.agentSvc.HandleGetCert)
 		// Command channel — central → agent control plane.
+		agentMux.HandleFunc("POST /api/v1/agent/blocklist", s.agentSvc.HandleReportBlock)
+
 		agentMux.HandleFunc("GET /api/v1/agent/commands", s.agentSvc.HandlePollCommand)
 		agentMux.HandleFunc("POST /api/v1/agent/commands/{id}/result", s.agentSvc.HandleCommandResult)
 		// Edge deployer surface — every State method on the deployer has

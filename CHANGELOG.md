@@ -23,6 +23,105 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-29
+
+Kenarda tarama trafiğini durduran bir katman geldi. Minor sürüm, çünkü yeni bir
+tablo çifti ve yeni bir istek yolu var. Varsayılan **kapalı**: yükseltme tek
+başına hiçbir isteğin davranışını değiştirmez.
+
+### FEATURES
+
+- **Kenarda engelleme.** Sır dosyası, zafiyet ve yönetim paneli araması yapan
+  istemciler puanlanır; eşiği aşan adres bir süre `403` alır ve süre dolunca
+  kendiliğinden açılır. Panelde yeni bir **Engelleme** sayfası var: engellenen
+  adresler, tek tıkla bırakma, desen tablosu ve kendi desenini ekleme.
+
+  Kontrol proxy'nin kendi isteğinde çalışır, korelasyon motorunda değil.
+  Korelasyon motoru diaLOG içinde ve log satırı yazıldıktan sonra devreye
+  giriyor, yani isteği reddetmek için çok geç. Kontrol route eşleştirmesinden
+  önce olduğu için reddedilen bir istemci tek bir map aramasına mal olur.
+
+  **Desenler veritabanında yaşar, kodda değil.** Ürün bir varsayılan setle
+  gelir ve her açılışta eksik olanlar tabloya eklenir, ama operatörün kapattığı
+  bir desen kapalı kalır ve değiştirdiği bir puan korunur. Yeni bir desen
+  eklemek için sürüm çıkmak gerekmez. Ürünle gelen desenler kapatılabilir ama
+  silinemez, çünkü bir sonraki açılışta geri gelirlerdi.
+
+  Üç eşleşme biçimi var, çünkü tarayıcılar aramalarını iç içe yapıyor
+  (`/var/www/.git/config`): dosya adı, ardışık yol parçası ve dosya adı üzerinde
+  düzenli ifade. Dördüncü tür `allow`, bir öneki tamamen muaf tutar ve her
+  şeyden önce bakılır; `/.well-known/acme-challenge/` bu listede, aksi halde
+  ürün kendi sertifika otoritesini engelleyebilirdi.
+
+  Puanlar katmanlı: tek bir kimlik bilgisi araması kendi başına eşiği aşar,
+  yönetim paneli araması aşmaz ve şirket ister. Böylece tek bir `wp-login.php`
+  isteğiyle gelen bir ziyaretçi yanlışlıkla kesilmez. Tekrar eden ihlalde süre
+  ikiye katlanır (15 dakikadan başlayıp 7 günde tavana çarpar) ve ceza sayacı
+  ürettiği bloğun ömründen uzun yaşar, yoksa cezayı beklemek merdiveni
+  sıfırlardı.
+
+  IPv6 tekil adres yerine `/64` öneği üzerinden puanlanır: bir abone bloğun
+  tamamını tuttuğu için adres bazlı puanlama istemciye bedava rotasyon
+  verirdi.
+
+  **Dosya uzantısına asla puan verilmez.** `.php` tek başına bir şey
+  söylemez, çünkü bir kurulum gerçek bir PHP uygulamasının önünde duruyor
+  olabilir. Yalnızca hiçbir uygulamanın sunmadığı adlar puanlanır; bu yüzden
+  `config.php` listede, `config` değil.
+
+  Bir kenarda verilen karar orada anında uygulanır ve merkeze bildirilir
+  (`POST /api/v1/agent/blocklist`; sahiplik istek gövdesinden değil, doğrulanmış
+  agent kimliğinden alınır). Merkez kaydı tutar ve karar filonun geri kalanına
+  config anlık görüntüsüyle ulaşır.
+
+  Eşik, pencere, süreler ve izin listesi de aynı sayfadan yönetilir; hiçbir
+  ayar için doğrudan API çağrısı gerekmez.
+
+  Yeni yönetim uçları: `GET/POST/DELETE /api/security/patterns`,
+  `GET /api/security/blocks`, `DELETE /api/security/blocks/{key}`,
+  `POST /api/security/blocks/flush`. Hepsi denetim kaydına yazar.
+
+### ENHANCEMENTS
+
+- Kabul testi olarak üretim trafiğinden ölçülmüş yedi tarayıcının adresleri ve
+  yolları teste gömüldü. Eşikler değişir de gerçek bir tarayıcı hayatta kalırsa
+  test kırılır.
+
+### Upgrade notları
+
+Üç migration eklemeli çalışır: iki tablo (`blocklist_patterns`, `ip_blocks`) ve
+yedi ayar satırı. Manuel adım yok.
+
+**Özellik kapalı gelir.** Açmadan önce kendi trafiğinize bakın: Engelleme
+sayfasındaki desen listesi, hiçbir meşru isteğinizin puanlanmadığını
+doğrulamanız içindir. Kurulumunuzda gerçek bir PHP uygulaması veya WordPress
+varsa ilgili desenleri kapatın, sonra açın.
+
+Açmak için panelde **Engelleme** sayfasını açıp "Engellemeyi aç" anahtarını
+çevirin. Eşik, puanların toplandığı pencere, ilk engel süresi, süre tavanı ve
+hiç engellenmeyecek adresler (virgülle ayrılmış IP veya CIDR) aynı sayfanın
+Ayarlar bölümünde. Eşiği desen listesinin hemen üstünde tuttuk, çünkü "30"
+sayısı ancak bir kimlik bilgisi aramasının 100, bir yönetim paneli aramasının
+10 puan ettiğini görürken anlam taşıyor.
+
+Yanlış bir engelleme görürseniz panelden tek tıkla bırakabilirsiniz; bırakma
+ceza merdivenini de sıfırlar. Acil durumda "Hepsini bırak" düğmesi bütün
+engelleri kaldırır.
+
+Hibrit topolojide önce merkezi güncelleyin. Yeni bir agent eski bir merkeze
+blok bildirmeye çalışırsa `404` alır ve bunu tek satırlık bir uyarı olarak
+yazar; kendi kenarındaki koruma çalışmaya devam eder.
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.5.0
+
+# Agent:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.5.0
+```
+
+---
+
 ## [0.4.1] - 2026-08-25
 
 ### BUGFIXES

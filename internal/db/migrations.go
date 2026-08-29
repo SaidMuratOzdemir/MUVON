@@ -1375,4 +1375,68 @@ ON CONFLICT (key) DO NOTHING;`,
 		sql: `ALTER TABLE deploy_release_components
 		  ADD COLUMN IF NOT EXISTS image_id TEXT NOT NULL DEFAULT '';`,
 	},
+	// Edge blocking. Patterns are data, not code: the table ships seeded from
+	// blocklist.DefaultPatterns() on every boot, and from then on the operator
+	// owns it. A builtin row can be disabled but not deleted, because the next
+	// boot would put it back; the sync only inserts what is missing and never
+	// overwrites enabled or score.
+	{
+		name: "create_blocklist_patterns", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS blocklist_patterns (
+    id         UUID DEFAULT gen_uuidv7() PRIMARY KEY,
+    kind       TEXT NOT NULL CHECK (kind IN ('filename','segment','regex','allow')),
+    pattern    TEXT NOT NULL,
+    score      INTEGER NOT NULL DEFAULT 0 CHECK (score >= 0),
+    rule       TEXT NOT NULL DEFAULT '',
+    enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+    builtin    BOOLEAN NOT NULL DEFAULT FALSE,
+    note       TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (kind, pattern)
+);
+CREATE INDEX IF NOT EXISTS idx_blocklist_patterns_enabled ON blocklist_patterns (enabled);`,
+	},
+	// Active blocks. Kept out of the alerts hypertable on purpose: that table
+	// is compressed after a week and dropped by retention, neither of which a
+	// mutable decision that must survive a restart can tolerate.
+	//
+	// block_key is the scoring unit, not a raw address: an IPv4 address or an
+	// IPv6 /64 prefix, because a single subscriber holds a whole /64 and
+	// scoring individual addresses would let one client rotate for free.
+	{
+		name: "create_ip_blocks", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS ip_blocks (
+    id          UUID DEFAULT gen_uuidv7() PRIMARY KEY,
+    block_key   TEXT NOT NULL UNIQUE,
+    rule        TEXT NOT NULL DEFAULT '',
+    pattern     TEXT NOT NULL DEFAULT '',
+    score       INTEGER NOT NULL DEFAULT 0,
+    ban_count   INTEGER NOT NULL DEFAULT 1,
+    permanent   BOOLEAN NOT NULL DEFAULT FALSE,
+    source_host TEXT NOT NULL DEFAULT '',
+    created_by  TEXT NOT NULL DEFAULT 'auto',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ip_blocks_expires ON ip_blocks (expires_at);`,
+	},
+	// Blocking ships disabled. An appliance install may sit in front of an
+	// application that legitimately serves some scored filename, and the
+	// operator has to look at their own traffic before turning this on.
+	{
+		name: "seed_blocking_settings", product: "muvon",
+		sql: `
+INSERT INTO settings (key, value) VALUES
+  ('security_blocking_enabled',       'false'),
+  ('security_block_threshold',        '30'),
+  ('security_block_window_seconds',   '21600'),
+  ('security_block_ttl_seconds',      '900'),
+  ('security_block_ttl_max_seconds',  '604800'),
+  ('security_block_max_entries',      '100000'),
+  ('security_block_allowlist',        '""')
+ON CONFLICT (key) DO NOTHING;`,
+	},
 }

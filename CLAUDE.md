@@ -61,6 +61,19 @@ Per request: resolve host → match route by longest path prefix → proxy/stati
 
 **Visitor location.** `country` and `city` on `http_logs` and `client_events` are stamped at the edge from Cloudflare's `CF-IPCountry` / `CF-IPCity` headers (`CloudflareLocation` in `internal/proxy/cloudflare.go`), behind the same gate as `CF-Connecting-IP`: the peer must be a Cloudflare edge and the request must carry the operator's shared secret. Any client can send those headers, so without that check a visitor could choose the country attributed to them. Hosts not behind Cloudflare carry no location, and the values require Cloudflare's "Add visitor location headers" managed transform. The local MaxMind reader (`internal/geoip`, the `geoip_*` settings, the `geoip` volume, the installer's MaxMind step) was removed in v0.2.0 in favour of this path, which needs no database to ship or refresh. There is no v0.1.53; the last v0.1 release was v0.1.52.
 
+### Edge blocking (`internal/blocklist`, `internal/blocklistsvc`)
+Requests are scored against operator-managed path patterns and clients that cross a threshold get `403` for a while. Off by default (`security_blocking_enabled`).
+
+**It runs in the proxy, not in the correlation engine.** `internal/correlation` lives in `dialog-siem` and sees a request only after the log row is written, which is too late to refuse it. The check sits in `ServeHTTP` before route matching, so a refused client costs one map lookup, and before the RUM intercept, so a blocked scanner cannot keep feeding telemetry either. The address comes from `clientIPFor`, the same trust gate the logger uses: behind a CDN the edge's own addresses must never be what gets scored.
+
+**Patterns are data, not code.** `blocklist_patterns` ships seeded from `blocklist.DefaultPatterns()` on every boot and the table is the truth from then on. The sync only inserts what is missing: a builtin row the operator disabled stays disabled and a score they tuned stays tuned. Builtin rows can be disabled but not deleted, because the next boot would restore them. Three match kinds, because scanners nest their probes (`/var/www/.git/config`): `filename` on the last segment, `segment` on a run of segments, `regex` on the filename. A fourth kind, `allow`, exempts a prefix and is checked first; `/.well-known/acme-challenge/` is in it, without which the product could block its own certificate authority.
+
+**Never score a file extension.** `.php` says nothing on its own: an appliance install may front a real PHP application. Only names no application serves earn points, which is also why `config.php` is scored and `config` is not.
+
+Weights are tiered so a single credential probe blocks on its own (100, threshold 30) while an admin-panel probe (10) needs company. Hits decay by falling out of a sliding window rather than by a decay function. Repeat offences double the ban (15 minutes, capped at 7 days) and the ban counter outlives the block it produced, otherwise waiting out a ban would reset the ladder. IPv6 is scored per `/64`: a subscriber holds the whole prefix, so scoring addresses would let one client rotate for free.
+
+**Fleet propagation.** A block decided on an edge is enforced there immediately and reported to central (`POST /api/v1/agent/blocklist`, ownership taken from the authenticated agent, never the body). Central persists it and it reaches the rest of the fleet in the config snapshot, capped at `config.MaxSyncedBlocks`. Deliberately not the command channel: that carries one-off events, not a continuously changing set.
+
 ### Managed deploy (hybrid topology)
 Routes can bind to a managed component. The proxy selects only `active` instances (never warming/draining). The deploy lifecycle — image pull → migration container → candidate start → health check → atomic promote (old `active` → `draining`, candidate → `active`) → graceful drain — is shared code in `internal/deployer/service.go`, sitting behind a `State` interface:
 

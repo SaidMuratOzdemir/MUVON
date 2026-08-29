@@ -586,3 +586,28 @@ export interface IngestStatus {
     shipper_active_containers?: number;
   };
 }
+
+// Edge blocking. Patterns are operator-owned data: the product ships a default
+// set but the table is the truth, so a new pattern never needs a release.
+export type BlockPatternKind = "filename" | "segment" | "regex" | "allow";
+
+export interface BlockPattern {
+  kind: BlockPatternKind;
+  pattern: string;
+  score: number;
+  rule: string;
+  enabled: boolean;
+  builtin: boolean;
+  note?: string;
+}
+
+export interface IPBlock {
+  key: string;
+  rule: string;
+  pattern: string;
+  score: number;
+  ban_count: number;
+  permanent: boolean;
+  created_at: string;
+  expires_at: string;
+}

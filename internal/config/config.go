@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"muvon/internal/blocklist"
 	"muvon/internal/db"
 	"muvon/internal/secret"
 )
@@ -17,7 +18,34 @@ import (
 type Config struct {
 	Hosts  map[string]*HostConfig // domain -> config
 	Global GlobalConfig
+
+	// Blocking is carried in the snapshot rather than read from the database
+	// by each proxy, because edge agents have no database connection and need
+	// exactly the same patterns and thresholds the centre is using.
+	Blocking BlockingConfig
 }
+
+// BlockingConfig is the edge blocking surface: what to score, when to refuse,
+// and who is already refused.
+type BlockingConfig struct {
+	Settings db.BlocklistSettings
+	Patterns []blocklist.Pattern
+
+	// Active carries blocks the centre has already decided so a restarting
+	// proxy, or an agent that has never seen the offender, starts refusing
+	// immediately instead of relearning. Reload runs every few seconds, which
+	// is the propagation delay; that is fast enough for a scanner and avoids a
+	// second delivery channel.
+	//
+	// Capped by MaxSyncedBlocks: the set is attacker-influenced, and a snapshot
+	// that grows without bound would be pushed to every agent on every reload.
+	Active []blocklist.Block
+}
+
+// MaxSyncedBlocks bounds how many active blocks travel in the config snapshot.
+// Past this the local scorer still protects each edge on its own; only the
+// shared view is truncated, and the operator is warned.
+const MaxSyncedBlocks = 1000
 
 type HostConfig struct {
 	Host   db.Host
@@ -154,6 +182,29 @@ func LoadFromDB(ctx context.Context, database *db.DB, box *secret.Box) (*Config,
 		return nil, fmt.Errorf("config: load managed backends: %w", err)
 	}
 
+	// Blocking patterns travel with the config so agents score identically to
+	// the centre. A failure here must not take the whole reload down: the proxy
+	// keeps serving with the previous snapshot, which is the fail-open rule
+	// applied to a security feature as much as to logging.
+	patterns, err := database.ListBlocklistPatterns(ctx)
+	if err != nil {
+		slog.Warn("config: load blocking patterns failed, blocking left as-is", "error", err)
+	} else {
+		cfg.Blocking.Patterns = patterns
+	}
+
+	active, err := database.ListActiveIPBlocks(ctx)
+	if err != nil {
+		slog.Warn("config: load active blocks failed", "error", err)
+	} else {
+		if len(active) > MaxSyncedBlocks {
+			slog.Warn("active blocks exceed the snapshot cap; agents will see a truncated list",
+				"total", len(active), "cap", MaxSyncedBlocks)
+			active = active[:MaxSyncedBlocks]
+		}
+		cfg.Blocking.Active = active
+	}
+
 	for _, h := range hosts {
 		hc := &HostConfig{Host: h}
 		for _, r := range routeMap[h.ID] {
@@ -182,7 +233,7 @@ func LoadFromDB(ctx context.Context, database *db.DB, box *secret.Box) (*Config,
 		cfg.Hosts[h.Domain] = hc
 	}
 
-	cfg.Global, err = loadGlobalConfig(ctx, database, box)
+	cfg.Global, cfg.Blocking.Settings, err = loadGlobalConfig(ctx, database, box)
 	if err != nil {
 		return nil, err
 	}
@@ -191,10 +242,10 @@ func LoadFromDB(ctx context.Context, database *db.DB, box *secret.Box) (*Config,
 	return cfg, nil
 }
 
-func loadGlobalConfig(ctx context.Context, database *db.DB, box *secret.Box) (GlobalConfig, error) {
+func loadGlobalConfig(ctx context.Context, database *db.DB, box *secret.Box) (GlobalConfig, db.BlocklistSettings, error) {
 	settings, err := database.GetAllSettings(ctx)
 	if err != nil {
-		return GlobalConfig{}, fmt.Errorf("config: load settings: %w", err)
+		return GlobalConfig{}, db.BlocklistSettings{}, fmt.Errorf("config: load settings: %w", err)
 	}
 
 	g := GlobalConfig{
@@ -247,7 +298,24 @@ func loadGlobalConfig(ctx context.Context, database *db.DB, box *secret.Box) (Gl
 
 	g.Correlation = loadCorrelationConfig(settings)
 
-	return g, nil
+	// Edge blocking. Ships disabled: an appliance install may sit in front of
+	// an application that legitimately serves a scored filename, so the
+	// operator turns this on after looking at their own traffic.
+	bl := db.BlocklistSettings{
+		Enabled:    getBoolSetting(settings, "security_blocking_enabled", false),
+		Threshold:  getIntSetting(settings, "security_block_threshold", 30),
+		Window:     time.Duration(getIntSetting(settings, "security_block_window_seconds", 21600)) * time.Second,
+		BaseTTL:    time.Duration(getIntSetting(settings, "security_block_ttl_seconds", 900)) * time.Second,
+		MaxTTL:     time.Duration(getIntSetting(settings, "security_block_ttl_max_seconds", 604800)) * time.Second,
+		MaxEntries: getIntSetting(settings, "security_block_max_entries", 100000),
+	}
+	for _, entry := range strings.Split(getStrSetting(settings, "security_block_allowlist", ""), ",") {
+		if e := strings.TrimSpace(entry); e != "" {
+			bl.Allowlist = append(bl.Allowlist, e)
+		}
+	}
+
+	return g, bl, nil
 }
 
 func loadCorrelationConfig(settings map[string]json.RawMessage) CorrelationConfig {

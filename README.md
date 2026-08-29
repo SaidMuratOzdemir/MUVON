@@ -300,6 +300,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Multi-Host Routing | Virtual host resolution by domain |
 | Path-Prefix Matching | The longest matching prefix always wins. `priority` only breaks ties between prefixes of equal length (routes are loaded `ORDER BY priority DESC`); it cannot promote a shorter prefix over a longer one |
 | Per-Route Rate Limiting | Fixed one-second window keyed by client IP. Capacity is `rate_limit_burst`, falling back to `rate_limit_rps` when burst is zero. The counter resets when the window elapses rather than sliding, so a burst straddling two windows can pass |
+| Edge Blocking | Scores requests against operator-managed path patterns (credential files, exploit probes, admin discovery) and refuses clients past a threshold with `403` for a doubling interval. Off by default. Patterns live in the database and are edited from the panel, so new coverage never needs a release. Not a WAF: no body inspection, no rule language, no signature feed. See `internal/blocklist` |
 | Per-Route Body Limit | `max_body_bytes`, returns 413 on exceed |
 | Per-Route Timeout | `timeout_seconds`, propagates to upstream |
 | CORS | Per-route origins, methods, headers, credentials |

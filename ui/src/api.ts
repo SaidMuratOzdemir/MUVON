@@ -26,6 +26,9 @@ import type {
   ClientEventSearchParams,
   ClientEventSearchResponse,
   IngestStatus,
+  BlockPattern,
+  BlockPatternKind,
+  IPBlock,
 } from "./types";
 
 const API_BASE = "";
@@ -1140,4 +1143,44 @@ export function createContainerLogStream(
   };
   if (onError) es.onerror = onError;
   return () => es.close();
+}
+
+// --- Edge blocking ---
+
+export async function listBlockPatterns(): Promise<BlockPattern[]> {
+  return request<BlockPattern[]>("GET", "/api/security/patterns");
+}
+
+export async function upsertBlockPattern(p: {
+  kind: BlockPatternKind;
+  pattern: string;
+  score: number;
+  rule?: string;
+  enabled?: boolean;
+  note?: string;
+}): Promise<BlockPattern> {
+  return request<BlockPattern>("POST", "/api/security/patterns", p);
+}
+
+export async function deleteBlockPattern(
+  kind: string,
+  pattern: string,
+): Promise<{ deleted: boolean }> {
+  const qs = new URLSearchParams({ kind, pattern });
+  return request<{ deleted: boolean }>("DELETE", `/api/security/patterns?${qs}`);
+}
+
+export async function listIPBlocks(): Promise<IPBlock[]> {
+  return request<IPBlock[]>("GET", "/api/security/blocks");
+}
+
+export async function releaseIPBlock(key: string): Promise<{ released: boolean }> {
+  return request<{ released: boolean }>(
+    "DELETE",
+    `/api/security/blocks/${encodeURIComponent(key)}`,
+  );
+}
+
+export async function flushIPBlocks(): Promise<{ released: number }> {
+  return request<{ released: number }>("POST", "/api/security/blocks/flush");
 }

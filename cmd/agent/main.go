@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 
 	"muvon/internal/agentctrl"
+	"muvon/internal/blocklistsvc"
 	"muvon/internal/config"
 	"muvon/internal/deployer"
 	deployergrpc "muvon/internal/deployer/grpcserver"
@@ -322,6 +323,18 @@ func main() {
 	// fall through to "unknown host" naturally. Wire selfKind="agent"
 	// once we have an authenticated whoami round-trip on startup.
 	rt := router.New(ch, logSink, transport, hm, nil, nil, "", nil, "", "")
+
+	// Edge blocking. The agent scores with the same patterns and thresholds
+	// central does, because both come from the config snapshot. A block decided
+	// here takes effect immediately and is reported to central, which is what
+	// puts it in front of the rest of the fleet on their next snapshot.
+	blockSvc := blocklistsvc.New(ch, blocklistsvc.AgentPersister{
+		CentralURL: *centralURL,
+		APIKey:     *apiKey,
+		AgentID:    hostID,
+	})
+	rt.ProxyHandler().SetBlocker(blockSvc.Scorer())
+	go blockSvc.Run(ctx)
 
 	// Central → agent command channel. Skipped when AGENT_ENCRYPTION_KEY
 	// is empty because every command is HMAC-signed and the agent can't

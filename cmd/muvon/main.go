@@ -20,6 +20,8 @@ import (
 	"muvon/internal/admin"
 	"muvon/internal/agentctrl"
 	"muvon/internal/agentsvc"
+	"muvon/internal/blocklist"
+	"muvon/internal/blocklistsvc"
 	"muvon/internal/config"
 	"muvon/internal/db"
 	deployerclient "muvon/internal/deployer/grpcclient"
@@ -284,6 +286,21 @@ func main() {
 	// Central terminates only hosts bound with target_kind="central" — the
 	// proxy returns 421 for anything else so misdirected traffic is loud.
 	rt := router.New(ch, logSink, transport, hm, database, frontendFS, *adminDomain, adminSrv.Handler(), "central", "")
+
+	// Edge blocking. Patterns are seeded on every boot so a release can add
+	// coverage; the sync only inserts what is missing and never overwrites a
+	// score or an enabled flag the operator changed.
+	if n, err := database.SyncBuiltinPatterns(ctx, blocklist.DefaultPatterns()); err != nil {
+		slog.Warn("blocklist: seeding default patterns failed", "error", err)
+	} else if n > 0 {
+		slog.Info("blocklist: seeded default patterns", "added", n)
+		if err := ch.Reload(ctx); err != nil {
+			slog.Warn("blocklist: reload after seeding failed", "error", err)
+		}
+	}
+	blockSvc := blocklistsvc.New(ch, blocklistsvc.DBPersister{DB: database, Host: "central"})
+	rt.ProxyHandler().SetBlocker(blockSvc.Scorer())
+	go blockSvc.Run(ctx)
 
 	connStateFn := func(_ net.Conn, state http.ConnState) {
 		_ = state

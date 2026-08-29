@@ -15,6 +15,7 @@ import ScheduledJobs from './pages/ScheduledJobs'
 import Alerts from './pages/Alerts'
 import ContainerLogs from './pages/ContainerLogs'
 import ClientEvents from './pages/ClientEvents'
+import Security from './pages/Security'
 import { AuthProvider } from './context/AuthContext'
 import { useAuth } from './context/useAuth'
 
@@ -68,6 +69,7 @@ export default function App() {
             <Route path="jobs" element={<ScheduledJobs />} />
             <Route path="container-logs" element={<ContainerLogs />} />
             <Route path="client-events" element={<ClientEvents />} />
+            <Route path="security" element={<Security />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
