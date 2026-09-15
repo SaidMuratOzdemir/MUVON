@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Search, RefreshCw, Server, History as HistoryIcon, Activity, AlertTriangle,
@@ -223,17 +223,27 @@ function HistoryTab() {
     }
   }
 
-  useEffect(() => { void search(true) }, [])
+  const contextRef = useRef<HTMLDivElement | null>(null)
 
-  async function loadContext(row: ContainerLogRow) {
+  async function loadContext(id: string) {
     try {
-      const resp = await api.getContainerLogContext(row.id, 50)
-      setContextRows({ anchorId: row.id, rows: resp.data ?? [] })
+      const resp = await api.getContainerLogContext(id, 50)
+      setContextRows({ anchorId: id, rows: resp.data ?? [] })
+      requestAnimationFrame(() => contextRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Bağlam yüklenemedi'
       toast.error(msg)
     }
   }
+
+  // ?focus=<id> opens one line with its surroundings: the link an alert's
+  // evidence uses to show the line it came from.
+  useEffect(() => {
+    void search(true)
+    const focus = searchParams.get('focus')
+    if (focus) void loadContext(focus)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="flex flex-col gap-3">
@@ -336,7 +346,7 @@ function HistoryTab() {
                 'group flex items-start gap-2 border-b border-border/30 px-3 py-1 hover:bg-accent/50',
                 r.stream === 'stderr' && 'bg-red-400/5 text-red-200',
               )}
-              onClick={() => void loadContext(r)}
+              onClick={() => void loadContext(r.id)}
               role="button"
               tabIndex={0}
             >
@@ -354,7 +364,7 @@ function HistoryTab() {
       </div>
 
       {contextRows && (
-        <div className="rounded-lg border border-border bg-card">
+        <div ref={contextRef} className="rounded-lg border border-border bg-card">
           <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
             <Badge variant="outline">±50 bağlam</Badge>
             <span className="text-muted-foreground">anchor: {contextRows.anchorId.slice(0, 16)}</span>

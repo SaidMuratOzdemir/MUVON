@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Server, FileText, Settings, Shield,
   LogOut, Menu, X, Activity, ChevronRight, ClipboardList,
   Cpu, Route, Rocket, Satellite,
-  Bell, Terminal, MousePointerClick, Clock, KeyRound, ShieldBan,
+  Bell, BellRing, Terminal, MousePointerClick, Clock, KeyRound, ShieldBan,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -25,7 +25,8 @@ const mainNav = [
   { to: '/container-logs', label: 'Container Logs', icon: Terminal },
   { to: '/logs', label: 'SIEM / Logs', icon: FileText },
   { to: '/client-events', label: 'Client Events', icon: MousePointerClick },
-  { to: '/alerts', label: 'Alerts', icon: Bell },
+  { to: '/alerts', label: 'Alarmlar', icon: Bell },
+  { to: '/alert-rules', label: 'Alarm Kuralları', icon: BellRing },
   { to: '/security', label: 'Engelleme', icon: ShieldBan },
   { to: '/audit', label: 'Audit Log', icon: ClipboardList },
   { to: '/tls', label: 'TLS Certs', icon: Shield },

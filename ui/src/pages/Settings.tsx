@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Save, RefreshCw, Loader2, HardDrive, Shield,
-  Activity, AlertTriangle, Check, KeyRound, Bell,
-  Mail, Send, Radar, Lock, AlertOctagon, FileKey, Download, Archive,
+  Activity, AlertTriangle, Check, KeyRound,
+  Mail, Radar, Lock, AlertOctagon, FileKey, Download, Archive,
 } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,11 +34,7 @@ interface SettingGroup {
   // extra renders a group-specific panel under the fields. Retention uses it
   // to show what Timescale actually enforces, so the input box can never
   // again imply a policy that is not installed.
-  extra?: 'retention' | 'compression'
-  // testAction adds a "Send Test" button to groups that configure outbound
-  // notifications (Slack / SMTP). The button fires the corresponding
-  // /api/alerting/test/* endpoint and toasts the result.
-  testAction?: 'slack' | 'smtp'
+  extra?: 'retention' | 'compression' | 'smtp'
 }
 
 const SETTING_GROUPS: SettingGroup[] = [
@@ -49,7 +46,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         key: 'retention_days',
         label: 'Saklama Süresi',
-        description: "diaLOG'un HTTP loglarını, yakalanan gövdeleri, container loglarını, istemci olaylarını ve alarmları ne kadar süre tuttuğu. Düşürmek, yeni pencerenin dışında kalan her şeyi bir gün içinde kalıcı olarak siler: chunk'lar arşivlenmez, düşürülür. 0 veriyi sonsuza kadar tutar ve diskin sınırsız büyümesine izin verir.",
+        description: "diaLOG'un HTTP loglarını, yakalanan gövdeleri, container loglarını, istemci olaylarını ve onaylanmış alarmları ne kadar süre tuttuğu. Düşürmek, yeni pencerenin dışında kalan her şeyi bir gün içinde kalıcı olarak siler: chunk'lar arşivlenmez, düşürülür. Onaylanmamış alarmlar süresi ne olursa olsun silinmez. 0 veriyi sonsuza kadar tutar ve diskin sınırsız büyümesine izin verir.",
         type: 'number',
         placeholder: '30',
         unit: 'gün',
@@ -65,7 +62,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         key: 'compression_days',
         label: 'Sıkıştırma Süresi',
-        description: "HTTP logları, container logları, istemci olayları ve alarmlar için geçerlidir. 0 politikayı kaldırır ve yeni chunk'lar sıkıştırılmadan kalır; hâlihazırda sıkıştırılmış veriyi geri açmaz.",
+        description: "HTTP logları, container logları ve istemci olayları için geçerlidir. 0 politikayı kaldırır ve yeni chunk'lar sıkıştırılmadan kalır; hâlihazırda sıkıştırılmış veriyi geri açmaz.",
         type: 'number',
         placeholder: '7',
         unit: 'gün',
@@ -175,37 +172,10 @@ const SETTING_GROUPS: SettingGroup[] = [
     ],
   },
   {
-    title: 'Alarm (Slack)',
-    icon: Bell,
-    testAction: 'slack',
-    settings: [
-      {
-        key: 'alerting_enabled',
-        label: 'Alarmları Aç',
-        description: 'Korelasyon kuralları anomali yakaladığında bildirim gönder',
-        type: 'boolean',
-      },
-      {
-        key: 'alerting_cooldown_seconds',
-        label: 'Bekleme Süresi',
-        description: 'Aynı parmak izine sahip alarmlar arasındaki asgari süre',
-        type: 'number',
-        placeholder: '300',
-        unit: 'sn',
-      },
-      {
-        key: 'alerting_slack_webhook',
-        label: 'Slack Webhook Adresi',
-        description: 'Alarm bildirimleri için Slack incoming webhook adresi',
-        type: 'string',
-        placeholder: 'https://hooks.slack.com/services/...',
-      },
-    ],
-  },
-  {
-    title: 'E-posta (SMTP)',
+    title: 'E-posta Gönderim Hesabı (SMTP)',
     icon: Mail,
-    testAction: 'smtp',
+    extra: 'smtp',
+    description: 'E-posta alarm kanallarının hepsi bu hesaptan gönderir. Alıcılar, Slack kanalları ve hangi kuralın nereye bildireceği Alarm Kuralları sayfasında tanımlanır.',
     settings: [
       {
         key: 'alerting_smtp_host',
@@ -242,13 +212,6 @@ const SETTING_GROUPS: SettingGroup[] = [
         type: 'string',
         placeholder: 'alerts@example.com',
       },
-      {
-        key: 'alerting_smtp_to',
-        label: 'Alıcı Adresleri',
-        description: 'Virgülle ayrılmış alıcı e-posta adresleri',
-        type: 'string',
-        placeholder: 'team@example.com',
-      },
     ],
   },
   // ── Threat Detection Rules ──────────────────────────────────────────────
@@ -277,7 +240,7 @@ const SETTING_GROUPS: SettingGroup[] = [
   {
     title: '5xx Hata Sıçraması',
     icon: AlertOctagon,
-    description: 'Host başına 5xx sayacı. Bir kez tetiklenir, sonra alarm bekleme süresine düşer, böylece kesintiler Slack\'i doldurmaz.',
+    description: 'Host başına 5xx sayacı. Aynı host için alarm onaylanana kadar açık kalır ve tekrarlar sayılır, böylece bir kesinti bildirim yağdırmaz.',
     settings: [
       { key: 'correlation_error_spike_count', label: '5xx Sayısı', description: 'Tetiklenme için gereken sunucu hatası sayısı.', type: 'number', placeholder: '10' },
       { key: 'correlation_error_spike_window_seconds', label: 'Pencere', description: 'Kayan pencere boyutu.', type: 'number', placeholder: '60', unit: 'sn' },
@@ -316,38 +279,6 @@ const SETTING_GROUPS: SettingGroup[] = [
     ],
   },
 ]
-
-function TestChannelButton({ channel, disabled }: { channel: 'slack' | 'smtp'; disabled: boolean }) {
-  const [sending, setSending] = useState(false)
-  async function runTest() {
-    setSending(true)
-    try {
-      if (channel === 'slack') await api.testSlackAlert()
-      else await api.testSMTPAlert()
-      toast.success(`${channel} testi gönderildi`)
-    } catch (err) {
-      // Show the backend message verbatim — Slack/SMTP errors (bad URL,
-      // auth failure, unreachable host) are actionable and should not be
-      // generic-toasted.
-      toast.error(err instanceof api.ApiError ? err.message : `${channel} testi başarısız`)
-    } finally {
-      setSending(false)
-    }
-  }
-  return (
-    <Button
-      size="sm"
-      variant="outline"
-      disabled={disabled || sending}
-      onClick={runTest}
-      className="cursor-pointer"
-      title={disabled ? 'Test etmeden önce bekleyen değişiklikleri kaydedin' : 'Bu kanaldan test alarmı gönder'}
-    >
-      {sending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-2" /> : <Send className="h-3.5 w-3.5 mr-2" />}
-      Test Gönder
-    </Button>
-  )
-}
 
 function SettingRow({
   def, value, saved, onChange, onSave, saving,
@@ -699,12 +630,6 @@ export default function Settings() {
                   <group.icon className="h-4 w-4 text-primary shrink-0" />
                   <span className="text-sm font-semibold text-foreground truncate">{group.title}</span>
                 </div>
-                {group.testAction && (
-                  <TestChannelButton
-                    channel={group.testAction}
-                    disabled={allDirtyKeys.some(s => s.key.startsWith(group.testAction === 'slack' ? 'alerting_slack' : 'alerting_smtp'))}
-                  />
-                )}
               </div>
               {group.description && (
                 <p className="px-4 pt-3 text-xs text-muted-foreground">{group.description}</p>
@@ -729,6 +654,15 @@ export default function Settings() {
                 <CompressionStatusPanel
                   refreshKey={`${savedValues['compression_days'] ?? ''}:${savedValues['compression_bodies_days'] ?? ''}`}
                 />
+              )}
+              {group.extra === 'smtp' && (
+                <p className="px-4 pb-3 text-xs text-muted-foreground">
+                  Hesabı denemek için bir e-posta kanalı oluşturup{' '}
+                  <Link to="/alert-rules?tab=channels" className="text-primary hover:underline">
+                    Alarm Kuralları, Kanallar
+                  </Link>{' '}
+                  sekmesinden test gönderin.
+                </p>
               )}
             </div>
           ))}

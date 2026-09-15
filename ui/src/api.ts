@@ -1,7 +1,14 @@
 import type {
   AdminUser,
   Alert,
+  AlertChannel,
+  AlertDetail,
+  AlertMatchClause,
+  AlertProjectChannels,
+  AlertRule,
   AlertStats,
+  AlertTier,
+  ProjectEvent,
   Host,
   Route,
   LogEntry,
@@ -754,16 +761,19 @@ export function createLogStream(
 }
 
 // ---------------------------------------------------------------------------
-// Alerts (correlation engine output)
+// Alerts: incidents raised by builtin detections and event rules
 // ---------------------------------------------------------------------------
 
 export interface AlertSearchParams {
   rule?: string;
+  rule_id?: string;
   severity?: string;
   host?: string;
   source_ip?: string;
+  project?: string;
   fingerprint?: string;
   acknowledged?: boolean;
+  is_test?: boolean;
   from?: string;
   to?: string;
   limit?: number;
@@ -786,24 +796,111 @@ export async function searchAlerts(
   );
 }
 
-export async function getAlert(id: string): Promise<Alert> {
-  return request<Alert>("GET", `/api/alerts/${id}`);
+export async function getAlert(id: string): Promise<AlertDetail> {
+  return request<AlertDetail>("GET", `/api/alerts/${encodeURIComponent(id)}`);
 }
 
 export async function acknowledgeAlert(id: string): Promise<Alert> {
-  return request<Alert>("POST", `/api/alerts/${id}/acknowledge`);
+  return request<Alert>("POST", `/api/alerts/${encodeURIComponent(id)}/acknowledge`);
 }
 
 export async function getAlertStats(): Promise<AlertStats> {
   return request<AlertStats>("GET", "/api/alerts/stats");
 }
 
-export async function testSlackAlert(): Promise<{ status: string }> {
-  return request<{ status: string }>("POST", "/api/alerting/test/slack");
+// Channels. The webhook is write-only: responses say whether one is set and
+// its host, never the address.
+
+export interface AlertChannelInput {
+  name: string;
+  kind?: "slack" | "email";
+  enabled?: boolean;
+  /** Empty on update keeps the stored webhook. */
+  slack_webhook?: string;
+  email_to?: string[];
+  digest_hour?: number;
+  digest_timezone?: string;
 }
 
-export async function testSMTPAlert(): Promise<{ status: string }> {
-  return request<{ status: string }>("POST", "/api/alerting/test/smtp");
+export async function listAlertChannels(): Promise<AlertChannel[]> {
+  return request<AlertChannel[]>("GET", "/api/alert-channels");
+}
+
+export async function createAlertChannel(input: AlertChannelInput): Promise<AlertChannel> {
+  return request<AlertChannel>("POST", "/api/alert-channels", input);
+}
+
+export async function updateAlertChannel(id: string, input: AlertChannelInput): Promise<AlertChannel> {
+  return request<AlertChannel>("PUT", `/api/alert-channels/${encodeURIComponent(id)}`, input);
+}
+
+export async function deleteAlertChannel(id: string): Promise<void> {
+  await request<{ deleted: boolean }>("DELETE", `/api/alert-channels/${encodeURIComponent(id)}`);
+}
+
+/** Sends a sample notification now; rejects with the sender's error. */
+export async function testAlertChannel(id: string): Promise<void> {
+  await request<{ status: string }>("POST", `/api/alert-channels/${encodeURIComponent(id)}/test`);
+}
+
+// Rules
+
+export interface AlertRuleInput {
+  name: string;
+  description: string;
+  enabled: boolean;
+  project: string;
+  component: string;
+  match: { any: AlertMatchClause[] };
+  group_by: string;
+  tiers: AlertTier[];
+  notify_fields: string[];
+  delivery: AlertRule["delivery"];
+  remind_minutes: number;
+  channel_ids: string[];
+}
+
+/** What a builtin rule accepts: the rest of a builtin is fixed. */
+export interface BuiltinRuleInput {
+  enabled: boolean;
+  delivery: AlertRule["delivery"];
+  remind_minutes: number;
+  channel_ids: string[];
+}
+
+export async function listAlertRules(): Promise<AlertRule[]> {
+  return request<AlertRule[]>("GET", "/api/alert-rules");
+}
+
+export async function createAlertRule(input: AlertRuleInput): Promise<AlertRule> {
+  return request<AlertRule>("POST", "/api/alert-rules", input);
+}
+
+export async function updateAlertRule(id: string, input: AlertRuleInput | BuiltinRuleInput): Promise<AlertRule> {
+  return request<AlertRule>("PUT", `/api/alert-rules/${encodeURIComponent(id)}`, input);
+}
+
+export async function deleteAlertRule(id: string): Promise<void> {
+  await request<{ deleted: boolean }>("DELETE", `/api/alert-rules/${encodeURIComponent(id)}`);
+}
+
+/** Opens a test alert and queues a test notification to the rule's channels. */
+export async function testAlertRule(id: string): Promise<{ alert_id: string; channels: string[] }> {
+  return request<{ alert_id: string; channels: string[] }>("POST", `/api/alert-rules/${encodeURIComponent(id)}/test`);
+}
+
+export async function listAlertProjects(): Promise<AlertProjectChannels[]> {
+  return request<AlertProjectChannels[]>("GET", "/api/alert-projects");
+}
+
+export async function setAlertProjectChannels(project: string, channelIds: string[]): Promise<AlertProjectChannels> {
+  return request<AlertProjectChannels>("PUT", `/api/alert-projects/${encodeURIComponent(project)}`, { channel_ids: channelIds });
+}
+
+export async function listProjectEvents(project: string, component = ""): Promise<ProjectEvent[]> {
+  const qs = new URLSearchParams({ project });
+  if (component) qs.set("component", component);
+  return request<ProjectEvent[]>("GET", `/api/alert-events?${qs.toString()}`);
 }
 
 // ---------------------------------------------------------------------------

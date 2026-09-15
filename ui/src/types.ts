@@ -122,24 +122,64 @@ export interface LogEntry {
   user_query?: string;
 }
 
+export type AlertSeverity = "info" | "warning" | "high" | "critical";
+export type AlertDeliveryMode = "instant" | "digest" | "none";
+
+/** A log line an alert came from, with the fields its rule reports. */
+export interface AlertEvidence {
+  log_id: string;
+  log_timestamp: string;
+  container_id: string;
+  component?: string;
+  line: string;
+  fields?: Record<string, string>;
+}
+
+/** An incident: open until acknowledged, counting repeats meanwhile. */
 export interface Alert {
   id: string;
-  timestamp: string;
+  /** builtin key such as "auth_brute_force", or "event" */
   rule: string;
-  /** "info" | "warning" | "critical" */
-  severity: string;
+  rule_id?: string;
+  rule_name: string;
+  severity: AlertSeverity;
   title: string;
   detail?: Record<string, unknown>;
   source_ip?: string;
   host?: string;
+  project?: string;
+  component?: string;
   fingerprint: string;
-  notified: boolean;
-  notified_at?: string;
+  group_key?: string;
+  delivery: AlertDeliveryMode;
+  is_test: boolean;
   occurrences: number;
+  first_seen_at: string;
   last_seen_at: string;
+  evidence: AlertEvidence[];
+  notified_at?: string;
+  next_reminder_at?: string;
   acknowledged: boolean;
   acknowledged_at?: string;
   acknowledged_by?: string;
+}
+
+export interface AlertDeliveryRecord {
+  id: string;
+  alert_ids: string[];
+  channel_id: string;
+  channel_name: string;
+  kind: "opened" | "escalated" | "reminder" | "digest" | "test";
+  severity: string;
+  status: "pending" | "sent" | "failed" | "skipped";
+  attempts: number;
+  last_error?: string;
+  created_at: string;
+  sent_at?: string;
+}
+
+export interface AlertDetail extends Alert {
+  deliveries: AlertDeliveryRecord[];
 }
 
 export interface AlertStats {
@@ -148,6 +188,80 @@ export interface AlertStats {
   by_rule: Record<string, number>;
   by_severity: Record<string, number>;
   last_alert_at?: string;
+}
+
+export interface AlertChannel {
+  id: string;
+  name: string;
+  kind: "slack" | "email";
+  enabled: boolean;
+  email_to: string[];
+  digest_hour: number;
+  digest_timezone: string;
+  has_webhook: boolean;
+  webhook_host?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlertFieldCondition {
+  key: string;
+  op: "eq" | "ne" | "in" | "not_in" | "exists";
+  values: string[];
+}
+
+export interface AlertMatchClause {
+  events: string[];
+  fields: AlertFieldCondition[];
+}
+
+export interface AlertTrigger {
+  type: "each" | "count" | "distinct" | "baseline";
+  count?: number;
+  window_seconds?: number;
+  field?: string;
+  ratio?: number;
+  baseline_days?: number;
+}
+
+export interface AlertTier {
+  severity: AlertSeverity;
+  trigger: AlertTrigger;
+}
+
+export interface AlertRule {
+  id: string;
+  kind: "builtin" | "event";
+  builtin_key?: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  project_id?: number;
+  project?: string;
+  component: string;
+  match: { any: AlertMatchClause[] };
+  group_by: string;
+  tiers: AlertTier[];
+  notify_fields: string[];
+  delivery: AlertDeliveryMode;
+  remind_minutes: number;
+  channel_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AlertProjectChannels {
+  project: string;
+  name: string;
+  channel_ids: string[];
+}
+
+/** An event name a project logged recently, with the fields it carried. */
+export interface ProjectEvent {
+  name: string;
+  count: number;
+  last_seen_at: string;
+  fields: string[];
 }
 
 export interface AuditEntry {

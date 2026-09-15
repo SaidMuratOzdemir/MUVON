@@ -13,6 +13,7 @@ import RoutesPage from './pages/Routes'
 import Apps from './pages/Apps'
 import ScheduledJobs from './pages/ScheduledJobs'
 import Alerts from './pages/Alerts'
+import AlertRules from './pages/AlertRules'
 import ContainerLogs from './pages/ContainerLogs'
 import ClientEvents from './pages/ClientEvents'
 import Security from './pages/Security'
@@ -63,6 +64,7 @@ export default function App() {
             <Route path="tls" element={<TLSCerts />} />
             <Route path="audit" element={<AuditLog />} />
             <Route path="alerts" element={<Alerts />} />
+            <Route path="alert-rules" element={<AlertRules />} />
             <Route path="agents" element={<Agents />} />
             <Route path="apps" element={<Apps hostFilter="central" />} />
             <Route path="apps/edge" element={<Apps hostFilter="edge" />} />
