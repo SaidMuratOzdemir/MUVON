@@ -63,13 +63,18 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
-  # Two tests cover what unit tests cannot reach: a pg_dump taken through the
-  # exec stream that really restores, and retention statements applied to a
-  # real Timescale job catalog. Both skip themselves without their env var, so
-  # without this job they exist and never run. No UI build here: neither
-  # package pulls in the root package's embedded SPA.
+  # Tests that need a real database skip themselves without their env var, so
+  # without this job they exist and never run. The database is the compose
+  # postgres service itself, built from postgres/Dockerfile on a new volume,
+  # so an image, init script or preload that breaks a fresh install fails
+  # here. No UI build: no internal package pulls in the embedded SPA.
   integration:
     runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: test
+      MUVON_ENCRYPTION_KEY: ci
+      MUVON_JWT_SECRET: ci
+      MUVON_ADMIN_DOMAIN: ci.invalid
     steps:
       - uses: actions/checkout@v4
 
@@ -78,25 +83,28 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # The healthcheck also passes against the entrypoint's socket-only init
+      # server, so readiness is taken from TCP, which only the final server
+      # listens on.
       - name: Start databases
         run: |
+          docker compose up -d --build postgres
           docker run -d --name muvon-it-pg \
             -e POSTGRES_PASSWORD=test -e POSTGRES_DB=muvon -e POSTGRES_USER=muvon \
             postgres:18-alpine
-          docker run -d --name muvon-it-ts \
-            -e POSTGRES_PASSWORD=test -e POSTGRES_DB=muvon -e POSTGRES_USER=muvon \
-            -p 55432:5432 timescale/timescaledb:latest-pg17
-          for _ in $(seq 1 60); do
-            if docker exec muvon-it-pg pg_isready -U muvon -d muvon >/dev/null 2>&1 \
-               && docker exec muvon-it-ts pg_isready -U muvon -d muvon >/dev/null 2>&1; then
+          for _ in $(seq 1 150); do
+            if docker exec muvon-postgres pg_isready -h 127.0.0.1 -U muvon -d muvon >/dev/null 2>&1 \
+               && docker exec muvon-it-pg pg_isready -h 127.0.0.1 -U muvon -d muvon >/dev/null 2>&1; then
+              ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' muvon-postgres)
+              echo "MUVON_TEST_PG_DSN=postgres://muvon:test@${ip}:5432/muvon?sslmode=disable" >> "$GITHUB_ENV"
               echo "both ready"
               exit 0
             fi
             sleep 2
           done
           echo "databases did not become ready in time" >&2
+          docker logs --tail 40 muvon-postgres >&2 || true
           docker logs --tail 20 muvon-it-pg >&2 || true
-          docker logs --tail 20 muvon-it-ts >&2 || true
           exit 1
 
       # Asserts the dump carries its newlines and that pg_restore accepts it.
@@ -105,17 +113,11 @@ jobs:
           MUVON_TEST_PG_CONTAINER: muvon-it-pg
         run: go test ./internal/deployer -run TestContainerExecStreamProducesRestorableDump -v
 
-      - name: Retention reaches the job catalog
-        env:
-          MUVON_TEST_PG_DSN: postgres://muvon:test@localhost:55432/muvon?sslmode=disable
-        run: go test ./internal/db -run TestApplyRetentionAgainstTimescale -v
-
-      # Deleting the wrong image takes down whatever is running on it, so the
-      # rules that decide what may be pruned run against a real planner.
-      - name: Image prune keeps what is in use
-        env:
-          MUVON_TEST_PG_DSN: postgres://muvon:test@localhost:55432/muvon?sslmode=disable
-        run: go test ./internal/db -run TestListPrunableImages -v
+      # Every migration on a fresh database, then the tests that need one:
+      # retention and compression against the Timescale job catalog, image
+      # prune rules against a real planner, alerts and event rules.
+      - name: Database tests on the product image
+        run: go test -count=1 ./internal/...
 
   build:
     needs: [verify, integration]

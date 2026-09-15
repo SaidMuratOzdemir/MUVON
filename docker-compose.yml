@@ -3,7 +3,7 @@
 # Update:  docker compose pull && docker compose up -d
 
 services:
-  # ── PostgreSQL (ParadeDB + TimescaleDB + pg_uuidv7) ─────────────────────
+  # ── PostgreSQL (TimescaleDB) ────────────────────────────────────────────
   postgres:
     build:
       context: ./postgres

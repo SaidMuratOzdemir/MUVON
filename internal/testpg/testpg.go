@@ -4,13 +4,13 @@
 // partial unique index, TimescaleDB) cannot be trusted against a fake, so they
 // run here against a throwaway database created per test from the server named
 // by MUVON_TEST_PG_DSN. The server needs the extensions the product image
-// ships: TimescaleDB, pg_uuidv7 and pg_trgm.
+// ships: TimescaleDB and pg_trgm.
 //
 //	docker build -t muvon-postgres-test:local ./postgres
 //	docker run -d --name muvon-test-pg -e POSTGRES_PASSWORD=test \
 //	  -e POSTGRES_USER=muvon -e POSTGRES_DB=muvon -p 55432:5432 \
 //	  muvon-postgres-test:local postgres \
-//	  -c shared_preload_libraries=timescaledb,pg_cron,pg_search
+//	  -c shared_preload_libraries=timescaledb
 //	MUVON_TEST_PG_DSN='postgres://muvon:test@localhost:55432/muvon?sslmode=disable' go test ./...
 package testpg
 
@@ -81,7 +81,6 @@ func Open(t testing.TB) DBs {
 		t.Fatalf("testpg: connect to %s: %v", name, err)
 	}
 	for _, ext := range []string{
-		"CREATE EXTENSION IF NOT EXISTS pg_uuidv7",
 		"CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE",
 		"CREATE EXTENSION IF NOT EXISTS pg_trgm",
 	} {
@@ -92,9 +91,7 @@ func Open(t testing.TB) DBs {
 	}
 	conn.Close(ctx)
 
-	// dialog first, as compose starts it: muvon depends on dialog-siem, and
-	// the shared drop_pg_search would otherwise remove the extension before
-	// dialog's early BM25 migration runs.
+	// dialog first, as compose starts it: muvon depends on dialog-siem.
 	dialogDB, err := db.New(ctx, dsn, "dialog", "muvon")
 	if err != nil {
 		t.Fatalf("testpg: open dialog: %v", err)

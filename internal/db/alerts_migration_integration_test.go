@@ -32,7 +32,7 @@ func migrateUntil(ctx context.Context, t *testing.T, d *DB, stop string) {
 // The rebuild runs on installs that already hold alerts, including ones in
 // compressed chunks, so it is exercised against a real hypertable with rows.
 func TestRebuildAlertsMigrationAgainstTimescale(t *testing.T) {
-	dsn := openTestDatabase(t, "pg_uuidv7", "timescaledb", "pg_trgm")
+	dsn := openTestDatabase(t, "timescaledb", "pg_trgm")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

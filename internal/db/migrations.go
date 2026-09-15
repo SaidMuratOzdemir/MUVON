@@ -86,6 +86,9 @@ var migrations = []migration{
 	// preloading it, a CREATE EXTENSION here would fail on every fresh install.
 	// Installs that already ran this migration have the extension dropped by
 	// `drop_pg_search` at the end of the slice, so both paths end up the same.
+	// pg_uuidv7 left the list the same way: PostgreSQL 18 has uuidv7() in
+	// pg_catalog, which is what gen_uuidv7 resolves to, and the image no longer
+	// builds the extension. `drop_unused_extensions` removes it where present.
 	//
 	// gen_uuidv7 is deliberately unqualified: each product schema gets its own
 	// wrapper and its tables bind to that one. Consolidating them would mean
@@ -94,7 +97,6 @@ var migrations = []migration{
 	{
 		name: "create_extensions", product: "",
 		sql: `
-CREATE EXTENSION IF NOT EXISTS pg_uuidv7;
 CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
 CREATE OR REPLACE FUNCTION gen_uuidv7() RETURNS UUID AS $$ SELECT uuidv7(); $$ LANGUAGE SQL;`,
 	},
@@ -259,12 +261,12 @@ CREATE INDEX IF NOT EXISTS idx_http_logs_client_ip ON http_logs (client_ip, time
 CREATE INDEX IF NOT EXISTS idx_http_log_bodies_log_id ON http_log_bodies (log_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_http_logs_starred ON http_logs (is_starred) WHERE is_starred = true;`,
 	},
+	// The BM25 index needed pg_search preloaded, which the stack no longer
+	// does, so its statement is gone for the reason given at create_extensions.
+	// Installs that built the index drop it in drop_dialog_bm25_index.
 	{
 		name: "create_dialog_bm25_index", product: "dialog",
-		sql: `
-CREATE INDEX IF NOT EXISTS http_logs_search ON http_logs
-USING bm25 (id, path, host, user_agent, client_ip)
-WITH (key_field = 'id');`,
+		sql: `SELECT 1;`,
 	},
 	{
 		name: "add_dialog_retention_policy", product: "dialog",
@@ -1625,5 +1627,46 @@ CREATE INDEX IF NOT EXISTS idx_event_rule_hits_pending ON event_rule_hits (creat
 CREATE INDEX IF NOT EXISTS idx_event_rule_hits_group ON event_rule_hits (rule_id, group_key, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_event_rule_hits_rule ON event_rule_hits (rule_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_event_rule_hits_occurred ON event_rule_hits (occurred_at);`,
+	},
+	// Extensions this database holds that the stack does not use. ParadeDB's
+	// init script added postgis, vector, pg_ivm and fuzzystrmatch and pointed
+	// the search_path at its schema, and pg_uuidv7 is superseded by
+	// PostgreSQL 18's own uuidv7(). A dump that names any of them does not
+	// restore onto the image postgres/Dockerfile builds now. Nothing is
+	// dropped with CASCADE: one that has come to hold something stays, with a
+	// warning.
+	{
+		name: "drop_unused_extensions", product: "",
+		sql: `
+DO $$
+DECLARE
+    obj TEXT;
+BEGIN
+    FOREACH obj IN ARRAY ARRAY['postgis_tiger_geocoder', 'postgis_topology', 'postgis', 'fuzzystrmatch', 'vector', 'pg_ivm', 'pg_uuidv7'] LOOP
+        BEGIN
+            EXECUTE format('DROP EXTENSION IF EXISTS %I', obj);
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'extension % left in place: %', obj, SQLERRM;
+        END;
+    END LOOP;
+    FOREACH obj IN ARRAY ARRAY['tiger_data', 'tiger', 'topology', 'paradedb'] LOOP
+        BEGIN
+            EXECUTE format('DROP SCHEMA IF EXISTS %I', obj);
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'schema % left in place: %', obj, SQLERRM;
+        END;
+    END LOOP;
+    IF EXISTS (
+        SELECT 1 FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase
+        WHERE d.datname = current_database() AND s.setrole = 0
+          AND 'search_path=public, paradedb' = ANY (s.setconfig)
+    ) THEN
+        BEGIN
+            EXECUTE format('ALTER DATABASE %I RESET search_path', current_database());
+        EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING 'database search_path left in place: %', SQLERRM;
+        END;
+    END IF;
+END $$;`,
 	},
 }
