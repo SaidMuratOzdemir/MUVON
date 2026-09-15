@@ -29,9 +29,9 @@ curl -sS -c "$CJ" -X POST "$BASE/api/auth/login" \
 ```
 
 **Failures**:
-- 401 `{"error":"invalid credentials"}`, wrong password or username
-- 400 `{"error":"username and password required"}`, missing field
-- 429, rate limited (the login endpoint is behind a rate limiter, `internal/admin/server.go`)
+- 401 `{"error":"invalid credentials"}`, wrong or missing username or password (both give the same answer, so usernames cannot be enumerated)
+- 400 `{"error":"invalid JSON"}`, a body that does not decode
+- 429 with the plain-text body `rate limit exceeded`: every `/api/auth/*` route shares a limit of 100 requests a minute per client IP (`internal/admin/server.go`)
 
 ## 2) GET calls
 
@@ -84,7 +84,7 @@ muvon_api() {
     ${csrf:+-H "X-CSRF-Token: $csrf"} \
     -X "$method" "$BASE$path" "$@" --max-time 30)
   if [ "$code" = "401" ]; then
-    # access expired — try refresh once
+    # access expired: try refresh once
     curl -sS -b "$CJ" -c "$CJ" -X POST "$BASE/api/auth/refresh" --max-time 10 >/dev/null
     csrf=$(awk '$6=="muvon_csrf"{print $7}' "$CJ")
     code=$(curl -sS -o /tmp/muvon-body -w "%{http_code}" \
@@ -107,7 +107,7 @@ curl -sS -b "$CJ" -H "X-CSRF-Token: $CSRF" -X POST "$BASE/api/auth/logout" --max
 rm -f "$CJ"
 ```
 
-Logout requires the CSRF header. The server returns all three cookies with `Max-Age=0`; delete the local jar file as well.
+Logout requires the CSRF header but not a valid access token. It revokes only the refresh token in this jar (other devices stay signed in), returns 204 and clears all three cookies with `Max-Age=0`; delete the local jar file as well.
 
 ## 7) Setup: the first admin only
 
@@ -117,11 +117,11 @@ curl -sS -X POST "$BASE/api/auth/setup" \
   -d '{"username":"admin","password":"..."}'
 ```
 
-Returns `409` once an admin exists. This endpoint is for the **initial install** and is never used again.
+Returns `201` with the user, `400` when the username is empty or the password is shorter than 8 characters, and `409` once an admin exists. This endpoint is for the **initial install** and is never used again.
 
 ## 8) Changing a password ends other sessions
 
-`POST /api/auth/password` takes `{"current_password": "...", "new_password": "..."}` and requires an active session plus the CSRF header. It bumps the user's `token_version` and revokes every refresh row, so **every other session dies at its next request**. The caller receives fresh cookies and keeps working, but any other jar you were holding for the same user is now dead: log in again.
+`POST /api/auth/password` takes `{"current_password": "...", "new_password": "..."}` and requires an active session plus the CSRF header. The new password must be at least 8 characters. It bumps the user's `token_version` and revokes every refresh row, so **every other session dies at its next request**. The caller receives fresh cookies and keeps working, but any other jar you were holding for the same user is now dead: log in again.
 
 This also matters when reading state: a 401 saying `session revoked` means the version moved, not that the token expired. Refreshing will not help; log in.
 
@@ -163,7 +163,7 @@ This skill targets the operator admin panel. Agent (edge) auth is a separate mec
 `X-Api-Key` authenticates the agent to central transport (HTTP and SSE). It does **not** authenticate the command payloads. Each command row additionally carries an HMAC-SHA256 signature:
 
 - Signing key: `HKDF(MUVON_ENCRYPTION_KEY, label="muvon-agent-command-v1")`. Central's `MUVON_ENCRYPTION_KEY` and the edge's `AGENT_ENCRYPTION_KEY` **must be identical**, or verification fails.
-- Canonical encoding that gets signed: `id || agent_id || kind || nonce || expires_at || payload_json`, deterministic.
+- What gets signed: the JSON encoding of `{id, kind, payload, expires_at, nonce}` in that field order, with `expires_at` as Unix seconds and an empty payload written as `{}` (`internal/agentctrl/hmac.go`). The agent ID is not part of it.
 - Replay protection: a random 16 byte `nonce`, an `expires_at` TTL (5 minutes by default), and an agent-side LRU of the last 1000 command IDs.
 - `MUVON_ENCRYPTION_KEY` is required for the binary to start at all, so the channel is always armed. There is no "key missing, channel disabled" state to diagnose any more.
 

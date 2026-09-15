@@ -29,11 +29,11 @@ Open these with `Read` **when they are needed**. Do not load them all up front; 
 
 ## Never without explicit user approval
 
-- Any endpoint with DELETE (`/api/hosts/{id}`, `/api/routes/{id}`, `/api/tls/certificates/{id}`, `/api/agents/{id}`, `/api/deploy/projects/{slug}`, `/api/deploy/projects/{slug}/components/{component}`).
+- Any endpoint with DELETE (`/api/hosts/{id}`, `/api/routes/{id}`, `/api/tls/certificates/{id}`, `/api/agents/{id}`, `/api/deploy/projects/{slug}`, `/api/deploy/projects/{slug}/components/{component}`, `/api/deploy/projects/{slug}/jobs/{job}`, `/api/security/patterns`, `/api/security/blocks/{key}`), and `POST /api/security/blocks/flush`, which lifts every block.
 - `POST /api/deploy/projects/{slug}/deploy`, which ships a new image to production.
 - `POST /api/deploy/projects/{slug}/rollback`, which queues a fresh deployment of the previous succeeded release.
 - `POST /api/tls/certificates`, a certificate override.
-- `PUT /api/settings/{key}`, especially `muvon_jwt_secret`, `muvon_encryption_key` and SMTP credentials.
+- `PUT /api/settings/{key}`, especially the secret settings `jwt_secret` (JWT identity verification) and `alerting_smtp_password`. `MUVON_JWT_SECRET` and `MUVON_ENCRYPTION_KEY` are environment variables, not settings, and no API call changes them.
 - `PUT /api/deploy/projects/{slug}/components/{component}` with `paused: true`: the service's running instances drain and new deploys are blocked.
 - `POST /api/alerting/test/slack` and `POST /api/alerting/test/smtp`, which send a real Slack or email message.
 - `POST /api/system/upgrade`, which recreates the whole stack with `docker compose pull && up -d`; the admin panel and the proxy go down briefly.
@@ -49,7 +49,7 @@ The MUVON audit log **cannot currently tell an agent apart from a human admin** 
 
 1. Print a single AGENT_ACTION line to stdout before the call:
    ```
-   AGENT_ACTION: POST /api/deploy/projects/<slug>/deploy {"image_tag":"<tag>"}
+   AGENT_ACTION: POST /api/deploy/projects/<slug>/deploy {"release_id":"<release>","components":{"<component>":{"image_ref":"<image-ref>"}}}
    ```
 2. Get an explicit "yes" from the user.
 3. Make the call.

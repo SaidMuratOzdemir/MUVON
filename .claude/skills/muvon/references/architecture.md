@@ -26,7 +26,7 @@ One PostgreSQL 18 instance with **schema isolation**. Extensions in use:
 - **pg_trgm**: GIN trigram indexes queried with `ILIKE` over path, host, user_agent, client_ip and `user_identity::text`. This is all of log search; there is no BM25. Body columns are indexed the same way but only searched when the caller passes `search_bodies`.
 - **pg_uuidv7**: primary keys are time-ordered, so `ORDER BY id` is chronological.
 
-Extensions belong in `public`. `postgres/init.sql` creates them at database init so they land there; a bare `CREATE EXTENSION` from a migration instead lands in the running service's own schema, which is how `pg_trgm` was owned by `dialog` until `move_pg_trgm_to_public`. **pg_search** (BM25) and **pg_cron** were both removed: BM25 lost to trigram indexes because its operator did not reach hypertable chunks, and scheduling has always been Go code in `internal/scheduler`.
+Extensions belong in `public`. `postgres/init.sql` creates them at database init so they land there; a bare `CREATE EXTENSION` from a migration instead lands in the running service's own schema, which is how `pg_trgm` was owned by `dialog` until `move_pg_trgm_to_public`. Neither **pg_search** (BM25) nor **pg_cron** is part of the stack: `drop_pg_search` removes pg_search, whose BM25 index lost to trigram indexes because its operator did not reach hypertable chunks, and scheduling is Go code in `internal/scheduler`.
 
 The `schema_migrations` table tracks the ordered slice in `internal/db/migrations.go`. Every migration is tagged with a `product` (`muvon`, `dialog`, or empty for shared).
 
@@ -34,7 +34,7 @@ The `schema_migrations` table tracks the ordered slice in `internal/db/migration
 
 ### Config holder and hot reload
 
-`internal/config/Holder` keeps an atomic.Value snapshot. After a DB change, calling `POST /api/system/reload`:
+`config.Holder` (`internal/config/hot_reload.go`) keeps an atomic.Value snapshot. After a DB change, calling `POST /api/system/reload`:
 
 1. Rehydrates the holder from the DB.
 2. Pushes the change to connected agents over SSE.
@@ -111,10 +111,10 @@ From the `/agents` page the operator sends a command to any agent (`agent.cache_
 
 1. The command is written to `muvon.agent_commands` (UUIDv7 PK, HMAC-SHA256 signature, `nonce`, `expires_at`).
 2. Signing key: HKDF(`MUVON_ENCRYPTION_KEY`, label `"muvon-agent-command-v1"`). The key is required for the binary to start, so the channel is always armed.
-3. The agent long-polls (`GET /api/v1/agent/commands?wait=25s`). When central inserts a row, `CommandBus.Wake(agentID)` wakes the agent, a fast path of roughly 50 ms.
+3. The agent long-polls (`GET /api/v1/agent/commands?wait=25`, whole seconds). When central inserts a row, `CommandBus.Wake(agentID)` ends the wait so the command goes out at once.
 4. The agent verifies signature, nonce and `expires_at`, and keeps an LRU of the last 1000 IDs, since delivery is at-least-once.
 5. The result comes back via `POST /api/v1/agent/commands/:id/result`. States: `pending → dispatched → succeeded|failed|expired`.
-6. A sweeper goroutine marks stale rows (older than 5 minutes) `expired` every 30 seconds.
+6. A sweeper goroutine marks rows past their `expires_at` as `expired` every 30 seconds.
 
 Destructive commands (`agent.revoke`, `agent.restart`, `agent.self_upgrade`, `agent.drain`) are covered in `destructive-ops.md`.
 
@@ -127,7 +127,7 @@ One-click upgrade from Settings, "Sistem" panel. The flow:
 3. The deployer takes an in-process mutex (409 on concurrent), normalises the target tag (strips a leading `v`), streams `pg_dump -Fc` out of the postgres container, and spawns a `docker:27-cli` helper container mounting the Docker socket plus `/opt/muvon:/host/muvon:rw`.
 4. The helper script refreshes the compose file from GitHub raw with `wget`, rewrites `:latest` to `:<target>` with `sed`, runs `compose pull`, then `compose up -d --no-deps --wait muvon dialog-siem`, and finally `compose up -d --no-deps --wait muvon-deployer` (last, because the deployer is the helper's own spawner).
 5. Recreating the deployer EOFs the gRPC stream. The admin handler does **not** treat that as success: it polls `127.0.0.1:9443/health` for up to 60 seconds and emits `done` only on a 200, otherwise `failed`. That path is the auth-free one; `/api/system/health` is the JWT-gated twin.
-6. Live progress reaches the UI over `GET /api/system/upgrade/stream` (SSE events `pull`, `restart`, `post_check`).
+6. Live progress reaches the UI over `GET /api/system/upgrade/stream`: `upgrade` events whose `step` is `pre_check`, `locked`, `backup`, `pull`, `post_check`, `done` or `failed`.
 
 Required mounts in `docker-compose.yml`: `/var/run/docker.sock`, `/opt/muvon:/host/muvon:rw`, and the `backups` volume.
 
@@ -144,15 +144,17 @@ internal/
   agentctrl/       command types, HMAC, agent-side registry and poll client
   agentsvc/        agent config/watch/cert endpoints, command bus
   alerting/        Slack and SMTP dispatchers
+  blocklist/       edge blocking scorer and default path patterns
+  blocklistsvc/    wires the blocker into central (PostgreSQL) and agents (report to central)
   config/          Holder + Source (DBSource / AgentSource)
-  correlation/     anomaly, error spike, auth brute force, export burst
+  correlation/     six rules: path scan, auth brute force, error spike, traffic anomaly, sensitive access, data export burst
   db/              pgx pool, migrations, retention
   deployer/        managed deploy worker, scheduled jobs, logship, gRPC
   health/          backend health manager and circuit breaker
   identity/        JWT identity extraction
-  logger/          log enqueue to diaLOG
-  middleware/      proxy middlewares (rate limit, cors, security headers)
-  proxy/           proxy pipeline, accel, redirect, RUM ingest, Cloudflare trust
+  logger/          HTTP, container and client event pipelines (COPY FROM batches), gRPC server and client
+  middleware/      recovery, rate limiter, security headers, gzip
+  proxy/           proxy pipeline, accel, redirect, CORS, RUM ingest, Cloudflare trust
   router/          host and path matcher
   scheduler/       central-only cron ticker for scheduled jobs
   secret/          AES-GCM box

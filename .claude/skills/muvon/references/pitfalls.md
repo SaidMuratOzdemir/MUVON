@@ -36,11 +36,11 @@ Assuming `response.data` breaks on hosts; assuming `response[0]` breaks on logs.
 
 ## 5) Secret masking is the literal `********`
 
-`GET /api/settings` returns `"********"` for every secret key, whether or not a value is set. It is **not** an empty string, and it does not tell you whether the secret exists.
+`GET /api/settings` returns `"********"` for a secret setting (`jwt_secret`, `alerting_smtp_password`) that holds a value, and `""` for one that is empty. The value itself never comes back.
 
 Consequences:
 
-- You cannot verify "is this secret still set?" through the API. To answer that, read `/opt/muvon/.env` over SSH and report only set or empty.
+- The API does tell you whether a secret **setting** is set: `********` means set, `""` means empty. Process secrets in `.env` (`MUVON_JWT_SECRET`, `MUVON_ENCRYPTION_KEY`) never appear in the API; for those, read `/opt/muvon/.env` over SSH and report only set or empty.
 - Writing `********` back is rejected, so a masked read cannot overwrite the real value by accident.
 
 Treat settings writes as set-and-forget.
@@ -217,15 +217,15 @@ In the UI: `ComponentEditorDialog`, the "Gelişmiş" tab, "Tutulan release sayı
 
 It used to list running containers only, so exited orphans (a failed migration, a crashed candidate) were invisible. Now every state is scanned, which means **any container labelled `muvon.managed=true` that the DB does not know about** is stopped and force-removed, whatever its state. Hand-running `docker run` with that label means it disappears on the next tick.
 
-## 35) `agent.revoke` is a clean shutdown, not a crash loop
+## 35) `agent.revoke` does not revoke the key
 
-`POST /api/agents/{id}/commands` with `{"kind":"agent.revoke"}` stops the agent permanently:
+`POST /api/agents/{id}/commands` with `{"kind":"agent.revoke"}` only reaches the agent's own handler:
 
-1. Central sets `agents.is_active=false`.
-2. The command reaches the agent and its handler exits 1.
-3. If a supervisor restarts it, central rejects its auth and it exits immediately. It looks like a crash loop, and that is the expected shape.
+1. The agent reports `revoke acknowledged` and exits 1.
+2. Central does not change the agent row: nothing in this version writes `agents.is_active`, so the key stays valid.
+3. The agent compose uses `restart: unless-stopped`, so the container comes back and connects again with the same key.
 
-To undo: enroll a new agent (`POST /api/agents`) and delete the old record (`DELETE /api/agents/{id}`). The plaintext key is returned once.
+The step that actually cuts the key is `DELETE /api/agents/{id}`: after it, central rejects the key. To bring the host back, enroll a new agent (`POST /api/agents`); the plaintext key is returned once. To keep a host offline, also stop the agent container on that host.
 
 ## 36) Docker subnets and the agent's container IP **differ per installation**
 
@@ -312,7 +312,7 @@ Also note that `:latest` moves only when a new `v*` tag is published, and an age
 
 Because `agent_id` cannot be changed, moving a component to another host means delete and re-create (see #23). The new component gets a **new id**, while `routes.managed_component_id` pointed at the old one. The DELETE sets that field to `NULL` and the route ends up bound to no backend.
 
-The symptom is thoroughly misleading: containers are `healthy`, instances show `active` in `/api/deploy/projects`, `GET /api/system/health/backends` reports everything `open`, and yet **every domain returns 502**. Since the backend looks healthy, people hunt in the deployer or the application, while the problem is at the route layer.
+The symptom is thoroughly misleading: containers are `healthy`, instances show `active` in `/api/deploy/projects`, `GET /api/system/health/backends` reports every circuit breaker `closed` (healthy), and yet **every domain returns 502**. Since the backend looks healthy, people hunt in the deployer or the application, while the problem is at the route layer.
 
 Always check after a move:
 
@@ -324,13 +324,13 @@ WHERE h.domain LIKE '%<project>%' ORDER BY 1;
 
 Rebind every proxy route showing `NULL` to the new component id. `PUT /api/routes/{id}` wants the **complete route object** (no pointer fields), so `GET /api/routes/{id}` first, change only `managed_component_id`, and write it back.
 
-A route can also **disappear entirely**: in one real move a domain's only route was deleted and it started returning 404. Compare the route count before and after, and restore anything missing with `POST /api/hosts/{id}/routes`.
+A route can also **disappear entirely**, in which case its domain returns 404. Compare the route count before and after, and restore anything missing with `POST /api/hosts/{id}/routes`.
 
 ## 42) Two projects on one host sharing a component slug collide in Docker DNS
 
 The deployer attaches a container to the network under its component slug. On a single-project host that is fine, but on a multi-project host where two projects each have a component named `api`, **both containers claim the same name on the shared proxy network**. Docker DNS round-robins, so a request to `http://api:8000` lands on an arbitrary project's service.
 
-In one real installation four containers shared the name `api`, four shared `landing` and two shared `admin`. Nothing errors; the wrong project's data is simply served. Server-side rendering that points at `SERVER_API_URL=http://api:8000` is especially exposed.
+Nothing errors; the wrong project's data is simply served. Server-side rendering that points at `SERVER_API_URL=http://api:8000` is especially exposed.
 
 Check:
 

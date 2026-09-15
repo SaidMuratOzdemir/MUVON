@@ -22,7 +22,7 @@ The audit log cannot currently tell an agent apart from a human. While that is t
 
 | Endpoint | Effect | Rollback |
 |---|---|---|
-| `DELETE /api/hosts/{id}` | Host goes, attached routes are orphaned | Re-create by hand |
+| `DELETE /api/hosts/{id}` | Host goes, and its routes are deleted with it (`ON DELETE CASCADE`) | Re-create host and routes by hand |
 | `DELETE /api/routes/{id}` | One route; the host is untouched | Re-create by hand |
 | `DELETE /api/tls/certificates/{id}` | Certificate goes, HTTPS for that host breaks | With `tls_mode=auto` ACME re-issues automatically; with `manual` you re-upload |
 | `DELETE /api/agents/{id}` | The edge agent record goes and the agent disconnects | Enroll again (the plaintext key is returned once) |
@@ -40,7 +40,7 @@ The audit log cannot currently tell an agent apart from a human. While that is t
 Before any deploy call, check:
 
 - Is the image tag right? A typo breaks the deploy.
-- Did the previous deploy succeed? (`GET /api/deploy/deployments?slug=<x>&limit=5`)
+- Did the previous deploy succeed? (`GET /api/deploy/deployments?limit=20` and filter the result by `project_slug`; the endpoint reads only `limit`)
 - Is there a migration? (`GET /api/deploy/projects/<slug>`, look at each component's `migration_command`)
 - Is the service `paused`? Paused services are rejected at enqueue time; clear it first with `PUT .../components/<x>`.
 - Is the component's `agent_id` right, and if it is on the edge, is that agent running with `AGENT_DEPLOYER_ENABLED=true`? (check `last_seen_at` in `GET /api/agents`)
@@ -56,16 +56,16 @@ Before any deploy call, check:
 
 | Key | Danger |
 |---|---|
-| `muvon_jwt_secret` | Changing it invalidates every session; everyone lands on the login screen |
-| `muvon_encryption_key` | Changing it makes existing encrypted settings **and** component secret env values unreadable, permanently. It must also match the deployer's `MUVON_ENCRYPTION_KEY` and every edge's `AGENT_ENCRYPTION_KEY`; change one side and forget the other and containers stop starting |
+| `jwt_secret` | The global secret used to verify JWT identity signatures on logged requests. A wrong value makes that verification fail |
 | `alerting_smtp_password`, `alerting_slack_webhook` | A wrong value breaks alerting silently |
-| `public_ip` | The DNS verification badge compares against this; a wrong value reads as "stale" |
 
 `PUT /api/settings/{key}` always needs approval.
 
+`MUVON_JWT_SECRET` (admin sessions) and `MUVON_ENCRYPTION_KEY` are environment variables in `.env`, not settings, and no API call changes them. Changing `MUVON_JWT_SECRET` ends every admin session. Changing `MUVON_ENCRYPTION_KEY` makes existing encrypted settings **and** component secret env values unreadable, and it must match the deployer's `MUVON_ENCRYPTION_KEY` and every edge's `AGENT_ENCRYPTION_KEY`, or containers stop starting.
+
 ### Certificate override
 
-`POST /api/tls/certificates` overrides the current automatic certificate and deletes the previous one. It is normally used when the operator holds a real certificate (corporate CA, wildcard).
+`POST /api/tls/certificates` stores the uploaded certificate for its domain with issuer `manual`, replacing the stored row for that domain. It is normally used when the operator holds a real certificate (corporate CA, wildcard).
 
 Note the ownership order: an operator-uploaded certificate wins over autocert, autocert answers for its own, and central's copy is only a backup for an agent that has none locally. Putting anything ahead of autocert stops renewal, because autocert only arms its renewal timer for certificates it actually serves.
 
@@ -73,15 +73,15 @@ Note the ownership order: an operator-uploaded certificate wins over autocert, a
 
 | Endpoint | Effect | Rollback |
 |---|---|---|
-| `POST /api/system/upgrade` with `{target_tag, take_backup}` | The whole stack is recreated with new images; the admin panel and the proxy go down for seconds. A `pg_dump -Fc` lands in `/opt/muvon/backups/` | Set `VERSION` back in `.env` and upgrade again, or restore the dump by hand |
+| `POST /api/system/upgrade` with `{target_tag, take_backup}` | The helper re-downloads the compose file, pins the image tag with `sed`, pulls and recreates `muvon`, `dialog-siem` and `muvon-deployer`; the admin panel and the proxy go down for seconds. Postgres is not recreated. With `take_backup` a `pg_dump -Fc` lands in the `backups` volume (`/var/lib/muvon/backups` inside the deployer) | Upgrade again with the previous `target_tag`, or restore the dump by hand |
 
 Before calling:
 
 - Read the running version with `GET /api/system/version`.
 - Ask `GET /api/system/version/latest` what the newest published tag is.
 - Trust `update_available` from that response, which is a semver comparison. Do not compare digests: two CI runs on one commit produce different ones, so equality proves nothing either way.
-- Is `take_backup=true`? **It is on by default. Do not turn it off.**
-- Is `target_tag` well formed? (`latest`, `v0`, `v0.1`, `v0.1.0`, or a commit SHA.)
+- Is `take_backup=true`? The panel's checkbox starts checked, but the API reads an omitted field as false, so send it explicitly. **Do not turn it off.**
+- Is `target_tag` a tag CI actually publishes? `latest`, a release version (`0.5.2`, `0.5` or `0`, a leading `v` is stripped), `main`, or `sha-<short-commit>`. A bare commit SHA is not an image tag.
 - Concurrent upgrades are refused with 409. A stream EOF is expected, because the helper container recreates the deployer itself; the handler then polls `127.0.0.1:9443/health` before declaring success.
 
 A backup can also be taken on its own with `POST /api/system/backup`, which shares the same lock. Prefer that before any risky work rather than starting an upgrade just to get a dump.
@@ -96,10 +96,10 @@ A backup can also be taken on its own with `POST /api/system/backup`, which shar
 | `agent.set_log_level` | low | Changes the log level for `payload.ttl_seconds`, then reverts | Wait for the TTL or send a new level |
 | `cert.renew` | medium | Renews when the certificate is actually due, or reports the expiry it found. Takes `force` for a deliberate early renewal, which also deletes central's stored copy | ACME retries; mind Let's Encrypt rate limits |
 | `container.restart` | medium | Restarts the named agent-side container | It comes back |
-| **`agent.drain`** with `{enabled:true}` | **destructive** | The agent starts refusing new requests with 503 | Send `{enabled:false}` |
+| **`agent.drain`** with `{enabled:true}` | **destructive by intent** | The command reports `drain enabled` and stores a flag, but in this version nothing on the request path reads that flag, so traffic is **not** refused. Do not rely on it to take an edge out of rotation | Send `{enabled:false}` |
 | **`agent.restart`** | **destructive** | The agent binary exits 0 and the supervisor (systemd or the Docker restart policy) brings it back | Automatic; no manual step |
 | **`agent.self_upgrade`** | **destructive** | Image refresh and container recreate, seconds of downtime | If the new image is broken, deploy the previous tag manually |
-| **`agent.revoke`** | **most destructive** | The agent stops permanently (exit 1) and central sets `is_active=false`. A clean shutdown rather than a crash loop | Enroll again (delete the old record, `POST /api/agents`); the plaintext key is returned once |
+| **`agent.revoke`** | **most destructive** | The agent acknowledges and exits 1. Central does not change the agent row and the key stays valid, so under the agent compose's `restart: unless-stopped` the container comes back and reconnects. `DELETE /api/agents/{id}` is what makes central reject the key | Enroll again (`POST /api/agents`); the plaintext key is returned once |
 
 Before sending a command:
 
@@ -128,7 +128,7 @@ Before sending a command:
 
 Even so, **read the current value before a PUT** and show the user what changes:
 ```
-AGENT_ACTION: PUT /api/routes/3 — log_enabled: true → false
+AGENT_ACTION: PUT /api/routes/3: log_enabled true → false
 ```
 
 ## One more "never": writing to the DB directly

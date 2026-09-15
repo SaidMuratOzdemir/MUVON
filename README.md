@@ -54,20 +54,20 @@ An edge gateway, security observability, and deploy platform composed of four in
 
 Agents are stateless: no database, no admin panel, no heavy processing. They pull configuration from central on startup, receive live config updates via SSE, and forward logs to diaLOG over TCP gRPC. TLS certificates are stored locally via ACME DirCache.
 
-**Hybrid deploy.** Each app's services carry an `agent_id`: `NULL` = the central host runs the containers (via `muvon-deployer`); a specific agent ID = that edge agent runs the containers. The same lifecycle code drives both — agents enable it with `AGENT_DEPLOYER_ENABLED=true` and a reachable Docker socket. State (deployments, instances, releases) stays in the central DB; edge agents talk to it over `/api/v1/agent/deployer/*` (X-Api-Key auth).
+**Hybrid deploy.** Each app's services carry an `agent_id`: `NULL` = the central host runs the containers (via `muvon-deployer`); a specific agent ID = that edge agent runs the containers. The same lifecycle code drives both, and agents enable it with `AGENT_DEPLOYER_ENABLED=true` and a reachable Docker socket. State (deployments, instances, releases) stays in the central DB; edge agents talk to it over `/api/v1/agent/deployer/*` (X-Api-Key auth).
 
 ---
 
 ## How It Works
 
-MUVON sits at the edge and accepts all inbound HTTP/HTTPS traffic. For each request, it sends the full request/response pair to **diaLOG** for logging over a local Unix socket, so inter-service latency is measured in microseconds.
+MUVON sits at the edge and accepts all inbound HTTP/HTTPS traffic. For each request on a route with `log_enabled` (the default), it sends the full request/response pair to **diaLOG** for logging over a local Unix socket, so inter-service latency is measured in microseconds.
 
-Each service is a standalone binary with its own database schema. They share a single PostgreSQL instance but never read each other's tables. If diaLOG goes down, MUVON continues routing traffic — logs are dropped, but the proxy never blocks.
+Each service is a standalone binary with its own database schema. They share a single PostgreSQL instance but never read each other's tables. If diaLOG goes down, MUVON continues routing traffic: logs are dropped, but the proxy never blocks.
 
 | Service | What it does |
 |---------|-------------|
-| **MUVON** | Central server. Terminates TLS (auto Let's Encrypt or manual PEM), resolves virtual hosts, matches routes by path prefix, and proxies to upstreams. Serves the admin panel on `:443` for the configured `MUVON_ADMIN_DOMAIN` (falls back to `:9443` when no domain is set, for local dev). Enriches every log entry with **JWT identity** (verify + decode fallback); visitor country and city are stamped at the edge from Cloudflare's headers. Provides config API and SSE watch endpoint for agents. Also runs the **cron scheduler** that enqueues due scheduled-job runs for the deployer to execute. |
-| **agent** | Lightweight edge binary deployed on client servers. Pulls config from central MUVON on startup, watches for changes via SSE (hot reload). Proxies traffic using the central-managed host/route config. Sends logs to central diaLOG over TCP gRPC. No database, no admin panel — zero local state except ACME cert cache + an optional config snapshot for fail-soft cold-start (`AGENT_CONFIG_CACHE`). When `AGENT_DEPLOYER_ENABLED=true` it also runs the same managed-deploy lifecycle as `muvon-deployer` against its local Docker socket, with central reached via `/api/v1/agent/deployer/*` instead of a direct DB connection. |
+| **MUVON** | Central server. Terminates TLS (auto Let's Encrypt or manual PEM), resolves virtual hosts, matches routes by path prefix, and proxies to upstreams. Serves the admin panel on `:443` for the configured `MUVON_ADMIN_DOMAIN`, and always on the plain-HTTP `:9443` listener as well, with or without a domain. Enriches every log entry with **JWT identity** (verify + decode fallback); visitor country and city are stamped at the edge from Cloudflare's headers. Provides config API and SSE watch endpoint for agents. Also runs the **cron scheduler** that enqueues due scheduled-job runs for the deployer to execute. |
+| **agent** | Lightweight edge binary deployed on client servers. Pulls config from central MUVON on startup, watches for changes via SSE (hot reload). Proxies traffic using the central-managed host/route config. Sends logs to central diaLOG over TCP gRPC. No database and no admin panel: zero local state except ACME cert cache + an optional config snapshot for fail-soft cold-start (`AGENT_CONFIG_CACHE`). When `AGENT_DEPLOYER_ENABLED=true` it also runs the same managed-deploy lifecycle as `muvon-deployer` against its local Docker socket, with central reached via `/api/v1/agent/deployer/*` instead of a direct DB connection. |
 | **diaLOG** | Receives structured log entries from MUVON or remote agents via gRPC (Unix socket for local, TCP for agents), buffers them in a Go channel, and flushes in batches using PostgreSQL `COPY FROM` for throughput. Stores logs in TimescaleDB Hypertables with UUIDv7 primary keys. Search is trigram-indexed `ILIKE` (pg_trgm GIN) across path, host, user-agent, client IP, the enriched JWT identity and the captured bodies. Exposes SSE live tail for real-time monitoring. Runs a **correlation engine** that detects attack patterns (brute force, scanning, error spikes) in real time and triggers **alerts** via Slack and email. |
 | **muvon-deployer** | A separate worker process that owns the Docker socket. Polls the database for pending deployment jobs and executes the full deploy lifecycle: image pull → one-off migration container → candidate container start → health check with restart retries → atomic promote (old active → draining, candidate → active) → graceful drain. The same loop also executes pending **scheduled job runs** (cron) in bounded background workers. Isolates host-level Docker access from the proxy and admin processes. |
 
@@ -81,7 +81,7 @@ Each service is a standalone binary with its own database schema. They share a s
 - **Node.js 22+** (to build the admin panel)
 - **Docker** (for the postgres container) or an external PostgreSQL 18+
 - PostgreSQL extensions, all expected in `public`:
-  - [TimescaleDB](https://www.timescale.com/) — hypertables, compression, retention
+  - [TimescaleDB](https://www.timescale.com/): hypertables, compression, retention
   - [pg_uuidv7](https://github.com/fboulnois/pg_uuidv7): UUIDv7 generation
   - `pg_trgm`: trigram GIN indexes behind log search. Ships with PostgreSQL
 
@@ -107,7 +107,7 @@ make deps
 make build
 # build/muvon, build/dialog-siem, build/agent, build/muvon-deployer
 
-# Sadece muvon + agent (SIEM olmadan)
+# Only muvon + agent (without the SIEM)
 make build-minimal
 ```
 
@@ -208,8 +208,9 @@ done
 ### Migration discipline
 
 Migrations are **forward-only**. A new migration is **appended** to
-`internal/db/migrations.go` and never edited or reordered. Each binary runs
-`RunMigrations` at startup, so deploying a new image upgrades the schema.
+`internal/db/migrations.go` and never edited or reordered. `muvon` and
+`dialog-siem` run `RunMigrations` at startup, so deploying a new image upgrades
+the schema.
 
 **Downgrades are not supported.** An older binary may not understand the newer
 schema, and restoring a PostgreSQL snapshot is the only way back.
@@ -217,7 +218,7 @@ schema, and restoring a PostgreSQL snapshot is the only way back.
 ### Backup and restore
 
 `install.sh` takes a `pg_dump -Fc` backup before every update, and the panel can
-take one on demand (Settings, System). Manually:
+take one on demand (Settings, "Sistem"). Manually:
 
 ```bash
 docker compose exec -T postgres pg_dump -Fc -U muvon -d muvon \
@@ -259,7 +260,7 @@ before updating; the installer prints it for you anyway.
        Backend service
 ```
 
-**Failure isolation.** If diaLOG goes down, MUVON keeps routing. Logs are dropped, admin Log pages show a 503 banner — everything else keeps working.
+**Failure isolation.** If diaLOG goes down, MUVON keeps routing. Logs are dropped and admin log pages show a 503 banner; everything else keeps working.
 
 **Body capture.** A body is captured when the request actually carries one
 (`Content-Length` is not zero) and its content type is text-like. Binary and
@@ -280,7 +281,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 
 | Schema | Service | Tables |
 |--------|---------|--------|
-| `muvon` | MUVON | hosts (`tls_mode`, `rum_enabled`), routes, settings, tls_certificates, acme_cache, admin_users, admin_refresh_tokens, admin_audit_log, agents (`api_key_hash`), agent_commands, deploy_projects, deploy_components (`agent_id`, `paused`, `env`, `env_secret_keys`, `spec_hash` counterpart, `keep_releases`), deploy_releases, deploy_release_components, deploy_instances (`spec_hash`), deployments (`agent_id`), deployment_events, scheduled_jobs (`component_id`, `agent_id`, `schedule`, `exec_mode`), scheduled_job_runs |
+| `muvon` | MUVON | hosts (`tls_mode`, `rum_enabled`), routes, settings, tls_certificates, acme_cache, admin_users, admin_refresh_tokens, admin_audit_log, agents (`api_key_hash`), agent_commands, deploy_projects, deploy_components (`agent_id`, `paused`, `env`, `env_secret_keys`, `keep_releases`), deploy_releases, deploy_release_components, deploy_instances (`spec_hash`), deployments (`agent_id`), deployment_events, scheduled_jobs (`component_id`, `agent_id`, `schedule`, `exec_mode`), scheduled_job_runs, blocklist_patterns, ip_blocks |
 | `dialog` | diaLOG | http_logs (Hypertable, `trace_id`, `span_id`), http_log_bodies (Hypertable), log_notes, alerts (Hypertable), container_logs (Hypertable), containers, client_events (Hypertable) |
 
 `schema_migrations` is shared: each service applies only the migrations whose
@@ -295,7 +296,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Feature | Notes |
 |---------|-------|
 | TLS Termination | Per-host `tls_mode`: `off` / `redirect` / `auto` (Let's Encrypt) / `manual` (admin-uploaded PEM) |
-| DNS verification | `GET /api/hosts/{id}/dns-status` resolves the domain and compares against central public IP + every agent's last-seen IP |
+| DNS verification | `GET /api/hosts/{id}/dns-status` resolves the domain and compares it against one expected IP: central's public IP for a central host, the target agent's self-reported public IP for an edge host. Answers that are all Cloudflare edges report `proxied` |
 | TLS status | `GET /api/hosts/{id}/tls-status` reports cert validity, days remaining, issuer |
 | Multi-Host Routing | Virtual host resolution by domain |
 | Path-Prefix Matching | The longest matching prefix always wins. `priority` only breaks ties between prefixes of equal length (routes are loaded `ORDER BY priority DESC`); it cannot promote a shorter prefix over a longer one |
@@ -313,8 +314,8 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Health-Aware Backends | Circuit breaker on consecutive failures |
 | Multi-Backend Load Balance | Round-robin across `backend_urls[]` |
 | Custom Error Pages | Per-route HTML for 4xx/5xx |
-| One-Click Self-Update | Settings → Sistem: compare running binary vs latest GHCR digest, helper container runs `docker compose pull && up -d --wait`, automatic `pg_dump -Fc` backup, live SSE progress |
-| Central → Agent Command Channel | Operator sends `cache_flush` / `set_log_level` / `cert.renew` / `drain` / `restart` / `self_upgrade` / `revoke` / `container.restart` from `/agents`; commands queued in DB with HMAC-SHA256 signature, long-poll delivery to agents, at-least-once + LRU dedup |
+| One-Click Self-Update | Settings → Sistem: compare the running version with the newest release tag (semver), helper container runs `docker compose pull && up -d --wait`, automatic `pg_dump -Fc` backup, live SSE progress |
+| Central → Agent Command Channel | Operator sends `agent.cache_flush` / `agent.set_log_level` / `cert.renew` / `agent.drain` / `agent.restart` / `agent.self_upgrade` / `agent.revoke` / `container.restart` from `/agents`; commands queued in DB with HMAC-SHA256 signature, long-poll delivery to agents, at-least-once + LRU dedup |
 
 ### Managed Deploy
 
@@ -328,7 +329,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Rollback | `POST /api/deploy/projects/{slug}/rollback` redeploys the previous succeeded release verbatim |
 | Pause / resume | `paused` flag drains a service and blocks new enqueues until cleared |
 | Atomic promote | Old `active` → `draining`, candidate → `active` in one transaction; drain timeout configurable |
-| Worker processes | Per-component `command` (CMD override), `health_mode` (`http`/`exec`/`running`), `health_command`, `deploy_strategy` (`blue_green`/`recreate`), `deploy_order` — run web/celery/beat from one image, gate migration before workers, keep singletons from overlapping |
+| Worker processes | Per-component `command` (CMD override), `health_mode` (`http`/`exec`/`running`), `health_command`, `deploy_strategy` (`blue_green`/`recreate`), `deploy_order`: run web/celery/beat from one image, gate migration before workers, keep singletons from overlapping |
 | Scheduled jobs (cron) | Component-bound periodic runs (scrape/cleanup/report/sync). Central scheduler enqueues on a cron expression (timezone-aware); the deployer executes in `run` (fresh one-off container) or `exec` (inside the active container) mode, bounded concurrency so a long job never blocks deploys. `concurrency_policy`, `timeout_seconds`, manual "run now", run history with exit code + output. `GET/POST/PUT/DELETE /api/deploy/projects/{slug}/jobs[/{job}]` + `/run`, `/runs`. Works on central and edge components |
 
 ### diaLOG SIEM
@@ -343,10 +344,10 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Body Capture | Configurable max size (default 64KB), truncation flag |
 | JWT Identity Enrichment | Per-host verify/decode, claim extraction |
 | Visitor Location | Country and city from Cloudflare's visitor headers, trusted only through the operator's own zone |
-| Correlation Engine | path_scan, auth_brute, error_spike, traffic_anomaly, sensitive_access, data_export_burst |
+| Correlation Engine | path_scan, auth_brute_force, error_spike, traffic_anomaly, sensitive_access, data_export_burst |
 | Alerting | Slack webhook + SMTP, per-fingerprint cooldown |
 | Container Logs | stdout/stderr capture from managed containers, dimension table for picker |
-| Client Events (RUM) | Browser telemetry ingested at `/__muvon/rum`: page views, JS errors, web vitals, fetch failures, form/DOM signals — joined to http_logs by `trace_id` |
+| Client Events (RUM) | Browser telemetry ingested at `/__muvon/rum`: page views, JS errors, web vitals, fetch failures and form/DOM signals, joined to http_logs by `trace_id` |
 | Trace Context | W3C `traceparent` honoured/generated per request; reflected to the browser via `Server-Timing` so client events correlate with proxy + container logs on one id |
 
 ### Admin Panel
@@ -358,8 +359,9 @@ React 19 + Vite 8 + shadcn/ui. Bundled into the `muvon` binary via `//go:embed`.
 | Dashboard | `/` | Landing view: traffic and ingest health at a glance |
 | Hosts | `/hosts` | CRUD virtual hosts + per-host JWT settings; expanding a row shows live DNS + TLS verification |
 | Routes | `/routes` | Per-host routes (proxy/static/redirect) |
-| Logs | `/logs` | Search, filter, view, star, note, live-tail |
+| SIEM / Logs | `/logs` | Search, filter, view, star, note, live-tail |
 | Alerts | `/alerts` | Correlation engine output, ack/dismiss |
+| Engelleme | `/security` | Edge blocking: path patterns and currently blocked clients |
 | Container Logs | `/container-logs` | Live tail + history (managed and agent containers) |
 | Zamanlanmış İşler | `/jobs` | Cron-driven, component-bound job runs: schedule, enable/disable, run now, run history with exit code and output tail |
 | Client Events | `/client-events` | Browser RUM telemetry; filter by trace/session/app/event, click `trace_id` to pivot to the matching http_logs |
@@ -367,9 +369,9 @@ React 19 + Vite 8 + shadcn/ui. Bundled into the `muvon` binary via `//go:embed`.
 | Uzak Uygulamalar | `/apps/edge` | Same UI filtered to apps whose services run on an agent host |
 | Agents | `/agents` | API key management for hub-and-spoke setups (plaintext key revealed once on create) |
 | Settings | `/settings` | Global settings (retention, telemetry sampling, TLS/ACME, JWT, alerting, correlation) |
-| TLS | `/tls` | Manual PEM upload, ACME cert listing |
-| Audit | `/audit` | Admin audit log |
-| Settings, "Sistem" panel | `/settings` (top of the page) | One-click upgrade panel: running vs GHCR digest comparison, tag picker (`latest`/`v0`/`v0.1`/custom), DB backup toggle, inline CHANGELOG preview, live SSE progress |
+| TLS Certs | `/tls` | Manual PEM upload, ACME cert listing |
+| Audit Log | `/audit` | Admin audit log |
+| Settings, "Sistem" panel | `/settings` (top of the page) | One-click upgrade panel: running version against the newest release tag, a button for that release and a field for another version, DB backup toggle, inline CHANGELOG preview, live SSE progress |
 
 Sidebar labels are shown above exactly as the panel renders them; the panel's
 interface language is Turkish.
@@ -484,12 +486,11 @@ values are read once at startup.
 ## Build & Release
 
 `.github/workflows/release.yml` runs two jobs before anything is published.
-`verify` builds the UI (the binary embeds it), then runs `go vet`,
+`verify` builds the UI (the binary embeds it), then runs `eslint`, `go vet`,
 `go test -race -count=1 ./...`, `staticcheck` and `govulncheck`. `integration`
-starts a postgres and a timescale container and runs the two tests that need
-real infrastructure: a `pg_dump` taken through the exec stream that
-`pg_restore` accepts, and the retention and image prune rules against a real
-planner. The build job depends on both, and each image is scanned by trivy for
+starts a postgres and a timescale container and runs the tests that need real
+infrastructure: a `pg_dump` taken through the exec stream that `pg_restore`
+accepts, and the retention and image prune rules against a real planner. The build job depends on both, and each image is scanned by trivy for
 fixable high and critical advisories before it is pushed, not after. Operators upgrade to these
 images with one click, and a broken test noticed afterwards is noticed too
 late.
@@ -504,8 +505,8 @@ Once the gate passes, the four images (`muvon`, `dialog-siem`, `agent`,
 | `v1.2.3` | `:1.2.3`, `:1.2`, `:1` and `:latest`, plus a GitHub Release |
 
 **`:latest` moves only on a `v*` tag push.** A commit to main never touches it,
-which keeps `:latest` pointing at the newest official release and keeps the
-panel's running-versus-latest digest comparison meaningful. To try a main
+which keeps `:latest` pointing at the newest official release, the same one
+the panel reports as available from the release tags. To try a main
 commit, pin `:sha-<commit>`.
 
 All three segments of the image path are lowercase
@@ -528,6 +529,8 @@ internal/
   agentctrl/          Command channel types, HMAC signing, agent-side registry and long-poll client
   agentsvc/           Central-side agent config service (SSE watch + cert sync + command bus)
   alerting/           Slack + SMTP notifiers, fingerprint dedup
+  blocklist/          Edge blocking scorer and default path patterns
+  blocklistsvc/       Wires the blocker into central and agents; persists blocks to PostgreSQL on central, reports them to central from an agent
   config/             Config Source interface, DBSource (central) and AgentSource, hot reload Holder
   correlation/        Real-time correlation engine (sliding window rules, alerts)
   db/                 PostgreSQL pool, migrations, query helpers, retention reconciler
@@ -540,7 +543,7 @@ internal/
   router/             Host/path matching, admin-domain routing
   scheduler/          Central-only cron ticker that turns due scheduled_jobs into pending runs
   secret/             AES-256-GCM Box for encrypted settings
-  tls/                ACME (autocert), DBCache, manager, manual cert upload
+  tls/                ACME (autocert), PGCache, manager, manual cert upload
   version/            Build-stamped version and commit
 
 proto/
@@ -589,13 +592,13 @@ access token's lifetime.
 | `GET` | `/api/system/stats` | Dashboard counters |
 | `POST` | `/api/system/reload` | Reload config from DB and push the change to connected agents over SSE. A snapshot identical to the current one is a no-op |
 | `GET` | `/api/system/retention` | Live retention policies read from the Timescale job catalog, not from the migration |
-| `GET` | `/api/system/version` | Running binary's version + image digest |
+| `GET` | `/api/system/version` | Running binary's version: `{running, tag}` |
 | `GET` | `/api/system/compression` | Enforced compression window per hypertable |
-| `GET` | `/api/system/version/latest` | GHCR `:latest` manifest digest (5 min cache) |
-| `POST` | `/api/system/backup` | Take a `pg_dump -Fc` backup now, verified with `pg_restore -l`; 409 while an upgrade or another backup holds the lock |
+| `GET` | `/api/system/version/latest` | Newest `vX.Y.Z` release tag from GitHub and `update_available` by semver (5 min cache); the GHCR `:latest` digest is included for display only |
+| `POST` | `/api/system/backup` | Take a `pg_dump -Fc` backup now, verified with `pg_restore -l`. While an upgrade or another backup holds the lock the request fails with 500 |
 | `GET` | `/api/system/backups` | List the dumps on disk (last 5 are kept) |
 | `POST` | `/api/system/upgrade` | Trigger helper-container upgrade: `{target_tag, take_backup}`; 409 on concurrent run |
-| `GET` | `/api/system/upgrade/stream` | SSE with live `pull` / `restart` / `post_check` progress |
+| `GET` | `/api/system/upgrade/stream` | SSE `upgrade` events whose `step` is `pre_check`, `locked`, `backup`, `pull`, `post_check`, `done` or `failed` |
 
 ### Agents (admin) / Commands
 
@@ -604,7 +607,7 @@ access token's lifetime.
 | `GET` | `/api/agents` | List agents (plaintext key not returned) |
 | `POST` | `/api/agents` | Create agent; returns `{agent, api_key}` with plaintext key (only chance to read it) |
 | `DELETE` | `/api/agents/:id` | Remove agent |
-| `POST` | `/api/agents/:id/commands` | Enqueue a signed command for an agent (`cache_flush` / `set_log_level` / `cert.renew` / `agent.drain` / `agent.restart` / `agent.self_upgrade` / `agent.revoke` / `container.restart`) |
+| `POST` | `/api/agents/:id/commands` | Enqueue a signed command for an agent (`agent.cache_flush` / `agent.set_log_level` / `cert.renew` / `agent.drain` / `agent.restart` / `agent.self_upgrade` / `agent.revoke` / `container.restart`) |
 | `GET` | `/api/agents/:id/commands` | Recent commands + state (`pending` / `dispatched` / `succeeded` / `failed` / `expired`) |
 
 ### Agent API (edge → central, `X-Api-Key`)
@@ -612,10 +615,20 @@ access token's lifetime.
 | Method | Path | Notes |
 |--------|------|-------|
 | `GET` | `/api/v1/agent/config` | Pull config snapshot |
-| `GET` | `/api/v1/agent/watch` | SSE — `config_updated` events on reload |
-| `GET` | `/api/v1/agent/commands?wait=25s` | Long-poll for the next pending command (signed) |
-| `POST` | `/api/v1/agent/commands/:id/result` | Terminal report (`succeeded` / `failed` + output/error) |
+| `GET` | `/api/v1/agent/watch` | SSE, `config_updated` events on reload |
+| `GET` | `/api/v1/agent/commands?wait=25` | Long-poll for the next pending command (signed). `wait` is whole seconds, capped at 50; an empty poll returns 204 |
+| `POST` | `/api/v1/agent/commands/:id/result` | Terminal report (`succeeded` / `failed` + output/error); 204, or 409 when the command already finished |
+| `POST` | `/api/v1/agent/blocklist` | Report a block decided on this edge; ownership comes from the authenticated agent |
 | `*` | `/api/v1/agent/deployer/*` | Embedded edge deployer (`claim` / `plan` / `event` / `instance` / `promote` / …) |
+
+### Edge blocking
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `GET/POST/DELETE` | `/api/security/patterns` | List, create or update, and delete path patterns. Builtin patterns can be disabled but not deleted |
+| `GET` | `/api/security/blocks` | Currently blocked clients |
+| `DELETE` | `/api/security/blocks/{key}` | Lift one block |
+| `POST` | `/api/security/blocks/flush` | Lift every block |
 
 ### Hosts / Routes
 
@@ -658,16 +671,16 @@ access token's lifetime.
 ### Client Events / RUM
 
 Edge endpoints under the reserved `/__muvon/` namespace, served on each
-proxied host when `hosts.rum_enabled` is on (no JWT — public, fail-open).
+proxied host when `hosts.rum_enabled` is on (no JWT: public and fail-open).
 
 | Method | Path | Notes |
 |--------|------|-------|
 | `POST` | `/__muvon/rum` | Ingest a browser event batch; always `204` (drops on parse error / full pipeline) |
 | `GET` | `/__muvon/rum/config` | Sampling config served to clients (`sample_rates`, `max_batch_bytes`) |
 | `GET` | `/__muvon/rum.js` | The embedded browser client lib (ETag-cached) |
-| `GET` | `/api/client-events` | Admin search (filter by `trace_id`/`session_id`/`app`/`event_name`, cursor) — proxied to diaLOG |
+| `GET` | `/api/client-events` | Admin search (filter by `trace_id`/`session_id`/`app`/`event_name`, cursor), proxied to diaLOG |
 
-Sampling is set in Settings → Client Telemetry: `rum_sample_rate` (0 to 1) and
+Sampling is set in Settings, "İstemci Telemetrisi (RUM)": `rum_sample_rate` (0 to 1) and
 `rum_max_batch_bytes`. Both are served to browsers and pushed to agents.
 
 ### Alerts

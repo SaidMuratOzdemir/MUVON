@@ -36,7 +36,8 @@ ssh <alias> "docker exec muvon-postgres psql -U muvon -d muvon -tAc \"<SELECT>\"
   - `deployment_events`
   - `agent_commands` (UUIDv7 PK, `agent_id`, `kind`, `payload` JSONB, `signature`, `nonce`, `state`, `result` JSONB, `expires_at`, `dispatched_at`, `finished_at`)
   - `scheduled_jobs`, `scheduled_job_runs` (component-bound periodic work: cron `next_run_at`, `concurrency_policy`, run history with exit code and output tail)
-- **`dialog.*`**, the SIEM: `http_logs`, `http_log_bodies`, `alerts`, `container_logs`, `containers`, `client_events` (browser RUM, joined to `http_logs` by `trace_id` and `session_id`).
+  - `blocklist_patterns`, `ip_blocks` (edge blocking: path patterns and current blocks)
+- **`dialog.*`**, the SIEM: `http_logs`, `http_log_bodies`, `log_notes`, `alerts`, `container_logs`, `containers`, `client_events` (browser RUM, joined to `http_logs` by `trace_id` and `session_id`).
 
 ### Useful queries
 

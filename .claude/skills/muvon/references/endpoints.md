@@ -9,7 +9,7 @@ Source of truth: `internal/admin/server.go`, which registers every route. If som
 | POST | `/api/auth/setup` | none | exempt | First install only, 409 afterwards |
 | POST | `/api/auth/login` | none | exempt | Rate limited |
 | POST | `/api/auth/refresh` | refresh cookie | exempt | Single-use rotation |
-| POST | `/api/auth/logout` | access | **required** | Clears all three cookies |
+| POST | `/api/auth/logout` | none needed | **required** | Revokes the current refresh token, clears all three cookies, 204 |
 | GET | `/api/auth/me` | access | not applicable | Current user |
 | POST | `/api/auth/password` | access | **required** | Body `{current_password, new_password}`. Bumps `token_version` and revokes every refresh row, so **all other sessions end**. The caller gets fresh cookies |
 
@@ -23,8 +23,8 @@ Every authenticated request re-reads the user row and compares `token_version`, 
 | POST | `/api/hosts` | mutating |
 | GET | `/api/hosts/{id}` | no |
 | PUT | `/api/hosts/{id}` | mutating (a `tls_mode` change alters ACME behaviour immediately) |
-| **DELETE** | **`/api/hosts/{id}`** | **destructive**, attached routes are orphaned |
-| GET | `/api/hosts/{id}/dns-status` | no; resolves the domain and compares against the expected IPs (central `public_ip` plus each agent's last-seen IP) |
+| **DELETE** | **`/api/hosts/{id}`** | **destructive**, its routes are deleted with it (`ON DELETE CASCADE`) |
+| GET | `/api/hosts/{id}/dns-status` | no; resolves the domain and compares it against one expected IP: central's public IP for a central host, the target agent's self-reported `public_ip` for an agent host. Statuses: `ok`, `proxied` (every answer is a Cloudflare edge), `stale`, `unresolved`, `no_target`, `error` |
 | GET | `/api/hosts/{id}/tls-status` | no; certificate validity, days remaining, issuer |
 
 `tls_mode` values: `off` (HTTP only), `redirect` (301 to HTTPS), `auto` (Let's Encrypt), `manual` (uploaded cert only). ACME challenges are **not attempted** for `off` or `manual` hosts.
@@ -97,8 +97,8 @@ The ingest side lives on the proxied host, not on the admin API: `POST /__muvon/
 
 | Method | Path | Note |
 |---|---|---|
-| GET | `/api/settings` | Secret keys come back as the literal `********`, never the value |
-| PUT | `/api/settings/{key}` | **Destructive** for `muvon_jwt_secret` and `muvon_encryption_key` in particular |
+| GET | `/api/settings` | A secret key (`jwt_secret`, `alerting_smtp_password`) comes back as the literal `********` when it holds a value and as `""` when it is empty, never the value itself |
+| PUT | `/api/settings/{key}` | Body `{"value": ...}` with the setting's own type. **Destructive** for the secret keys in particular |
 
 Sending `********` back for a secret key is rejected, so a masked read cannot be written over the real value by accident.
 
@@ -114,20 +114,20 @@ Sending `********` back for a secret key is rejected, so a masked read cannot be
 
 | Method | Path | Note |
 |---|---|---|
-| GET | `/health` | **The only unauthenticated endpoint.** DB and log health. This is what `install.sh` and the upgrade flow poll on `127.0.0.1:9443` |
+| GET | `/health` | Unauthenticated, like login, setup, refresh, logout and the deploy webhook. DB and log health. This is what `install.sh` and the upgrade flow poll on `127.0.0.1:9443` |
 | GET | `/api/system/health` | Same payload, JWT required |
 | GET | `/api/system/stats` | Go runtime, uptime, counters |
 | GET | `/api/system/health/backends` | Backend health (managed components) |
 | GET | `/api/system/health/ingest` | Log ingest pipeline state |
 | GET | `/api/system/retention` | Live retention policies read from the Timescale job catalog, not from the migration |
 | POST | `/api/system/reload` | **Side effect**: rehydrates the config holder and pushes over SSE to agents. A snapshot identical to the current one is a no-op |
-| GET | `/api/system/version` | Running binary version and image digest |
+| GET | `/api/system/version` | Running binary version: `{running, tag}` |
 | GET | `/api/system/compression` | Compression window per hypertable as Timescale enforces it, plus how many chunks are already columnar |
-| GET | `/api/system/version/latest` | GHCR `:latest` manifest digest, anonymous HEAD, 5 minute cache |
-| POST | `/api/system/backup` | Takes a verified `pg_dump -Fc` now. 409 while an upgrade or another backup holds the lock |
+| GET | `/api/system/version/latest` | Highest `vX.Y.Z` tag from GitHub's anonymous tags API and `update_available` from a semver comparison with the running version, 5 minute cache. The GHCR `:latest` digest is included for display only |
+| POST | `/api/system/backup` | Takes a verified `pg_dump -Fc` now. While an upgrade or another backup holds the lock the call fails with 500, because the handler maps every error from the deployer to 500 |
 | GET | `/api/system/backups` | Lists the dumps on disk (the last 5 are kept) |
 | **POST** | **`/api/system/upgrade`** | **Destructive**, body `{target_tag, take_backup}`. A helper container runs `docker compose pull && up -d --wait`. 409 on a concurrent request |
-| GET | `/api/system/upgrade/stream` | **SSE**, live `pull` / `restart` / `post_check` events. The stream EOFs because the helper recreates the deployer; the handler then polls `127.0.0.1:9443/health` before reporting success |
+| GET | `/api/system/upgrade/stream` | **SSE**. Each event is `event: upgrade` with a `step` of `pre_check`, `locked`, `backup`, `pull`, `post_check`, `done` or `failed`; `idle` arrives when no upgrade is running and `end` closes the stream. The deployer's stream EOFs because the helper recreates the deployer; the handler then polls `127.0.0.1:9443/health` before reporting success |
 
 ## Agents and the command channel
 
@@ -138,10 +138,10 @@ Sending `********` back for a secret key is rejected, so a masked read cannot be
 | **DELETE** | **`/api/agents/{id}`** | **Destructive**, the agent disconnects |
 | PATCH | `/api/agents/{id}/mounts` | Update the agent's extra mounts |
 | PATCH | `/api/agents/{id}/deployer-addr` | Set the address central dials for live container tail |
-| **POST** | **`/api/agents/{id}/commands`** | Body `{kind, payload}` with `kind` in `agent.cache_flush` / `agent.set_log_level` / `cert.renew` / `agent.drain` / `agent.restart` / `agent.self_upgrade` / `agent.revoke` / `container.restart`. Central attaches the HMAC signature. **`agent.revoke`, `agent.restart` and `agent.self_upgrade` are destructive** (see `destructive-ops.md`) |
+| **POST** | **`/api/agents/{id}/commands`** | 202 with the command row; 404 for an unknown agent, 409 `agent is disabled` for an inactive one. Body `{kind, payload, ttl_seconds}` (TTL default 300, capped at 3600) with `kind` in `agent.cache_flush` / `agent.set_log_level` / `cert.renew` / `agent.drain` / `agent.restart` / `agent.self_upgrade` / `agent.revoke` / `container.restart`. Central attaches the HMAC signature. **`agent.revoke`, `agent.restart` and `agent.self_upgrade` are destructive** (see `destructive-ops.md`) |
 | GET | `/api/agents/{id}/commands` | Recent commands and state (`pending` / `dispatched` / `succeeded` / `failed` / `expired`). The UI's `AgentCommandHistory` reads this |
 
-Command state machine: `pending → dispatched → succeeded|failed|expired`. A sweeper goroutine expires stale rows every 30 seconds (default TTL 5 minutes). The signing key is derived from `MUVON_ENCRYPTION_KEY`, which the binary requires, so the channel is always armed.
+Command state machine: `pending → dispatched → succeeded|failed|expired`. A sweeper goroutine marks rows past their `expires_at` as `expired` every 30 seconds (default TTL 5 minutes). The signing key is derived from `MUVON_ENCRYPTION_KEY`, which the binary requires, so the channel is always armed.
 
 ## Audit
 
@@ -187,6 +187,17 @@ Command state machine: `pending → dispatched → succeeded|failed|expired`. A 
 
 A job borrows its component's image, env, secrets, networks and mounts. `exec_mode` is `run` (a fresh one-off container) or `exec` (inside the active instance). `concurrency_policy='forbid'` records a `skipped` run when a previous one is still going.
 
+## Edge blocking
+
+| Method | Path | Note |
+|---|---|---|
+| GET | `/api/security/patterns` | Path patterns with kind, score and enabled flag |
+| POST | `/api/security/patterns` | Create or update a pattern |
+| **DELETE** | **`/api/security/patterns`** | **Destructive**; a builtin pattern returns 409, because the next boot would restore it (disable it instead) |
+| GET | `/api/security/blocks` | Currently blocked clients |
+| **DELETE** | **`/api/security/blocks/{key}`** | Lifts one block |
+| **POST** | **`/api/security/blocks/flush`** | Lifts every block |
+
 ## Alerting tests
 
 | Method | Path | Note |
@@ -203,6 +214,7 @@ A job borrows its component's image, env, secrets, networks and mounts. `exec_mo
 | GET | `/api/v1/agent/config` | The agent pulls its config snapshot |
 | GET | `/api/v1/agent/watch` | SSE, pushed when central config changes |
 | GET / POST | `/api/v1/agent/cert/{domain}` | Pull a cert (operator upload) or push one (a backup of the agent's own ACME cert) |
+| POST | `/api/v1/agent/blocklist` | Report a block decided on this edge; ownership comes from the authenticated agent, never the body |
 | POST | `/api/v1/agent/deployer/claim` | The embedded edge deployer claims a pending deploy for its own `agent_id` |
 | GET | `/api/v1/agent/deployer/plan/{id}` | The deploy plan (project, release, components) |
 | POST | `/api/v1/agent/deployer/event` | Append a lifecycle event |
@@ -210,13 +222,20 @@ A job borrows its component's image, env, secrets, networks and mounts. `exec_mo
 | POST | `/api/v1/agent/deployer/instance` | Record a new candidate container instance |
 | POST | `/api/v1/agent/deployer/instance/unhealthy` | Mark an instance unhealthy |
 | POST | `/api/v1/agent/deployer/instance/stopped` | Mark an instance stopped |
+| POST | `/api/v1/agent/deployer/component/drain-active` | Drain a component's active instances before a recreate |
 | POST | `/api/v1/agent/deployer/promote` | Atomic promote (old active drains, candidate becomes active) |
 | POST | `/api/v1/agent/deployer/reset-stale` | After a crash, return stuck `running` deployments to `pending` |
 | POST | `/api/v1/agent/deployer/cleanup-warming` | Clean up warming instances left over from a finished deployment |
 | GET | `/api/v1/agent/deployer/drainable` | Instances whose drain has completed |
 | GET | `/api/v1/agent/deployer/live-containers` | Container IDs central still considers live (for orphan reconciliation) |
-| GET | `/api/v1/agent/commands?wait=25s` | **Long poll** for the next signed command. 200 with the payload when one arrives or the wait ends, 204 when empty |
-| POST | `/api/v1/agent/commands/{id}/result` | Terminal report `{state: succeeded|failed, output?, error?}`. Delivery is at-least-once, so handlers must be idempotent |
+| POST | `/api/v1/agent/deployer/prunable-images` | Images the agent may remove after a promote |
+| POST | `/api/v1/agent/deployer/image-id` | Record the image ID a reference resolved to at pull time |
+| POST | `/api/v1/agent/deployer/job/claim` | Claim a pending scheduled job run for this agent |
+| GET | `/api/v1/agent/deployer/job/{runID}` | Load a claimed run with its job and component |
+| POST | `/api/v1/agent/deployer/job/finish` | Report a run's exit code and output |
+| POST | `/api/v1/agent/deployer/job/reset-stale` | Return runs stuck in `running` after a crash |
+| GET | `/api/v1/agent/commands?wait=25` | **Long poll** for the next signed command. `wait` is whole seconds, default 25, capped at 50. 200 with the command when one arrives, 204 when the wait ends empty |
+| POST | `/api/v1/agent/commands/{id}/result` | Terminal report `{state: succeeded|failed, output?, error?, data?}`. 204 on success, 409 when the command is already finished. Delivery is at-least-once, so handlers must be idempotent |
 
 All of these are `X-Api-Key` authenticated with an ownership filter: an agent only sees and changes rows belonging to its own `agent_id`.
 
@@ -228,7 +247,7 @@ All of these are `X-Api-Key` authenticated with an ownership filter: an agent on
 | `/api/logs`, `/api/audit`, `/api/alerts`, `/api/container-logs`, `/api/containers` | **Enveloped**: `{"data":[ ... ], ...}` |
 | `/api/system/stats`, `/api/system/health`, `/api/settings` | An object |
 | 401/403/500 | `{"error":"..."}` |
-| **404** | **`404 page not found`** as plain text, **not JSON** |
+| **404** | JSON `{"error":"..."}` for a missing resource on a registered route; **`404 page not found` as plain text** for a path no route matches |
 | Resource creation (POST 201) | The created object, no envelope |
 
 Validate the shape with `jq -e` or similar before extracting anything.
@@ -248,7 +267,7 @@ timeout 5 curl -sS -N -b "$CJ" "$BASE/api/logs/stream?host=foo.com"
 gtimeout 5 curl ...
 ```
 
-Event format is `data: {...}\n\n`. Streams are long-lived and disconnects are normal (idle after 60s); reconnect with a `Last-Event-ID` header if needed.
+Event format is `data: {...}\n\n`. Streams are long-lived and the server clears its write timeout for them, but proxies in between may still drop an idle connection. The server sends no event IDs, so a `Last-Event-ID` header replays nothing: reconnect and accept the gap.
 
 ## Path parameters
 
@@ -256,7 +275,7 @@ Numeric ids (`{id}`) or slugs (`{slug}`):
 
 ```bash
 muvon_api GET "/api/hosts/2/routes"
-muvon_api GET "/api/deploy/projects/<slug>"
+muvon_api GET "/api/deploy/projects/<slug>/components/<component>"
 muvon_api GET "/api/deploy/projects/<slug>/secret"
 ```
 
