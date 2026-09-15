@@ -511,3 +511,27 @@ func (d *DB) LastLogTimeForContainer(ctx context.Context, containerID string) (t
 	}
 	return ts, err
 }
+
+// ComponentOwners maps "project/component" to the agent that runs it, with ""
+// for central. dialog-siem checks a shipper's claimed project against it: the
+// labels arrive from the shipper, and any agent key can send any label.
+func (d *DB) ComponentOwners(ctx context.Context) (map[string]string, error) {
+	rows, err := d.Pool.Query(ctx, `
+		SELECT p.slug, c.slug, COALESCE(c.agent_id, '')
+		FROM muvon.deploy_components c
+		JOIN muvon.deploy_projects p ON p.id = c.project_id`)
+	if err != nil {
+		return nil, fmt.Errorf("component owners: %w", err)
+	}
+	defer rows.Close()
+
+	owners := make(map[string]string)
+	for rows.Next() {
+		var project, component, agentID string
+		if err := rows.Scan(&project, &component, &agentID); err != nil {
+			return nil, fmt.Errorf("component owners: scan: %w", err)
+		}
+		owners[project+"/"+component] = agentID
+	}
+	return owners, rows.Err()
+}

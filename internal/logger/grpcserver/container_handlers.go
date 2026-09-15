@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -22,12 +23,14 @@ func (s *Server) SetContainerPipeline(p *logger.ContainerPipeline) {
 	s.containerPipeline = p
 }
 
-// SendContainerLogBatch persists a batch of container log lines plus an
-// upsert into the dimension table so the SIEM can reconstruct the
-// container's history later. Both directions are best-effort: an error
-// here must not block the producer (deployer / agent) from making
-// progress, so we log and ack — the producer's retry/spool logic catches
-// real failures via timeouts.
+// SendContainerLogBatch stores a batch of container log lines and upserts the
+// container's dimension row.
+//
+// The acknowledgement means the lines are committed. Any error tells the
+// shipper it still owns the batch, which it answers by spooling and resending;
+// that is how a full pipeline or a failed write stops being a silent loss. The
+// dimension upsert stays best-effort: it is idempotent and repeated on every
+// batch, so a missed one heals on the next.
 func (s *Server) SendContainerLogBatch(ctx context.Context, req *pb.ContainerLogBatch) (*pb.Ack, error) {
 	if s.containerPipeline == nil {
 		return nil, status.Error(codes.Unimplemented, "container ingest disabled")
@@ -35,10 +38,10 @@ func (s *Server) SendContainerLogBatch(ctx context.Context, req *pb.ContainerLog
 	if req == nil || req.Meta == nil {
 		return nil, status.Error(codes.InvalidArgument, "batch.meta is required")
 	}
-	meta := req.Meta
-	if meta.ContainerId == "" {
+	if req.Meta.ContainerId == "" {
 		return nil, status.Error(codes.InvalidArgument, "container_id is required")
 	}
+	meta := s.attributeContainerMeta(ctx, req.Meta)
 
 	// Upsert dimension row (cheap, even when nothing changes — the
 	// labels/last_log_at fields keep the row fresh). Failure here is
@@ -93,12 +96,13 @@ func (s *Server) SendContainerLogBatch(ctx context.Context, req *pb.ContainerLog
 		s.logf("upsert container failed: %v", err)
 	}
 
-	if len(req.Entries) == 0 {
-		return &pb.Ack{}, nil
-	}
-
 	entries := make([]logger.ContainerEntry, 0, len(req.Entries))
 	for _, e := range req.Entries {
+		// Shippers before FinishedAt markers sent a dimension update as an
+		// empty line with seq -1. It is not a line.
+		if e.Seq < 0 && e.Line == "" {
+			continue
+		}
 		ts := parseRFC3339(e.Timestamp)
 		entry := logger.ContainerEntry{
 			HostID:        meta.HostId,
@@ -118,8 +122,25 @@ func (s *Server) SendContainerLogBatch(ctx context.Context, req *pb.ContainerLog
 		}
 		entries = append(entries, entry)
 	}
-	s.containerPipeline.SendBatch(entries, 0)
+	if err := s.containerPipeline.SendBatch(ctx, entries); err != nil {
+		return nil, containerIngestStatus(err)
+	}
 	return &pb.Ack{}, nil
+}
+
+// containerIngestStatus maps a refused batch to a gRPC status the shipper can
+// act on. Every one of them means "resend later"; the codes only say why.
+func containerIngestStatus(err error) error {
+	switch {
+	case errors.Is(err, logger.ErrContainerPipelineFull):
+		return status.Error(codes.ResourceExhausted, err.Error())
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, err.Error())
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, err.Error())
+	default:
+		return status.Error(codes.Unavailable, err.Error())
+	}
 }
 
 // SearchContainerLogs proxies the DB search. UUIDv7 cursors give the UI

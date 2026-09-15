@@ -45,7 +45,7 @@ func main() {
 		cBufSize               = flag.Int("container-buffer", intEnvOr("DIALOG_CONTAINER_BUFFER", 10000), "Container log pipeline buffer size")
 		cWorkers               = flag.Int("container-workers", intEnvOr("DIALOG_CONTAINER_WORKERS", 2), "Container log pipeline worker count")
 		cBatch                 = flag.Int("container-batch", intEnvOr("DIALOG_CONTAINER_BATCH", 1000), "Container log pipeline batch size")
-		cFlushMs               = flag.Int("container-flush-ms", intEnvOr("DIALOG_CONTAINER_FLUSH_MS", 2000), "Container log pipeline flush interval (ms)")
+		cFlushMs               = flag.Int("container-flush-ms", intEnvOr("DIALOG_CONTAINER_FLUSH_MS", int(logger.DefaultContainerFlushInterval/time.Millisecond)), "How long a container log writer waits for more batches before committing (ms); shippers wait for that commit")
 		containerIngestEnabled = flag.Bool("container-ingest", boolEnvOr("DIALOG_CONTAINER_INGEST", true), "Enable container log ingest pipeline")
 
 		ceBufSize                = flag.Int("client-event-buffer", intEnvOr("DIALOG_CLIENT_EVENT_BUFFER", 10000), "Client event pipeline buffer size")
@@ -271,6 +271,7 @@ func main() {
 	logSrv := loggrpc.New(pipeline, database, ch.Get)
 	if containerPipeline != nil {
 		logSrv.SetContainerPipeline(containerPipeline)
+		logSrv.SetComponentOwnership(loggrpc.NewOwnerCache(database.ComponentOwners))
 	}
 	if clientEventPipeline != nil {
 		logSrv.SetClientEventPipeline(clientEventPipeline)
@@ -343,36 +344,48 @@ func main() {
 
 func agentKeyUnaryInterceptor(database *db.DB) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if err := validateAgentKey(ctx, database); err != nil {
+		agent, err := authenticateAgent(ctx, database)
+		if err != nil {
 			return nil, err
 		}
-		return handler(ctx, req)
+		return handler(loggrpc.ContextWithAgent(ctx, agent), req)
 	}
 }
 
 func agentKeyStreamInterceptor(database *db.DB) grpc.StreamServerInterceptor {
 	return func(srv interface{}, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if err := validateAgentKey(ss.Context(), database); err != nil {
+		agent, err := authenticateAgent(ss.Context(), database)
+		if err != nil {
 			return err
 		}
-		return handler(srv, ss)
+		return handler(srv, &agentStream{ServerStream: ss, ctx: loggrpc.ContextWithAgent(ss.Context(), agent)})
 	}
 }
 
-func validateAgentKey(ctx context.Context, database *db.DB) error {
+// agentStream carries the authenticated agent into a streaming handler.
+type agentStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *agentStream) Context() context.Context { return s.ctx }
+
+// authenticateAgent resolves the API key to an active agent. Handlers need the
+// agent itself, not just a yes: what a batch may claim depends on who sent it.
+func authenticateAgent(ctx context.Context, database *db.DB) (loggrpc.AgentIdentity, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return status.Error(codes.Unauthenticated, "missing metadata")
+		return loggrpc.AgentIdentity{}, status.Error(codes.Unauthenticated, "missing metadata")
 	}
 	keys := md.Get("x-api-key")
 	if len(keys) == 0 {
-		return status.Error(codes.Unauthenticated, "missing x-api-key")
+		return loggrpc.AgentIdentity{}, status.Error(codes.Unauthenticated, "missing x-api-key")
 	}
-	valid, err := database.ValidateAgentKey(ctx, keys[0])
-	if err != nil || !valid {
-		return status.Error(codes.Unauthenticated, "invalid api key")
+	agent, err := database.GetAgentByKey(ctx, keys[0])
+	if err != nil || !agent.IsActive {
+		return loggrpc.AgentIdentity{}, status.Error(codes.Unauthenticated, "invalid api key")
 	}
-	return nil
+	return loggrpc.AgentIdentity{ID: agent.ID, HostID: agent.HostID}, nil
 }
 
 func setupLogger(level string) {

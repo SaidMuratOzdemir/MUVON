@@ -3,7 +3,6 @@ package db
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"time"
 
@@ -252,18 +251,4 @@ func (d *DB) DeleteAgent(ctx context.Context, id string) error {
 		return pgx.ErrNoRows
 	}
 	return nil
-}
-
-// ValidateAgentKey returns true if the given API key belongs to an active
-// agent. Composed on top of GetAgentByKey so the legacy plaintext fallback
-// and hash back-fill both kick in here too.
-func (d *DB) ValidateAgentKey(ctx context.Context, apiKey string) (bool, error) {
-	a, err := d.GetAgentByKey(ctx, apiKey)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
-		}
-		return false, err
-	}
-	return a.IsActive, nil
 }

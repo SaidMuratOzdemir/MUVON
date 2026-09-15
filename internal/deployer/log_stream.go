@@ -42,13 +42,22 @@ type DemuxOptions struct {
 	// Truncated=true except the last (which carries the trailing
 	// newline). Default 16384.
 	MaxLine int
-	// Buffer is the channel capacity. Default 1024. The demuxer drops
-	// older lines under backpressure (see DroppedCount).
+	// Buffer is the channel capacity. Default 1024. Unless Block is set,
+	// the demuxer drops older lines under backpressure (see DroppedCount).
 	Buffer int
 	// HasTimestamps: if true, the first whitespace-separated token of
 	// each frame's payload is parsed as RFC3339Nano. Mismatched leaders
 	// fall through verbatim with a zero timestamp.
 	HasTimestamps bool
+	// Block makes a slow consumer pause reading instead of losing lines.
+	// Right for a shipper that must not lose data: Docker keeps the log on
+	// disk, so an unread stream only delays delivery. A live viewer keeps
+	// the default, where the newest lines matter more than completeness.
+	// A blocking demuxer needs Stop, or a consumer that goes away leaves
+	// the read goroutine parked on a send forever.
+	Block bool
+	// Stop releases a blocked send when the consumer is gone.
+	Stop <-chan struct{}
 }
 
 // LogDemuxer reads Docker's multiplexed log stream and emits LogChunks.
@@ -225,6 +234,13 @@ func (d *LogDemuxer) emitLine(stream string, line []byte) {
 }
 
 func (d *LogDemuxer) push(c LogChunk) {
+	if d.opts.Block {
+		select {
+		case d.out <- c:
+		case <-d.opts.Stop:
+		}
+		return
+	}
 	select {
 	case d.out <- c:
 	default:

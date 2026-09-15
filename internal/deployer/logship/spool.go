@@ -36,6 +36,17 @@ type SpooledEntry struct {
 	Line          string            `json:"line"`
 	Truncated     bool              `json:"truncated,omitempty"`
 	Seq           int64             `json:"seq"`
+	// FinishedAt is set only on a dimension marker (see dimensionMarker).
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+// dimensionMarkerSeq tags a spooled row that carries container meta rather
+// than a log line. Older shippers used it with an empty line and no
+// FinishedAt, so both halves of the check stay.
+const dimensionMarkerSeq = -1
+
+func (e SpooledEntry) isDimensionMarker() bool {
+	return e.Seq == dimensionMarkerSeq && e.Line == ""
 }
 
 // Spool is an append-only on-disk buffer of SpooledEntry rows, used

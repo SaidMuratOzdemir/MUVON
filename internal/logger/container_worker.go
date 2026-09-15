@@ -6,153 +6,161 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// containerWriteAttempts bounds retries of a transient failure inside one
+// writer. Past it the batch goes back to the shipper, which owns the longer
+// retry through its spool.
+const containerWriteAttempts = 3
+
+// containerWriteTimeout bounds one write attempt.
+const containerWriteTimeout = 30 * time.Second
+
 type containerWorker struct {
-	id       int
-	pool     *pgxpool.Pool
-	entries  <-chan ContainerEntry
-	batchSz  int
-	flushInt time.Duration
-	quit     <-chan struct{}
+	id            int
+	pipeline      *ContainerPipeline
+	batchSize     int
+	flushInterval time.Duration
 }
 
-func newContainerWorker(id int, pool *pgxpool.Pool, ch <-chan ContainerEntry, batchSize int, flushInterval time.Duration, quit <-chan struct{}) *containerWorker {
-	return &containerWorker{
-		id:       id,
-		pool:     pool,
-		entries:  ch,
-		batchSz:  batchSize,
-		flushInt: flushInterval,
-		quit:     quit,
-	}
-}
-
+// run takes one batch, lets others join it until the size or the interval is
+// reached, and writes them together. It returns once the jobs channel is
+// closed and drained.
 func (w *containerWorker) run() {
-	slog.Info("container log worker started", "worker", w.id)
-	batch := make([]ContainerEntry, 0, w.batchSz)
-	ticker := time.NewTicker(w.flushInt)
-	defer ticker.Stop()
-
+	p := w.pipeline
 	for {
-		select {
-		case entry, ok := <-w.entries:
-			if !ok {
-				if len(batch) > 0 {
-					w.flush(batch)
-				}
-				slog.Info("container log worker stopped", "worker", w.id)
-				return
-			}
-			batch = append(batch, entry)
-			if len(batch) >= w.batchSz {
-				w.flush(batch)
-				batch = batch[:0]
-			}
-		case <-ticker.C:
-			if len(batch) > 0 {
-				w.flush(batch)
-				batch = batch[:0]
-			}
-		case <-w.quit:
-			drain := true
-			for drain {
-				select {
-				case entry, ok := <-w.entries:
-					if !ok {
-						drain = false
-						break
-					}
-					batch = append(batch, entry)
-				default:
-					drain = false
-				}
-			}
-			if len(batch) > 0 {
-				w.flush(batch)
-			}
-			slog.Info("container log worker drained and stopped", "worker", w.id)
+		first, ok := <-p.jobs
+		if !ok {
 			return
 		}
+		pending := []*containerJob{first}
+		n := len(first.lines)
+		if n < w.batchSize {
+			timer := time.NewTimer(w.flushInterval)
+		collect:
+			for n < w.batchSize {
+				select {
+				case j, ok := <-p.jobs:
+					if !ok {
+						break collect
+					}
+					pending = append(pending, j)
+					n += len(j.lines)
+				case <-timer.C:
+					break collect
+				}
+			}
+			timer.Stop()
+		}
+		w.commit(pending)
 	}
 }
 
-func (w *containerWorker) flush(batch []ContainerEntry) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	rows := make([][]any, 0, len(batch))
-	for _, e := range batch {
-		stream := strings.ToLower(strings.TrimSpace(e.Stream))
-		if stream != "stdout" && stream != "stderr" {
-			// Default unknown to stdout — never drop a row over a
-			// missing stream tag; the source binary can still be
-			// debugged from the line itself.
-			stream = "stdout"
+// commit writes jobs together and settles each one.
+//
+// A permanent error means some row cannot be stored. Jobs are split first, so
+// one bad line only delays the batches it shares a write with; inside a single
+// job the lines are split until the unstorable ones are isolated and refused.
+// A transient error is handed back to every job in the write.
+func (w *containerWorker) commit(jobs []*containerJob) {
+	p := w.pipeline
+	lines := jobs[0].lines
+	if len(jobs) > 1 {
+		total := 0
+		for _, j := range jobs {
+			total += len(j.lines)
 		}
-		ts := e.Timestamp
-		if ts.IsZero() {
-			ts = e.ReceivedAt
+		lines = make([]StoredContainerLine, 0, total)
+		for _, j := range jobs {
+			lines = append(lines, j.lines...)
 		}
-		if ts.IsZero() {
-			ts = time.Now()
-		}
-		var deploymentID *uuid.UUID
-		if e.DeploymentID != "" {
-			if u, err := uuid.Parse(e.DeploymentID); err == nil {
-				deploymentID = &u
-			}
-		}
-		var attrs json.RawMessage
-		if v := e.AttrsJSON(); len(v) > 0 {
-			attrs = v
-		}
-		hostID := e.HostID
-		if hostID == "" {
-			hostID = "central"
-		}
-		rows = append(rows, []any{
-			uuid.Must(uuid.NewV7()),
-			ts,
-			e.ReceivedAt,
-			hostID,
-			e.ContainerID,
-			e.ContainerName,
-			nilIfEmpty(e.Image),
-			nilIfEmpty(e.Project),
-			nilIfEmpty(e.Component),
-			nilIfEmpty(e.ReleaseID),
-			deploymentID,
-			stream,
-			e.Line,
-			e.Truncated,
-			e.Seq,
-			attrs,
-		})
 	}
 
-	_, err := w.pool.CopyFrom(ctx,
-		pgx.Identifier{"container_logs"},
-		[]string{
-			"id", "timestamp", "received_at", "host_id",
-			"container_id", "container_name", "image",
-			"project", "component", "release_id", "deployment_id",
-			"stream", "line", "truncated", "seq", "attrs",
-		},
-		pgx.CopyFromRows(rows),
-	)
-	if err != nil {
-		slog.Error("container log flush: COPY container_logs",
-			"error", err,
+	err := w.writeWithRetry(lines)
+	switch {
+	case err == nil:
+		for _, j := range jobs {
+			p.complete(j, nil)
+		}
+	case !isPermanentWriteError(err):
+		for _, j := range jobs {
+			p.complete(j, err)
+		}
+	case len(jobs) > 1:
+		mid := len(jobs) / 2
+		w.commit(jobs[:mid])
+		w.commit(jobs[mid:])
+	default:
+		p.complete(jobs[0], w.writeSplitting(jobs[0].lines))
+	}
+}
+
+// writeSplitting isolates unstorable lines by halving. A line that cannot be
+// stored on its own is refused and logged, which is the one case where a line
+// is not kept: resending it would fail the same way forever and hold every line
+// behind it in the shipper's spool.
+func (w *containerWorker) writeSplitting(lines []StoredContainerLine) error {
+	err := w.writeWithRetry(lines)
+	if err == nil || !isPermanentWriteError(err) {
+		return err
+	}
+	if len(lines) == 1 {
+		l := lines[0]
+		w.pipeline.rejected.Add(1)
+		slog.Error("container log line refused: it cannot be stored",
 			"worker", w.id,
-			"rows", len(rows))
-		return
+			"container", l.Entry.ContainerName,
+			"timestamp", l.Timestamp,
+			"line_bytes", len(l.Entry.Line),
+			"error", err)
+		return nil
 	}
-	slog.Debug("container log flush complete", "worker", w.id, "rows", len(rows))
+	mid := len(lines) / 2
+	if err := w.writeSplitting(lines[:mid]); err != nil {
+		return err
+	}
+	return w.writeSplitting(lines[mid:])
+}
+
+func (w *containerWorker) writeWithRetry(lines []StoredContainerLine) error {
+	p := w.pipeline
+	// One hook for the whole write, so the rows it wrote in the transaction
+	// and the AfterCommit call belong to the same consumer.
+	hook := p.commitHook()
+	var err error
+	for attempt := 1; attempt <= containerWriteAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), containerWriteTimeout)
+		err = p.store.Write(ctx, lines, hook)
+		cancel()
+		if err == nil {
+			if hook != nil {
+				hook.AfterCommit(lines)
+			}
+			return nil
+		}
+		if isPermanentWriteError(err) {
+			return err
+		}
+		if attempt < containerWriteAttempts {
+			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
+		}
+	}
+	slog.Error("container log write failed; batch returned to the shipper",
+		"worker", w.id,
+		"rows", len(lines),
+		"attempts", containerWriteAttempts,
+		"error", err)
+	return err
+}
+
+func normalizeStream(s string) string {
+	stream := strings.ToLower(strings.TrimSpace(s))
+	if stream != "stdout" && stream != "stderr" {
+		// An unknown tag is stored as stdout rather than refusing the row;
+		// the line itself still says what it is.
+		return "stdout"
+	}
+	return stream
 }
 
 // parseJSONLine inspects a single log line and, when it looks like a

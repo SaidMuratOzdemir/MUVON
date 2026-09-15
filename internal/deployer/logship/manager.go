@@ -409,10 +409,15 @@ func (m *Manager) tailLoop(ctx context.Context, containerID string, meta Contain
 	}
 	defer body.Close()
 
+	// Blocking: while a batch waits for dialog-siem to commit, the read
+	// pauses and Docker keeps the rest on disk. Dropping here would lose
+	// lines nobody could ever recover.
 	dem := deployer.NewLogDemuxer(body, deployer.DemuxOptions{
 		MaxLine:       m.maxLine,
 		Buffer:        2048,
 		HasTimestamps: true,
+		Block:         true,
+		Stop:          ctx.Done(),
 	})
 
 	batch := make([]SpooledEntry, 0, m.batchSize)
@@ -483,10 +488,16 @@ func (m *Manager) tailLoop(ctx context.Context, containerID string, meta Contain
 	}
 }
 
+// shipTimeout bounds one batch send. dialog-siem acknowledges a batch only
+// after it is committed, so this covers its flush interval plus the write
+// itself; a shorter bound would spool, and then resend, batches that were
+// about to be stored.
+const shipTimeout = 30 * time.Second
+
 // shipOrSpool tries dialog-siem first; on failure spools to disk. The
 // SIEM is the authoritative store so we always check it first.
 func (m *Manager) shipOrSpool(meta ContainerMeta, batch []SpooledEntry) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shipTimeout)
 	defer cancel()
 	pbBatch := buildPBBatch(meta, batch)
 	if err := m.sink.SendContainerLogBatch(ctx, pbBatch); err == nil {
@@ -670,9 +681,19 @@ func metaFromSpooled(entries []SpooledEntry) ContainerMeta {
 	}
 }
 
+// buildPBBatch turns spooled rows into one wire batch. A dimension marker is
+// not a log line: it contributes its finished_at to the batch meta and is
+// left out of the entries, so replaying a spool never writes an empty row.
 func buildPBBatch(meta ContainerMeta, entries []SpooledEntry) *pb.ContainerLogBatch {
 	pbEntries := make([]*pb.ContainerLogEntry, 0, len(entries))
+	var finishedAt *time.Time
 	for _, e := range entries {
+		if e.isDimensionMarker() {
+			if e.FinishedAt != nil && (finishedAt == nil || e.FinishedAt.After(*finishedAt)) {
+				finishedAt = e.FinishedAt
+			}
+			continue
+		}
 		ts := e.Timestamp
 		if ts.IsZero() {
 			ts = time.Now()
@@ -686,7 +707,7 @@ func buildPBBatch(meta ContainerMeta, entries []SpooledEntry) *pb.ContainerLogBa
 		})
 	}
 	return &pb.ContainerLogBatch{
-		Meta:    metaToProto(meta, nil, 0),
+		Meta:    metaToProto(meta, finishedAt, 0),
 		Entries: pbEntries,
 	}
 }
@@ -713,11 +734,12 @@ func metaToProto(meta ContainerMeta, finishedAt *time.Time, exitCode int32) *pb.
 	return pbMeta
 }
 
+// dimensionMarker spools a finished_at update for a container whose final
+// dimension send failed. It rides the same file as the lines so replay needs
+// no second store; buildPBBatch turns it back into batch meta.
 func dimensionMarker(meta ContainerMeta, finishedAt *time.Time) SpooledEntry {
-	// Carries finished_at as an empty-line entry with seq=-1 so the
-	// SIEM upserts the dimension; line is filtered server-side via a
-	// nil/empty check. Cheap way to avoid a second RPC.
 	return SpooledEntry{
+		FinishedAt:    finishedAt,
 		HostID:        meta.HostID,
 		ContainerID:   meta.ContainerID,
 		ContainerName: meta.ContainerName,
@@ -731,7 +753,7 @@ func dimensionMarker(meta ContainerMeta, finishedAt *time.Time) SpooledEntry {
 		Timestamp:     time.Now(),
 		Stream:        "stdout",
 		Line:          "",
-		Seq:           -1,
+		Seq:           dimensionMarkerSeq,
 	}
 }
 

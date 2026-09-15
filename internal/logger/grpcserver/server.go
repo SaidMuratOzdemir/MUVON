@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"muvon/internal/config"
@@ -31,6 +32,9 @@ type Server struct {
 	database            *db.DB
 	configFn            ConfigFunc
 	enrichStatusFn      EnrichmentStatusFunc
+
+	ownership         ComponentOwnership
+	attributionWarned sync.Map // container_id -> time.Time of the last warning
 }
 
 // New wires the gRPC server. configFn may be nil — when absent, user-display

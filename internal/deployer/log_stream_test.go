@@ -166,3 +166,49 @@ func TestLogDemuxer_TrimsCarriageReturn(t *testing.T) {
 		t.Errorf("Line = %q, want %q (CRLF stripped)", got[0].Line, "windows-line")
 	}
 }
+
+// A shipper cannot afford drop-oldest: with Block set, a consumer slower than
+// the stream still receives every line.
+func TestLogDemuxer_BlockKeepsEveryLine(t *testing.T) {
+	var buf bytes.Buffer
+	const lines = 500
+	for i := 0; i < lines; i++ {
+		buf.Write(frame(1, "line\n"))
+	}
+	d := NewLogDemuxer(&buf, DemuxOptions{Buffer: 4, Block: true, Stop: make(chan struct{})})
+
+	time.Sleep(50 * time.Millisecond)
+	got := collectChunks(t, d, lines)
+	if len(got) != lines {
+		t.Fatalf("received %d lines, want %d", len(got), lines)
+	}
+	if d.DroppedCount() != 0 {
+		t.Fatalf("DroppedCount = %d, want 0 in blocking mode", d.DroppedCount())
+	}
+}
+
+// Closing Stop must release a send parked on a consumer that went away,
+// otherwise every stopped tail leaks its read goroutine.
+func TestLogDemuxer_StopReleasesBlockedSend(t *testing.T) {
+	var buf bytes.Buffer
+	for i := 0; i < 50; i++ {
+		buf.Write(frame(1, "line\n"))
+	}
+	stop := make(chan struct{})
+	d := NewLogDemuxer(&buf, DemuxOptions{Buffer: 1, Block: true, Stop: stop})
+
+	time.Sleep(20 * time.Millisecond)
+	close(stop)
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-d.Out():
+			if !ok {
+				return
+			}
+		case <-deadline:
+			t.Fatal("demuxer did not finish after Stop was closed")
+		}
+	}
+}
