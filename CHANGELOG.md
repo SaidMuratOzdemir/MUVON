@@ -23,6 +23,12 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+### SECURITY
+
+- **Bağımlılık yükseltmeleri.** `google.golang.org/grpc` 1.83.2,
+  `golang.org/x/crypto` 0.55.0 ve `github.com/klauspost/compress` 1.18.7;
+  güvenlik taramalarının bildirdiği düzeltilmiş açıkları kapatır.
+
 ## [0.5.2] - 2026-08-29
 
 Engellenen istekler artık log akışında görünüyor. Şema değişikliği yok.
