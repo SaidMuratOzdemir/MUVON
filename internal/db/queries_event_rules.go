@@ -255,6 +255,53 @@ func DigestAlertIDs(ctx context.Context, tx pgx.Tx, ruleIDs []string, since, unt
 	return ids, rows.Err()
 }
 
+// ProjectEvent summarises an event name seen in a project's logs.
+type ProjectEvent struct {
+	Name       string    `json:"name"`
+	Count      int       `json:"count"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+	Fields     []string  `json:"fields"`
+}
+
+// projectEventScanLimit bounds the lines one discovery request reads.
+const projectEventScanLimit = 20000
+
+// ListProjectEvents lists the event names a project has logged since the given
+// time, with the fields they carry, so a rule can be written against what the
+// application actually emits. It reads at most the latest 20000 event lines.
+func (d *DB) ListProjectEvents(ctx context.Context, project, component string, since time.Time) ([]ProjectEvent, error) {
+	rows, err := d.Pool.Query(ctx, `
+		WITH ev AS (
+			SELECT attrs->>'event.name' AS name, attrs, timestamp
+			FROM dialog.container_logs
+			WHERE project = $1 AND ($2 = '' OR component = $2)
+			  AND timestamp > $3 AND attrs ? 'event.name'
+			ORDER BY timestamp DESC
+			LIMIT $4
+		)
+		SELECT name, count(*), max(timestamp),
+		       (SELECT COALESCE(array_agg(DISTINCT k ORDER BY k), '{}')
+		        FROM ev e2, jsonb_object_keys(e2.attrs) AS k
+		        WHERE e2.name = ev.name AND k <> 'event.name')
+		FROM ev
+		GROUP BY name
+		ORDER BY count(*) DESC, name
+		LIMIT 200`, project, component, since, projectEventScanLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list project events: %w", err)
+	}
+	defer rows.Close()
+	out := []ProjectEvent{}
+	for rows.Next() {
+		var e ProjectEvent
+		if err := rows.Scan(&e.Name, &e.Count, &e.LastSeenAt, &e.Fields); err != nil {
+			return nil, fmt.Errorf("scan project event: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // TryAdvisoryLock takes a transaction-scoped advisory lock and reports whether
 // it was free, so periodic jobs run once across dialog-siem instances.
 func TryAdvisoryLock(ctx context.Context, tx pgx.Tx, name string) (bool, error) {

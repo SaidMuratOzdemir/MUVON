@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"muvon/internal/agentsvc"
+	"muvon/internal/alerting"
 	"muvon/internal/config"
 	"muvon/internal/db"
 	deployerclient "muvon/internal/deployer/grpcclient"
@@ -52,6 +53,8 @@ type Server struct {
 	// token when central dials an agent's deployer for live container
 	// log tail. Empty disables the agent-routed path.
 	encryptionKey string
+	// testAlertSenders replaces the real Slack and SMTP senders in tests.
+	testAlertSenders map[string]alerting.Sender
 }
 
 func NewServer(
@@ -200,6 +203,22 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/alerts/stats", s.handleAlertStats)
 	api.HandleFunc("GET /api/alerts/{id}", s.handleGetAlert)
 	api.HandleFunc("POST /api/alerts/{id}/acknowledge", s.handleAckAlert)
+
+	// Alert rules, channels and project defaults
+	api.HandleFunc("GET /api/alert-channels", s.handleListAlertChannels)
+	api.HandleFunc("POST /api/alert-channels", s.handleCreateAlertChannel)
+	api.HandleFunc("PUT /api/alert-channels/{id}", s.handleUpdateAlertChannel)
+	api.HandleFunc("DELETE /api/alert-channels/{id}", s.handleDeleteAlertChannel)
+	api.HandleFunc("POST /api/alert-channels/{id}/test", s.handleTestAlertChannel)
+	api.HandleFunc("GET /api/alert-rules", s.handleListAlertRules)
+	api.HandleFunc("POST /api/alert-rules", s.handleCreateAlertRule)
+	api.HandleFunc("GET /api/alert-rules/{id}", s.handleGetAlertRule)
+	api.HandleFunc("PUT /api/alert-rules/{id}", s.handleUpdateAlertRule)
+	api.HandleFunc("DELETE /api/alert-rules/{id}", s.handleDeleteAlertRule)
+	api.HandleFunc("POST /api/alert-rules/{id}/test", s.handleTestAlertRule)
+	api.HandleFunc("GET /api/alert-projects", s.handleListAlertProjects)
+	api.HandleFunc("PUT /api/alert-projects/{slug}", s.handleSetAlertProjectChannels)
+	api.HandleFunc("GET /api/alert-events", s.handleListProjectEvents)
 
 	// Container Logs — proxied to muvon-deployer (live) and diaLOG (history)
 	api.HandleFunc("GET /api/containers", s.handleListContainers)

@@ -1,11 +1,13 @@
 package admin
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"muvon/internal/db"
 )
@@ -92,14 +94,34 @@ func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// alertDetail is an alert with the notifications sent for it, so the panel
+// can show whether each channel received it.
+type alertDetail struct {
+	db.Alert
+	Deliveries []db.AlertDelivery `json:"deliveries"`
+}
+
 func (s *Server) handleGetAlert(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	alert, err := s.db.GetAlert(r.Context(), id)
-	if err != nil {
+	if _, err := uuid.Parse(id); err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
 		return
 	}
-	writeJSON(w, http.StatusOK, alert)
+	alert, err := s.db.GetAlert(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "alert not found"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load alert"})
+		return
+	}
+	deliveries, err := s.db.ListAlertDeliveries(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load deliveries"})
+		return
+	}
+	writeJSON(w, http.StatusOK, alertDetail{Alert: alert, Deliveries: deliveries})
 }
 
 func (s *Server) handleAckAlert(w http.ResponseWriter, r *http.Request) {
