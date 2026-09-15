@@ -286,6 +286,11 @@ type AlertEvent struct {
 	Occurrences int
 	At          time.Time
 	Evidence    []AlertEvidence
+	// OpenOccurrences and OpenEvidence replace Occurrences and Evidence when
+	// the firing opens a new alert. A threshold rule opens on its Nth event,
+	// and the alert should count and show all N, not only the last.
+	OpenOccurrences int
+	OpenEvidence    []AlertEvidence
 	// RemindAfter schedules reminders while the alert is critical and
 	// unacknowledged. Zero disables them.
 	RemindAfter time.Duration
@@ -332,7 +337,14 @@ func RaiseAlert(ctx context.Context, tx pgx.Tx, ev AlertEvent) (RaiseResult, err
 			FOR UPDATE`, ev.Fingerprint).Scan(&id, &severity, &evidenceRaw, &nextReminderAt)
 
 		if errors.Is(err, pgx.ErrNoRows) {
-			evidence, err := json.Marshal(capEvidence(nil, ev.Evidence))
+			openEvidence, openOccurrences := ev.Evidence, ev.Occurrences
+			if len(ev.OpenEvidence) > 0 {
+				openEvidence = ev.OpenEvidence
+			}
+			if ev.OpenOccurrences > 0 {
+				openOccurrences = ev.OpenOccurrences
+			}
+			evidence, err := json.Marshal(capEvidence(nil, openEvidence))
 			if err != nil {
 				return RaiseResult{}, fmt.Errorf("raise alert: encode evidence: %w", err)
 			}
@@ -346,7 +358,7 @@ func RaiseAlert(ctx context.Context, tx pgx.Tx, ev AlertEvent) (RaiseResult, err
 				ON CONFLICT (fingerprint) WHERE NOT acknowledged DO NOTHING
 				RETURNING id::text`,
 				ev.Rule, ev.RuleID, ev.RuleName, ev.Severity, ev.Title, nullJSON(ev.Detail), ev.SourceIP, ev.Host,
-				ev.Project, ev.Component, ev.Fingerprint, ev.GroupKey, ev.Delivery, ev.IsTest, ev.Occurrences,
+				ev.Project, ev.Component, ev.Fingerprint, ev.GroupKey, ev.Delivery, ev.IsTest, openOccurrences,
 				ev.At, evidence, reminderAt(ev, ev.Severity, nil, true)).Scan(&id)
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue // another raise opened it first; merge into that one

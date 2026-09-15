@@ -105,9 +105,16 @@ type Rule struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Match selects the log lines a rule looks at.
+// Match selects the log lines a rule looks at: a line matches when any clause
+// does. Clauses let one rule cover events that need different conditions,
+// such as one event on its own and another only for a particular job family.
 type Match struct {
-	// Events lists accepted values of the line's event.name field.
+	Any []MatchClause `json:"any"`
+}
+
+// MatchClause matches a line whose event.name is one of Events and whose
+// fields satisfy every condition.
+type MatchClause struct {
 	Events []string         `json:"events"`
 	Fields []FieldCondition `json:"fields"`
 }

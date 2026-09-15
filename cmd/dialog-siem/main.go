@@ -19,9 +19,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	"muvon/internal/alerting"
+	"muvon/internal/alertrules"
 	"muvon/internal/config"
 	"muvon/internal/correlation"
 	"muvon/internal/db"
+	"muvon/internal/eventrules"
 	"muvon/internal/identity"
 	"muvon/internal/logger"
 	loggrpc "muvon/internal/logger/grpcserver"
@@ -233,7 +235,17 @@ func main() {
 	alertMgr.SetWake(dispatcher.Wake)
 	go dispatcher.Run(ctx, 5*time.Second)
 	go alertMgr.RunReminders(ctx, 30*time.Second)
+	go alertMgr.RunDigests(ctx, time.Minute)
 	go runAlertPurge(ctx, database, ch)
+
+	// Event rules. Matches are recorded in the transaction that stores the
+	// container log lines, before any batch can arrive: the gRPC listeners
+	// start further down.
+	evaluator := eventrules.NewEvaluator(database, alertStore, alertMgr)
+	go evaluator.Run(ctx, 5*time.Second)
+	if containerPipeline != nil {
+		containerPipeline.SetCommitHook(eventrules.NewHook(alertStore, evaluator.Wake))
+	}
 
 	// Correlation engine — subscribes to pipeline, produces alerts.
 	// The config func is read on every event so admin-panel changes to
@@ -523,6 +535,16 @@ const alertPurgeInterval = time.Hour
 // retention job that governs the log tables does not reach it.
 func runAlertPurge(ctx context.Context, database *db.DB, ch *config.Holder) {
 	purge := func() {
+		// Hits are working state for windows and baselines, not history, so
+		// they follow their own horizon rather than retention_days.
+		if n, err := database.PurgeEventRuleHits(ctx, time.Now().Add(-alertrules.HitRetention)); err != nil {
+			if ctx.Err() == nil {
+				slog.Warn("event rule hit purge failed", "error", err)
+			}
+		} else if n > 0 {
+			slog.Info("purged evaluated event rule hits", "hits", n)
+		}
+
 		cfg := ch.Get()
 		if cfg == nil || cfg.Global.RetentionDays <= 0 {
 			return

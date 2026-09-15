@@ -1596,4 +1596,34 @@ CREATE TABLE IF NOT EXISTS alert_channel_state (
     last_digest_at TIMESTAMPTZ NOT NULL
 );`,
 	},
+	// A hit is one log line an event rule matched. It is written in the same
+	// transaction as the line, so a stored line and its hit exist together and
+	// a line the shipper resends is not counted twice (dedup_key). Hits carry
+	// only the fields the rule reads plus a capped copy of the line, and are
+	// kept long enough for the longest window and baseline. evaluated_at NULL
+	// marks work the evaluator has not done yet, which survives a restart.
+	{
+		name: "create_event_rule_hits", product: "dialog",
+		sql: `
+CREATE TABLE IF NOT EXISTS event_rule_hits (
+    rule_id      UUID NOT NULL,
+    dedup_key    TEXT NOT NULL,
+    group_key    TEXT NOT NULL DEFAULT '',
+    occurred_at  TIMESTAMPTZ NOT NULL,
+    log_id       UUID NOT NULL,
+    container_id TEXT NOT NULL,
+    project      TEXT NOT NULL,
+    component    TEXT NOT NULL DEFAULT '',
+    event_name   TEXT NOT NULL,
+    fields       JSONB NOT NULL DEFAULT '{}',
+    line         TEXT NOT NULL,
+    evaluated_at TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (rule_id, dedup_key)
+);
+CREATE INDEX IF NOT EXISTS idx_event_rule_hits_pending ON event_rule_hits (created_at) WHERE evaluated_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_event_rule_hits_group ON event_rule_hits (rule_id, group_key, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_rule_hits_rule ON event_rule_hits (rule_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_event_rule_hits_occurred ON event_rule_hits (occurred_at);`,
+	},
 }

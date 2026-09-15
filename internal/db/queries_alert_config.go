@@ -125,11 +125,16 @@ func scanAlertRule(scan func(...any) error) (alertrules.Rule, error) {
 			return r, fmt.Errorf("rule %s tiers: %w", r.ID, err)
 		}
 	}
-	if r.Match.Events == nil {
-		r.Match.Events = []string{}
+	if r.Match.Any == nil {
+		r.Match.Any = []alertrules.MatchClause{}
 	}
-	if r.Match.Fields == nil {
-		r.Match.Fields = []alertrules.FieldCondition{}
+	for i := range r.Match.Any {
+		if r.Match.Any[i].Events == nil {
+			r.Match.Any[i].Events = []string{}
+		}
+		if r.Match.Any[i].Fields == nil {
+			r.Match.Any[i].Fields = []alertrules.FieldCondition{}
+		}
 	}
 	if r.Tiers == nil {
 		r.Tiers = []alertrules.Tier{}
