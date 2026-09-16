@@ -23,11 +23,35 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-09-16
+
+Bağımlılık güvenlik yükseltmesi ve depo dokümanlarının düzeltilmesi. Şema
+değişikliği ve davranış değişikliği yok.
+
 ### SECURITY
 
 - **Bağımlılık yükseltmeleri.** `google.golang.org/grpc` 1.83.2,
   `golang.org/x/crypto` 0.55.0 ve `github.com/klauspost/compress` 1.18.7;
   güvenlik taramalarının bildirdiği düzeltilmiş açıkları kapatır.
+
+### ENHANCEMENTS
+
+- **Depo dokümanları koda göre düzeltildi.** README, `CLAUDE.md` ve operatör
+  skill dosyalarındaki uç adresleri, durum kodları, ayar anahtarları, komut
+  adları, panel etiketleri ve konteyner adları koda karşı doğrulandı; yanlış
+  olanlar düzeltildi, eksik uçlar eklendi.
+
+### Upgrade notları
+
+Şema değişikliği yok. Önce central, sonra her edge agent güncellenir.
+
+```bash
+# Central:
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install.sh) --version 0.5.3
+
+# Agent (her edge sunucusunda):
+bash <(curl -fsSL https://raw.githubusercontent.com/SaidMuratOzdemir/MUVON/main/install-agent.sh) --version 0.5.3
+```
 
 ## [0.5.2] - 2026-08-29
 
