@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"muvon/internal/agentctrl"
 	"muvon/internal/config"
 	"muvon/internal/db"
 	tlspkg "muvon/internal/tls"
@@ -33,6 +34,7 @@ type Service struct {
 	// MUVON_ENCRYPTION_KEY via HKDF). Empty key = command channel
 	// disabled — admin endpoint returns 503.
 	signingKey []byte
+	sessions   sessions
 }
 
 func NewService(database *db.DB, holder *config.Holder, broadcaster *Broadcaster) *Service {
@@ -80,6 +82,9 @@ type contextKey int
 const agentIDKey contextKey = 0
 
 // AuthMiddleware validates the X-Api-Key header against the agents table.
+// A revoked agent gets its own message so it can tell revocation from a
+// wrong key. Admitted requests are tracked until they finish, so Disconnect
+// can end the long-lived ones.
 func (s *Service) AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("X-Api-Key")
@@ -87,14 +92,27 @@ func (s *Service) AuthMiddleware(next http.Handler) http.Handler {
 			http.Error(w, `{"error":"missing api key"}`, http.StatusUnauthorized)
 			return
 		}
+		admittedAt := time.Now()
 		agent, err := s.db.GetAgentByKey(r.Context(), key)
-		if err != nil || !agent.IsActive {
+		if err != nil {
 			http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
 			return
 		}
-		ctx := context.WithValue(r.Context(), agentIDKey, agent.ID)
+		if !agent.IsActive {
+			http.Error(w, `{"error":"`+agentctrl.RevokedMessage+`"}`, http.StatusUnauthorized)
+			return
+		}
+		ctx, done := s.sessions.start(r.Context(), agent.ID, admittedAt)
+		defer done()
+		ctx = context.WithValue(ctx, agentIDKey, agent.ID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// Disconnect ends every request an agent has open and refuses those admitted
+// before the call. Call it once the agent's key has stopped being valid.
+func (s *Service) Disconnect(agentID string) int {
+	return s.sessions.close(agentID)
 }
 
 // HandleConfig serves the current config as an AgentPayload JSON.

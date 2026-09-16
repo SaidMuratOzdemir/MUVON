@@ -193,6 +193,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/agents", s.handleListAgents)
 	api.HandleFunc("POST /api/agents", s.handleCreateAgent)
 	api.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
+	api.HandleFunc("POST /api/agents/{id}/revoke", s.handleRevokeAgent)
+	api.HandleFunc("POST /api/agents/{id}/rotate-key", s.handleRotateAgentKey)
 	api.HandleFunc("PATCH /api/agents/{id}/mounts", s.handleUpdateAgentMounts)
 	api.HandleFunc("PATCH /api/agents/{id}/deployer-addr", s.handleUpdateAgentDeployerAddr)
 	api.HandleFunc("POST /api/agents/{id}/commands", s.handleEnqueueAgentCommand)

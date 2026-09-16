@@ -1669,4 +1669,29 @@ BEGIN
     END IF;
 END $$;`,
 	},
+	// Revocation happens on central. is_active is what both agent auth paths
+	// check; revoked_at and revoked_by record when and by whom the key was cut.
+	// A revoked key is replaced, never switched back on. scheduled_jobs.agent_id
+	// mirrors deploy_components.agent_id, which is SET NULL when an agent is
+	// deleted; without the same rule an agent with a scheduled job could not be.
+	{
+		name: "add_agent_revocation", product: "muvon",
+		sql: `
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS revoked_by TEXT NOT NULL DEFAULT '';
+DO $$
+DECLARE
+    fk TEXT;
+BEGIN
+    FOR fk IN
+        SELECT c.conname FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+        WHERE c.conrelid = 'scheduled_jobs'::regclass AND c.contype = 'f' AND a.attname = 'agent_id'
+    LOOP
+        EXECUTE format('ALTER TABLE scheduled_jobs DROP CONSTRAINT %I', fk);
+    END LOOP;
+END $$;
+ALTER TABLE scheduled_jobs ADD CONSTRAINT scheduled_jobs_agent_id_fkey
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL;`,
+	},
 }

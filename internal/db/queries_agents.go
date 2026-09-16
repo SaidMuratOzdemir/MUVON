@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"time"
 
@@ -50,9 +51,13 @@ type Agent struct {
 	// DeployerAddr is "host:port" of the agent's deployer gRPC TCP
 	// listener — operator-set in the UI (private network IP). Empty
 	// means live tail for this agent's containers is unavailable.
-	DeployerAddr string    `json:"deployer_addr"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	DeployerAddr string `json:"deployer_addr"`
+	// RevokedAt is set when an operator revoked the key. The agent stays
+	// inactive until its key is replaced; the revoked key never works again.
+	RevokedAt *time.Time `json:"revoked_at"`
+	RevokedBy string     `json:"revoked_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // hashAPIKey returns the SHA-256 digest used for api_key_hash lookups.
@@ -65,14 +70,16 @@ func hashAPIKey(key string) []byte {
 
 const agentSelectCols = `id, name, api_key, is_active, last_seen_at,
 	last_config_pull_at, config_version, last_remote_addr, last_user_agent,
-	public_ip, extra_mounts, host_id, deployer_addr, created_at, updated_at`
+	public_ip, extra_mounts, host_id, deployer_addr, revoked_at, revoked_by,
+	created_at, updated_at`
 
 func scanAgent(scan func(...any) error) (Agent, error) {
 	var a Agent
 	var extra []string
 	err := scan(&a.ID, &a.Name, &a.APIKey, &a.IsActive, &a.LastSeenAt,
 		&a.LastConfigPullAt, &a.ConfigVersion, &a.LastRemoteAddr, &a.LastUserAgent,
-		&a.PublicIP, &extra, &a.HostID, &a.DeployerAddr, &a.CreatedAt, &a.UpdatedAt)
+		&a.PublicIP, &extra, &a.HostID, &a.DeployerAddr, &a.RevokedAt, &a.RevokedBy,
+		&a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return a, err
 	}
@@ -119,6 +126,68 @@ func (d *DB) CreateAgent(ctx context.Context, name, apiKey string) (Agent, error
 	// return it to the operator. The struct field is JSON-ignored, so
 	// later reads (ListAgents) will never expose it again.
 	a.APIKey = apiKey
+	return a, nil
+}
+
+// RevokeAgent cuts an agent's key. Both agent auth paths check is_active, so
+// the next request carrying the key is refused. Commands the agent has not
+// finished can no longer be delivered or reported, so they expire in the same
+// transaction. Revoking a revoked agent keeps the original time and author.
+// A missing agent returns pgx.ErrNoRows.
+func (d *DB) RevokeAgent(ctx context.Context, id, by string) (Agent, error) {
+	tx, err := d.Pool.Begin(ctx)
+	if err != nil {
+		return Agent{}, fmt.Errorf("revoke agent begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	a, err := scanAgent(tx.QueryRow(ctx,
+		`UPDATE muvon.agents
+		 SET is_active = false,
+		     revoked_at = COALESCE(revoked_at, now()),
+		     revoked_by = CASE WHEN revoked_at IS NULL THEN $2 ELSE revoked_by END,
+		     updated_at = now()
+		 WHERE id = $1
+		 RETURNING `+agentSelectCols,
+		id, by,
+	).Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Agent{}, pgx.ErrNoRows
+	}
+	if err != nil {
+		return Agent{}, fmt.Errorf("revoke agent: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE muvon.agent_commands
+		 SET state = 'expired', finished_at = now()
+		 WHERE agent_id = $1 AND state IN ('pending','dispatched')`, id); err != nil {
+		return Agent{}, fmt.Errorf("revoke agent commands: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Agent{}, fmt.Errorf("revoke agent commit: %w", err)
+	}
+	return a, nil
+}
+
+// RotateAgentKey gives an agent a new key and makes it active again. It is the
+// only way back from a revocation: the old key stops matching while the row,
+// and every host and component bound to it, stays. A missing agent returns
+// pgx.ErrNoRows.
+func (d *DB) RotateAgentKey(ctx context.Context, id, apiKey string) (Agent, error) {
+	a, err := scanAgent(d.Pool.QueryRow(ctx,
+		`UPDATE muvon.agents
+		 SET api_key = $2, api_key_hash = $3, is_active = true,
+		     revoked_at = NULL, revoked_by = '', updated_at = now()
+		 WHERE id = $1
+		 RETURNING `+agentSelectCols,
+		id, apiKey, hashAPIKey(apiKey),
+	).Scan)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Agent{}, pgx.ErrNoRows
+	}
+	if err != nil {
+		return Agent{}, fmt.Errorf("rotate agent key: %w", err)
+	}
 	return a, nil
 }
 

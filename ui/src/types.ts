@@ -368,6 +368,10 @@ export interface Agent {
   // Central dials this over the private network to bridge live
   // container logs for this agent's host. Empty = live tail disabled.
   deployer_addr?: string;
+  // Set when the key was revoked. The agent stays inactive until its key is
+  // replaced; the revoked key never works again.
+  revoked_at?: string | null;
+  revoked_by?: string;
   created_at: string;
   updated_at: string;
 }

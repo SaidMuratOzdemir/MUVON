@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -186,24 +187,42 @@ func (s *Server) handleGetDeployProjectSecret(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, map[string]string{"secret": project.WebhookSecret})
 }
 
-// handleRollbackProject enqueues a fresh deployment whose images come
-// from the previous succeeded release. The "previous" release is the
-// most recent succeeded one other than the body's `from_release_id`
-// (typically the latest, but the operator can pin any release with
-// `to_release_id` if they want to skip multiple bad releases at once).
+// handleRollbackProject enqueues a deployment that runs an earlier release's
+// images again. By default the target is the newest succeeded release created
+// before `from_release_id`, or before the project's newest release when that
+// is empty. `to_release_id` names the target instead, to step over several bad
+// releases at once; it must be a release that succeeded. Naming both is
+// refused, because the two disagree about what the operator asked for.
 func (s *Server) handleRollbackProject(w http.ResponseWriter, r *http.Request) {
 	projectSlug := r.PathValue("slug")
 	var req struct {
-		FromReleaseID string `json:"from_release_id"` // release we're rolling back from (typically the latest)
-		ToReleaseID   string `json:"to_release_id"`   // explicit override; if set we redeploy that release verbatim
+		FromReleaseID string `json:"from_release_id"`
+		ToReleaseID   string `json:"to_release_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	target, err := s.db.PreviousSucceededRelease(r.Context(), projectSlug, req.FromReleaseID)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no previous succeeded release available"})
+	if req.FromReleaseID != "" && req.ToReleaseID != "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "from_release_id and to_release_id are mutually exclusive"})
+		return
+	}
+	var target db.RollbackRelease
+	var err error
+	if req.ToReleaseID != "" {
+		target, err = s.db.SucceededRelease(r.Context(), projectSlug, req.ToReleaseID)
+	} else {
+		target, err = s.db.PreviousSucceededRelease(r.Context(), projectSlug, req.FromReleaseID)
+	}
+	switch {
+	case errors.Is(err, db.ErrReleaseNotFound), errors.Is(err, db.ErrNoEarlierRelease):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	case errors.Is(err, db.ErrReleaseNotSucceeded):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	// Build a deployRequest from the snapshot so we can reuse the same
@@ -228,6 +247,7 @@ func (s *Server) handleRollbackProject(w http.ResponseWriter, r *http.Request) {
 	s.auditLog(r, "deployment.rollback", "deployment", deployment.ID, map[string]any{
 		"project":     projectSlug,
 		"from":        req.FromReleaseID,
+		"to":          req.ToReleaseID,
 		"to_release":  target.ReleaseID,
 		"idempotent":  idempotent,
 		"new_release": dr.ReleaseID,

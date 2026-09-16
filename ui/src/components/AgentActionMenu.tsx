@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   MoreVertical, RefreshCw, AlertCircle, Pause, RotateCw,
-  Download, Trash, Bug, Eraser,
+  Download, Bug, Eraser,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -16,14 +16,15 @@ import { Button } from '@/components/ui/button'
 import * as api from '@/api'
 
 /**
- * An action menu on every agent row.
+ * An action menu on every active agent row.
  *
  * Each command is written on the central side as an HMAC-signed row in
  * muvon.agent_commands. The agent claims it on its long poll, verifies the
  * signature, runs it and reports the result.
  *
- * Destructive actions (drain, restart, revoke) open a confirmation dialog, so
- * that an accidental single click cannot restart a live edge.
+ * Destructive actions (drain, restart, image update) open a confirmation
+ * dialog, so that an accidental single click cannot restart a live edge.
+ * Revoking a key is not a command: it lives on the agent row itself.
  */
 
 interface ActionDef {
@@ -42,7 +43,6 @@ const ACTIONS: ActionDef[] = [
   { kind: 'agent.drain',         label: 'Drain (yeni trafiği red)', icon: Pause,    destructive: true,  needsConfirm: true,  payload: { enabled: true } },
   { kind: 'agent.restart',       label: 'Yeniden başlat',           icon: RotateCw, destructive: true,  needsConfirm: true },
   { kind: 'agent.self_upgrade',  label: 'Imajı güncelle',           icon: Download, destructive: true,  needsConfirm: true },
-  { kind: 'agent.revoke',        label: 'Revoke (kalıcı)',          icon: Trash,    destructive: true,  needsConfirm: true },
 ]
 
 interface Props {
@@ -130,11 +130,6 @@ export function AgentActionMenu({ agentID, agentName, onCommandSent }: Props) {
             <AlertDialogDescription>
               <span className="font-mono">{agentName}</span> agent'ına{' '}
               <span className="font-mono">{confirmAction?.kind}</span> komutu gönderilecek.
-              {confirmAction?.kind === 'agent.revoke' && (
-                <span className="block mt-2 text-destructive">
-                  Bu işlem agent'ı kalıcı olarak durdurur. Bağlantı yeniden kurulamaz.
-                </span>
-              )}
               {confirmAction?.kind === 'agent.drain' && (
                 <span className="block mt-2">
                   Yeni gelen istekler 503 ile reddedilecek. Mevcut bağlantılar tamamlanır.
@@ -149,7 +144,6 @@ export function AgentActionMenu({ agentID, agentName, onCommandSent }: Props) {
                 if (confirmAction) send(confirmAction)
                 setConfirmAction(null)
               }}
-              className={confirmAction?.kind === 'agent.revoke' ? 'bg-destructive hover:bg-destructive/90' : ''}
             >
               Gönder
             </AlertDialogAction>

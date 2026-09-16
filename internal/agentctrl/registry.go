@@ -122,9 +122,7 @@ func (r *Registry) Dispatch(ctx context.Context, cmd Command) Result {
 			result.Output = out.Output
 			return
 		}
-		// Handler is allowed to set State explicitly (e.g. KindAgentRevoke
-		// returns succeeded just before terminating). Default to succeeded
-		// when the handler didn't say.
+		// A handler may set State explicitly; one that did not succeeded.
 		if out.State == "" {
 			out.State = StateSucceeded
 		}

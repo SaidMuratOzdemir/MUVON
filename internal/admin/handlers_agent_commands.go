@@ -32,16 +32,15 @@ func (s *Server) handleEnqueueAgentCommand(w http.ResponseWriter, r *http.Reques
 		})
 		return
 	}
-	// Verify agent exists + active before enqueueing — saves a row in
-	// the table for typo'd agent IDs and gives the operator a clear
-	// error.
+	// A command for a missing or revoked agent could never be delivered, so
+	// it is refused here instead of sitting in the table until it expires.
 	agent, err := s.db.GetAgent(r.Context(), agentID)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "agent not found"})
 		return
 	}
 	if !agent.IsActive {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "agent is disabled"})
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "agent is revoked"})
 		return
 	}
 

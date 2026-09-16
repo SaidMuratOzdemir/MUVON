@@ -922,6 +922,18 @@ export async function deleteAgent(id: string): Promise<void> {
   return request<void>("DELETE", `/api/agents/${id}`);
 }
 
+// revokeAgent cuts the agent's key on central. The edge keeps serving its
+// last config but can no longer reach central; only a new key brings it back.
+export async function revokeAgent(id: string): Promise<Agent> {
+  return request<Agent>("POST", `/api/agents/${id}/revoke`);
+}
+
+// rotateAgentKey replaces the key and returns the new one exactly once. The
+// old key stops working at once and a revoked agent becomes active again.
+export async function rotateAgentKey(id: string): Promise<{ agent: Agent; api_key: string }> {
+  return request<{ agent: Agent; api_key: string }>("POST", `/api/agents/${id}/rotate-key`);
+}
+
 // updateAgentMounts replaces the operator-managed bind-mount list.
 // Empty / whitespace entries are dropped server-side. The agent picks
 // the new list up on its next config pull; applying it to the live
@@ -948,7 +960,6 @@ export type AgentCommandKind =
   | "agent.drain"
   | "agent.restart"
   | "agent.self_upgrade"
-  | "agent.revoke"
 
 export interface AgentCommand {
   id: string

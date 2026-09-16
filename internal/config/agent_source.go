@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"muvon/internal/agentctrl"
 )
 
 // AgentSource loads configuration from the central server via HTTP.
@@ -191,6 +194,9 @@ func (s *AgentSource) Load(ctx context.Context) (*Config, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if agentctrl.IsRevoked(resp.StatusCode, body) {
+			return nil, fmt.Errorf("agent source: %w", agentctrl.ErrRevoked)
+		}
 		return nil, fmt.Errorf("agent source: central returned %d: %s", resp.StatusCode, body)
 	}
 
@@ -221,19 +227,33 @@ func (s *AgentSource) Load(ctx context.Context) (*Config, error) {
 
 // Watch opens an SSE stream to the central server and calls onUpdate whenever
 // the central pushes a config_updated event. Blocks until ctx is cancelled.
-// Automatically reconnects on disconnect.
+// Automatically reconnects on disconnect. Once central says the key is
+// revoked, the agent keeps serving the config it has, says so once, and
+// retries only rarely: the key will not work again.
 func (s *AgentSource) Watch(ctx context.Context, onUpdate func()) {
+	revoked := false
 	for {
-		if err := s.watchOnce(ctx, onUpdate); err != nil {
-			if ctx.Err() != nil {
-				return
+		wait := 5 * time.Second
+		err := s.watchOnce(ctx, onUpdate)
+		switch {
+		case ctx.Err() != nil:
+			return
+		case errors.Is(err, agentctrl.ErrRevoked):
+			if !revoked {
+				slog.Error("central revoked this agent's API key; serving the last config until the agent runs with a new key")
+				revoked = true
 			}
+			wait = agentctrl.RevokedRetry
+		case err != nil:
+			revoked = false
 			slog.Warn("config watch disconnected, reconnecting in 5s", "error", err)
+		default:
+			revoked = false
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(wait):
 		}
 	}
 }
@@ -255,6 +275,10 @@ func (s *AgentSource) watchOnce(ctx context.Context, onUpdate func()) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if agentctrl.IsRevoked(resp.StatusCode, body) {
+			return agentctrl.ErrRevoked
+		}
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
 

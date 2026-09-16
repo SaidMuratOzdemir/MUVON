@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -57,11 +58,25 @@ func NewPollClient(centralURL, apiKey string, signingKey []byte, reg *Registry) 
 // exits on a transient failure.
 func (c *PollClient) Run(ctx context.Context) {
 	backoff := time.Second
+	revoked := false
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		cmd, status, err := c.pollOnce(ctx)
+		if errors.Is(err, ErrRevoked) {
+			if !revoked {
+				slog.Error("central revoked this agent's API key; commands stop until the agent runs with a new key")
+				revoked = true
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(RevokedRetry):
+			}
+			continue
+		}
+		revoked = false
 		if err != nil {
 			slog.Debug("command poll failed", "error", err, "backoff", backoff)
 			select {
@@ -118,6 +133,9 @@ func (c *PollClient) pollOnce(ctx context.Context) (Command, int, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if IsRevoked(resp.StatusCode, body) {
+			return Command{}, resp.StatusCode, ErrRevoked
+		}
 		return Command{}, resp.StatusCode, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	// Server returns the DB row shape (id, kind, payload, expires_at,

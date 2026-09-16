@@ -65,12 +65,11 @@ const (
 	// KindContainerRestart restarts a managed component's container.
 	// Payload: {"instance_id": "<uuid>"}.
 	KindContainerRestart CommandKind = "container.restart"
-
-	// KindAgentRevoke is terminal — the agent acknowledges, then
-	// exits with a non-zero code so Docker's restart policy doesn't
-	// bounce it. No payload.
-	KindAgentRevoke CommandKind = "agent.revoke"
 )
+
+// Revocation is not a command. A command needs the agent to receive it, and
+// an agent whose key is being revoked may be unreachable or no longer
+// trusted, so revoking is a central state change (POST /api/agents/{id}/revoke).
 
 // AllKinds is what the admin API validates an enqueue request against, so a
 // kind belongs here only once an agent can carry it out. Order matches the
@@ -83,7 +82,6 @@ var AllKinds = []CommandKind{
 	KindAgentDrain,
 	KindAgentRestart,
 	KindAgentSelfUpgrade,
-	KindAgentRevoke,
 }
 
 // State is the lifecycle of an agent command.

@@ -62,7 +62,6 @@ func buildCommandRegistry(deps agentCommandDeps) *agentctrl.Registry {
 	reg.Register(agentctrl.KindAgentDrain, handleDrain(deps))
 	reg.Register(agentctrl.KindAgentRestart, handleAgentRestart())
 	reg.Register(agentctrl.KindAgentSelfUpgrade, handleSelfUpgrade(deps))
-	reg.Register(agentctrl.KindAgentRevoke, handleRevoke())
 	reg.Register(agentctrl.KindCertRenew, handleCertRenew(deps))
 	reg.Register(agentctrl.KindContainerRestart, handleContainerRestart(deps))
 
@@ -330,24 +329,6 @@ func handleSelfUpgrade(deps agentCommandDeps) agentctrl.Handler {
 			out += " (extra_mounts: " + mountsEnv + ")"
 		}
 		return agentctrl.Result{Output: out}, nil
-	}
-}
-
-// handleRevoke acknowledges, then exits with code 1. Restart policy
-// SHOULD be "no" on a revoked agent (the operator removed it from
-// the central agents table; central rejects the agent's next API
-// call with 401, but local restart loop would still try to reconnect
-// indefinitely). We exit; the operator's removal step in the central
-// admin UI is the real revocation — this is just the agent's
-// cooperative response.
-func handleRevoke() agentctrl.Handler {
-	return func(_ context.Context, _ agentctrl.Command) (agentctrl.Result, error) {
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			slog.Warn("agent revoke acknowledged — exiting")
-			os.Exit(1)
-		}()
-		return agentctrl.Result{Output: "revoke acknowledged"}, nil
 	}
 }
 

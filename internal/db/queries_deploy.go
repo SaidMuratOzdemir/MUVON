@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -628,12 +629,7 @@ func (d *DB) UpdateDeployComponent(ctx context.Context, projectSlug, componentSl
 	return c, nil
 }
 
-// GetDeployComponentAgentID returns the owning agent's ID for a component
-// (or "" for central). Used by agent-facing endpoints to authorise ops
-// without loading the whole row.
-// PreviousSucceededRelease finds the most recent succeeded release for a
-// project before the given release (by created_at). Used by rollback to
-// build the payload for a "redo this older release" deployment.
+// RollbackRelease is a release a rollback deploys again, with the images it ran.
 type RollbackRelease struct {
 	ReleaseUUID string
 	ReleaseID   string
@@ -649,41 +645,104 @@ type RollbackComponent struct {
 	ImageDigest string
 }
 
-func (d *DB) PreviousSucceededRelease(ctx context.Context, projectSlug, beforeReleaseID string) (RollbackRelease, error) {
-	var rb RollbackRelease
-	// Find the project and the latest succeeded release that's strictly
-	// older than `beforeReleaseID` (matched by release_id, not UUID, so
-	// the operator can call this with either ID variant).
+// Why no rollback target could be chosen, so the API can say which it was.
+var (
+	ErrReleaseNotFound     = errors.New("release not found")
+	ErrNoEarlierRelease    = errors.New("no earlier succeeded release")
+	ErrReleaseNotSucceeded = errors.New("release did not succeed")
+)
+
+// PreviousSucceededRelease returns the newest succeeded release created before
+// fromReleaseID, which is what rolling back from a release means. An empty
+// fromReleaseID starts from the project's newest release. Releases are ordered
+// by created_at and then by their time-ordered id, so the answer never lies
+// ahead of the release it starts from.
+func (d *DB) PreviousSucceededRelease(ctx context.Context, projectSlug, fromReleaseID string) (RollbackRelease, error) {
+	var fromCreated time.Time
+	var fromUUID string
 	err := d.Pool.QueryRow(ctx,
+		`SELECT r.created_at, r.id::text
+		 FROM deploy_releases r
+		 JOIN deploy_projects p ON p.id = r.project_id
+		 WHERE p.slug = $1 AND ($2 = '' OR r.release_id = $2)
+		 ORDER BY r.created_at DESC, r.id DESC
+		 LIMIT 1`,
+		projectSlug, fromReleaseID,
+	).Scan(&fromCreated, &fromUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RollbackRelease{}, ErrReleaseNotFound
+	}
+	if err != nil {
+		return RollbackRelease{}, fmt.Errorf("rollback start release: %w", err)
+	}
+
+	var rb RollbackRelease
+	err = d.Pool.QueryRow(ctx,
 		`SELECT r.id::text, r.release_id, r.repo, r.branch, r.commit_sha
 		 FROM deploy_releases r
 		 JOIN deploy_projects p ON p.id = r.project_id
-		 WHERE p.slug = $1 AND r.status = 'succeeded' AND r.release_id <> $2
-		 ORDER BY r.created_at DESC
+		 WHERE p.slug = $1 AND r.status = 'succeeded'
+		   AND (r.created_at, r.id) < ($2, $3::uuid)
+		 ORDER BY r.created_at DESC, r.id DESC
 		 LIMIT 1`,
-		projectSlug, beforeReleaseID,
+		projectSlug, fromCreated, fromUUID,
 	).Scan(&rb.ReleaseUUID, &rb.ReleaseID, &rb.Repo, &rb.Branch, &rb.CommitSHA)
-	if err != nil {
-		return rb, fmt.Errorf("previous succeeded release: %w", err)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RollbackRelease{}, ErrNoEarlierRelease
 	}
+	if err != nil {
+		return RollbackRelease{}, fmt.Errorf("previous succeeded release: %w", err)
+	}
+	return d.withRollbackComponents(ctx, rb)
+}
+
+// SucceededRelease returns a named release of the project, for a rollback that
+// picks its target itself. Only a release that succeeded can be one.
+func (d *DB) SucceededRelease(ctx context.Context, projectSlug, releaseID string) (RollbackRelease, error) {
+	var rb RollbackRelease
+	var status string
+	err := d.Pool.QueryRow(ctx,
+		`SELECT r.id::text, r.release_id, r.repo, r.branch, r.commit_sha, r.status
+		 FROM deploy_releases r
+		 JOIN deploy_projects p ON p.id = r.project_id
+		 WHERE p.slug = $1 AND r.release_id = $2`,
+		projectSlug, releaseID,
+	).Scan(&rb.ReleaseUUID, &rb.ReleaseID, &rb.Repo, &rb.Branch, &rb.CommitSHA, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RollbackRelease{}, ErrReleaseNotFound
+	}
+	if err != nil {
+		return RollbackRelease{}, fmt.Errorf("rollback target release: %w", err)
+	}
+	if status != "succeeded" {
+		return RollbackRelease{}, ErrReleaseNotSucceeded
+	}
+	return d.withRollbackComponents(ctx, rb)
+}
+
+func (d *DB) withRollbackComponents(ctx context.Context, rb RollbackRelease) (RollbackRelease, error) {
 	rows, err := d.Pool.Query(ctx,
 		`SELECT c.slug, rc.image_ref, rc.image_digest
 		 FROM deploy_release_components rc
 		 JOIN deploy_components c ON c.id = rc.component_id
 		 WHERE rc.release_uuid = $1`, rb.ReleaseUUID)
 	if err != nil {
-		return rb, fmt.Errorf("previous release components: %w", err)
+		return rb, fmt.Errorf("rollback release components: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var c RollbackComponent
 		if err := rows.Scan(&c.Slug, &c.ImageRef, &c.ImageDigest); err != nil {
-			return rb, fmt.Errorf("previous release components scan: %w", err)
+			return rb, fmt.Errorf("rollback release components scan: %w", err)
 		}
 		rb.Components = append(rb.Components, c)
 	}
 	return rb, rows.Err()
 }
+
+// GetDeployComponentAgentID returns the owning agent's ID for a component
+// (or "" for central). Used by agent-facing endpoints to authorise ops
+// without loading the whole row.
 
 func (d *DB) GetDeployComponentAgentID(ctx context.Context, componentID int) (string, error) {
 	var agentID *string
