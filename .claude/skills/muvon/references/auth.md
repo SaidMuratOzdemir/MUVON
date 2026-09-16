@@ -29,9 +29,9 @@ curl -sS -c "$CJ" -X POST "$BASE/api/auth/login" \
 ```
 
 **Failures**:
-- 401 `{"error":"invalid credentials"}`, wrong password or username
-- 400 `{"error":"username and password required"}`, missing field
-- 429, rate limited (the login endpoint is behind a rate limiter, `internal/admin/server.go`)
+- 401 `{"error":"invalid credentials"}`, wrong or missing password or username, or a disabled account
+- 400 `{"error":"invalid JSON"}`, a body that does not parse
+- 429 `rate limit exceeded` as plain text: every `/api/auth/*` route shares a limiter of 100 requests a minute per client IP (`internal/admin/server.go`)
 
 ## 2) GET calls
 
@@ -84,7 +84,7 @@ muvon_api() {
     ${csrf:+-H "X-CSRF-Token: $csrf"} \
     -X "$method" "$BASE$path" "$@" --max-time 30)
   if [ "$code" = "401" ]; then
-    # access expired — try refresh once
+    # access expired, so try one refresh
     curl -sS -b "$CJ" -c "$CJ" -X POST "$BASE/api/auth/refresh" --max-time 10 >/dev/null
     csrf=$(awk '$6=="muvon_csrf"{print $7}' "$CJ")
     code=$(curl -sS -o /tmp/muvon-body -w "%{http_code}" \
@@ -107,7 +107,7 @@ curl -sS -b "$CJ" -H "X-CSRF-Token: $CSRF" -X POST "$BASE/api/auth/logout" --max
 rm -f "$CJ"
 ```
 
-Logout requires the CSRF header. The server returns all three cookies with `Max-Age=0`; delete the local jar file as well.
+Logout requires the CSRF header but not a valid access token. It revokes only the refresh token in this jar (other sessions stay signed in), answers 204 and returns all three cookies with `Max-Age=0`; delete the local jar file as well.
 
 ## 7) Setup: the first admin only
 
@@ -117,11 +117,11 @@ curl -sS -X POST "$BASE/api/auth/setup" \
   -d '{"username":"admin","password":"..."}'
 ```
 
-Returns `409` once an admin exists. This endpoint is for the **initial install** and is never used again.
+The password must be at least 8 characters (400 otherwise). Success is `201` with the user object and a full set of session cookies. Returns `409` once an admin exists. This endpoint is for the **initial install** and is never used again.
 
 ## 8) Changing a password ends other sessions
 
-`POST /api/auth/password` takes `{"current_password": "...", "new_password": "..."}` and requires an active session plus the CSRF header. It bumps the user's `token_version` and revokes every refresh row, so **every other session dies at its next request**. The caller receives fresh cookies and keeps working, but any other jar you were holding for the same user is now dead: log in again.
+`POST /api/auth/password` takes `{"current_password": "...", "new_password": "..."}` and requires an active session plus the CSRF header. The new password must be at least 8 characters and differ from the current one (400); a wrong current password is 401. It bumps the user's `token_version` and revokes every refresh row, so **every other session dies at its next request**. The caller receives fresh cookies and keeps working, but any other jar you were holding for the same user is now dead: log in again.
 
 This also matters when reading state: a 401 saying `session revoked` means the version moved, not that the token expired. Refreshing will not help; log in.
 
@@ -151,20 +151,22 @@ This skill targets the operator admin panel. Agent (edge) auth is a separate mec
 
 - The edge agent binary sends `X-Api-Key: <agent-key>`, not a cookie.
 - The key is stored **SHA-256 hashed** in `agents.api_key_hash`. The auth middleware compares hashes; a pre-migration plaintext row is hashed automatically on its first successful call.
-- The plaintext key is returned **once, in the create response**:
+- The plaintext key is returned **once**, in the create response and in the rotate response:
   ```json
   POST /api/agents → {"agent": {...}, "api_key": "abc123..."}
+  POST /api/agents/{id}/rotate-key → {"agent": {...}, "api_key": "def456..."}
   ```
-  `GET /api/agents` does **not** return `api_key` at all. If the operator loses it, enroll a new agent (delete the old one, create a new one).
-- Never echo a key. Report only "set" or "absent". If a rotation is needed, tell the user the enroll command rather than reading the key yourself.
+  `GET /api/agents` does **not** return `api_key` at all. If the operator loses it, rotate the key on the same agent (`POST /api/agents/{id}/rotate-key`, the panel's "Yeni anahtar üret") and restart the agent with the new one. Rotation keeps the agent's host, component and scheduled job bindings, so there is no reason to delete and re-enroll.
+- An unknown key gets 401 `{"error":"invalid api key"}`; the key of a revoked agent (`POST /api/agents/{id}/revoke`) gets 401 `{"error":"agent revoked"}`. A revoked key is never re-enabled; rotation replaces it. Both calls are destructive (see `destructive-ops.md`).
+- Never echo a key. Report only "set" or "absent". If a rotation is needed, have the user run it in the panel and deliver the key to the agent themselves, rather than reading the key yourself.
 
 ## 12) Central to agent command signing, a layer above X-Api-Key
 
 `X-Api-Key` authenticates the agent to central transport (HTTP and SSE). It does **not** authenticate the command payloads. Each command row additionally carries an HMAC-SHA256 signature:
 
 - Signing key: `HKDF(MUVON_ENCRYPTION_KEY, label="muvon-agent-command-v1")`. Central's `MUVON_ENCRYPTION_KEY` and the edge's `AGENT_ENCRYPTION_KEY` **must be identical**, or verification fails.
-- Canonical encoding that gets signed: `id || agent_id || kind || nonce || expires_at || payload_json`, deterministic.
-- Replay protection: a random 16 byte `nonce`, an `expires_at` TTL (5 minutes by default), and an agent-side LRU of the last 1000 command IDs.
+- Canonical encoding that gets signed: the JSON object `{id, kind, payload, expires_at, nonce}` in that field order, with `expires_at` as Unix seconds (`internal/agentctrl/hmac.go`). `agent_id` is not part of it.
+- Replay protection: a random 16 byte `nonce`, an `expires_at` TTL (5 minutes by default, `ttl_seconds` up to 3600), and an agent-side LRU of the last 1000 command IDs.
 - `MUVON_ENCRYPTION_KEY` is required for the binary to start at all, so the channel is always armed. There is no "key missing, channel disabled" state to diagnose any more.
 
 Practical consequence: if an agent shows as disconnected but its `X-Api-Key` is right, the command still queues, and the agent verifies and runs it when it comes back. A signature failure almost always means `MUVON_ENCRYPTION_KEY` and `AGENT_ENCRYPTION_KEY` differ (see `pitfalls.md`).

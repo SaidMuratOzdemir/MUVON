@@ -22,10 +22,10 @@ The audit log cannot currently tell an agent apart from a human. While that is t
 
 | Endpoint | Effect | Rollback |
 |---|---|---|
-| `DELETE /api/hosts/{id}` | Host goes, attached routes are orphaned | Re-create by hand |
+| `DELETE /api/hosts/{id}` | Host goes, and its routes go with it (DB cascade) | Re-create host and routes by hand |
 | `DELETE /api/routes/{id}` | One route; the host is untouched | Re-create by hand |
 | `DELETE /api/tls/certificates/{id}` | Certificate goes, HTTPS for that host breaks | With `tls_mode=auto` ACME re-issues automatically; with `manual` you re-upload |
-| `DELETE /api/agents/{id}` | The edge agent record goes and the agent disconnects | Enroll again (the plaintext key is returned once) |
+| `DELETE /api/agents/{id}` | The edge agent record goes, its key stops working and its open sessions are disconnected. `deploy_components.agent_id`, `deployments.agent_id`, `hosts.target_agent_id` and `scheduled_jobs.agent_id` become NULL, so those rows lose their host binding | Enroll again (the plaintext key is returned once) and rebind hosts, components and jobs by hand. To cut an agent off without losing bindings, revoke instead (below) |
 | `DELETE /api/deploy/projects/{slug}` | App, every service, releases and instances cascade away | Re-create by hand, env vars included |
 | `DELETE /api/deploy/projects/{slug}/components/{component}` | The service goes and its instances drain | Re-create by hand with the same `agent_id`, but it gets a **new id**, so rebind every route that pointed at it |
 
@@ -34,13 +34,13 @@ The audit log cannot currently tell an agent apart from a human. While that is t
 | Endpoint | Effect | Rollback |
 |---|---|---|
 | `POST /api/deploy/projects/{slug}/deploy` | A new image reaches production | Deploy the previous tag again, or roll back |
-| `POST /api/deploy/projects/{slug}/rollback` | Queues a new deployment using the **previous succeeded release's image refs** | `POST .../deploy` with the newest tag |
+| `POST /api/deploy/projects/{slug}/rollback` | Queues a new deployment with the image refs of the **newest succeeded release created before `from_release_id`** (the project's newest release when the body is empty), or of exactly `to_release_id` when that is given | `POST .../deploy` with the newest tag, or roll back with `to_release_id` naming the release you left |
 | `POST /api/deploy/deployments/{id}/rerun` | Re-runs a failed deploy | Same tag is redeployed, so the blast radius is small |
 
 Before any deploy call, check:
 
 - Is the image tag right? A typo breaks the deploy.
-- Did the previous deploy succeed? (`GET /api/deploy/deployments?slug=<x>&limit=5`)
+- Did the previous deploy succeed? (`GET /api/deploy/deployments?limit=20`, filtered by `project_slug`; the endpoint takes only `limit`)
 - Is there a migration? (`GET /api/deploy/projects/<slug>`, look at each component's `migration_command`)
 - Is the service `paused`? Paused services are rejected at enqueue time; clear it first with `PUT .../components/<x>`.
 - Is the component's `agent_id` right, and if it is on the edge, is that agent running with `AGENT_DEPLOYER_ENABLED=true`? (check `last_seen_at` in `GET /api/agents`)
@@ -56,16 +56,18 @@ Before any deploy call, check:
 
 | Key | Danger |
 |---|---|
-| `muvon_jwt_secret` | Changing it invalidates every session; everyone lands on the login screen |
-| `muvon_encryption_key` | Changing it makes existing encrypted settings **and** component secret env values unreadable, permanently. It must also match the deployer's `MUVON_ENCRYPTION_KEY` and every edge's `AGENT_ENCRYPTION_KEY`; change one side and forget the other and containers stop starting |
-| `alerting_smtp_password`, `alerting_slack_webhook` | A wrong value breaks alerting silently |
-| `public_ip` | The DNS verification badge compares against this; a wrong value reads as "stale" |
+| `alerting_smtp_password` | A wrong value makes every email channel fail; each delivery then records the SMTP error |
+| `jwt_secret` | The global secret for `verify`-mode JWT identity; a wrong value stops identity extraction on hosts that rely on it |
+| `retention_days`, `compression_days`, `compression_bodies_days` | Lowering `retention_days` makes the Timescale job drop older chunks on its next run; that data is gone |
+| `security_blocking_enabled`, `security_block_*` | Turning blocking on or lowering the threshold can refuse legitimate clients with 403 |
 
 `PUT /api/settings/{key}` always needs approval.
 
+`MUVON_JWT_SECRET`, `MUVON_ENCRYPTION_KEY` and `MUVON_PUBLIC_IP` are **not** settings: they live in `/opt/muvon/.env` and no API writes them. Changing `MUVON_JWT_SECRET` signs everyone out. Changing `MUVON_ENCRYPTION_KEY` makes encrypted settings, alert channel webhooks **and** component secret env values unreadable, invalidates the agent command channel, and must be matched by every edge's `AGENT_ENCRYPTION_KEY`, or containers stop starting. Both are host edits plus a restart and need the same approval.
+
 ### Certificate override
 
-`POST /api/tls/certificates` overrides the current automatic certificate and deletes the previous one. It is normally used when the operator holds a real certificate (corporate CA, wildcard).
+`POST /api/tls/certificates` stores the certificate with issuer `manual` and takes over serving from the automatic one. The ACME row for the same domain is not deleted; it stays in `tls_certificates` next to it. It is normally used when the operator holds a real certificate (corporate CA, wildcard).
 
 Note the ownership order: an operator-uploaded certificate wins over autocert, autocert answers for its own, and central's copy is only a backup for an agent that has none locally. Putting anything ahead of autocert stops renewal, because autocert only arms its renewal timer for certificates it actually serves.
 
@@ -73,18 +75,20 @@ Note the ownership order: an operator-uploaded certificate wins over autocert, a
 
 | Endpoint | Effect | Rollback |
 |---|---|---|
-| `POST /api/system/upgrade` with `{target_tag, take_backup}` | The whole stack is recreated with new images; the admin panel and the proxy go down for seconds. A `pg_dump -Fc` lands in `/opt/muvon/backups/` | Set `VERSION` back in `.env` and upgrade again, or restore the dump by hand |
+| `POST /api/system/upgrade` with `{target_tag, take_backup}` | `muvon`, `dialog-siem` and `muvon-deployer` are recreated with new images (Postgres is not touched); the admin panel and the proxy go down for seconds. The compose file is re-downloaded and pinned to the tag. A `pg_dump -Fc` lands in the `backups` volume (`GET /api/system/backups`) | Upgrade again with the previous `target_tag`, or restore the dump by hand |
 
 Before calling:
 
 - Read the running version with `GET /api/system/version`.
 - Ask `GET /api/system/version/latest` what the newest published tag is.
 - Trust `update_available` from that response, which is a semver comparison. Do not compare digests: two CI runs on one commit produce different ones, so equality proves nothing either way.
-- Is `take_backup=true`? **It is on by default. Do not turn it off.**
-- Is `target_tag` well formed? (`latest`, `v0`, `v0.1`, `v0.1.0`, or a commit SHA.)
+- Send `take_backup: true` explicitly. The panel's checkbox starts checked, but the API reads an omitted field as `false`. **Do not turn it off.** A backup that cannot be produced and verified aborts the upgrade.
+- Is `target_tag` a published image tag? A leading `v` is stripped and empty means `latest`. Valid shapes: `latest`, `X`, `X.Y`, `X.Y.Z` (from `v*` tags), `main`, or `sha-<short>`. A bare commit SHA is not a tag, so the pull fails.
 - Concurrent upgrades are refused with 409. A stream EOF is expected, because the helper container recreates the deployer itself; the handler then polls `127.0.0.1:9443/health` before declaring success.
 
-A backup can also be taken on its own with `POST /api/system/backup`, which shares the same lock. Prefer that before any risky work rather than starting an upgrade just to get a dump.
+A backup can also be taken on its own with `POST /api/system/backup`, which shares the same lock. Prefer that before any risky work rather than starting an upgrade just to get a dump. Each new dump prunes the directory to the newest 5, so older dumps are deleted.
+
+Switching the Postgres image (see `pitfalls.md` #47) is a manual host operation outside this API. It needs approval, a fresh verified backup, and a clean `docker compose stop -t 120 postgres` before the rebuild.
 
 ### Agent commands (central to edge)
 
@@ -96,25 +100,43 @@ A backup can also be taken on its own with `POST /api/system/backup`, which shar
 | `agent.set_log_level` | low | Changes the log level for `payload.ttl_seconds`, then reverts | Wait for the TTL or send a new level |
 | `cert.renew` | medium | Renews when the certificate is actually due, or reports the expiry it found. Takes `force` for a deliberate early renewal, which also deletes central's stored copy | ACME retries; mind Let's Encrypt rate limits |
 | `container.restart` | medium | Restarts the named agent-side container | It comes back |
-| **`agent.drain`** with `{enabled:true}` | **destructive** | The agent starts refusing new requests with 503 | Send `{enabled:false}` |
+| **`agent.drain`** with `{enabled:true}` | **destructive by intent** | The command reports `drain enabled` and stores a flag, but in this version nothing on the request path reads that flag, so traffic is **not** refused. Do not rely on it to take an edge out of rotation | Send `{enabled:false}` |
 | **`agent.restart`** | **destructive** | The agent binary exits 0 and the supervisor (systemd or the Docker restart policy) brings it back | Automatic; no manual step |
 | **`agent.self_upgrade`** | **destructive** | Image refresh and container recreate, seconds of downtime | If the new image is broken, deploy the previous tag manually |
-| **`agent.revoke`** | **most destructive** | The agent stops permanently (exit 1) and central sets `is_active=false`. A clean shutdown rather than a crash loop | Enroll again (delete the old record, `POST /api/agents`); the plaintext key is returned once |
+There is no `agent.revoke` kind: sending it returns 400 `unknown command kind`. A command to a revoked agent returns 409 `agent is revoked`.
 
 Before sending a command:
 
 - `GET /api/agents`: is the target's `last_seen_at` fresh? Sending to an offline agent is pointless; the row expires after 5 minutes.
 - `GET /api/agents/{id}/commands`: what was sent recently? Avoid duplicate drains or restart spam.
-- Delivery is at-least-once and handlers are idempotent, but do not send `restart` or `revoke` more than once: it confuses the user and pollutes the history.
+- Delivery is at-least-once and handlers are idempotent, but do not send `restart` or `self_upgrade` more than once: it confuses the user and pollutes the history.
+
+### Agent key revocation and rotation
+
+Both are central state changes and take effect whether or not the agent is reachable. See `pitfalls.md` #35.
+
+| Endpoint | Risk | Effect | Rollback |
+|---|---|---|---|
+| **`POST /api/agents/{id}/revoke`** | **most destructive** | Sets `is_active=false` with `revoked_at` and `revoked_by`, expires the agent's pending and dispatched commands and disconnects its config stream and command poll. The agent API answers the key with 401 `agent revoked` and dialog-siem refuses it, so config updates, log shipping, deploys and commands stop. The edge keeps serving traffic from its last config. Idempotent; audited as `revoke_agent` | No way to re-enable the key. Rotate the key and restart the agent with it |
+| **`POST /api/agents/{id}/rotate-key`** | **destructive** | Issues a new key on the same row, sets `is_active=true`, clears `revoked_at` and `revoked_by`, and disconnects sessions using the old key. The old key stops working at once, so a running agent loses central until it is restarted with the new key. Returns `{agent, api_key}` with the plaintext key once; bindings are kept. Audited as `rotate_agent_key` | None for the old key. Deliver the new key to the agent's `AGENT_API_KEY` and restart it |
+
+Before either call, confirm the agent id and name with `GET /api/agents`, and make sure whoever will restart the agent is ready to receive the new key, which cannot be read again.
 
 ## Medium danger, inform the user and get a yes
 
 | Endpoint | Effect |
 |---|---|
-| `POST /api/alerts/{id}/acknowledge` | Not reversible, but only UI state |
+| `POST /api/alerts/{id}/acknowledge` | Not reversible. Closes the incident and stops its reminders; the next firing opens a new alert and notifies again |
 | `POST /api/system/reload` | Side effect: an SSE push to agents |
-| `POST /api/alerting/test/slack` | **Sends a real Slack message** into the channel |
-| `POST /api/alerting/test/smtp` | **Sends a real email** into someone's inbox |
+| `POST /api/alert-channels/{id}/test` | **Sends a real Slack message or email** to that channel |
+| `POST /api/alert-rules/{id}/test` | **Opens a test alert and notifies every channel the rule routes to** |
+| `PUT /api/alert-rules/{id}`, `PUT /api/alert-projects/{slug}` | Changes where, and whether, incidents are notified |
+| `DELETE /api/alert-rules/{id}` | An event rule and its routing go; its application events stop raising alerts |
+| `DELETE /api/alert-channels/{id}` | The channel and every route to it go. An event rule left without channels falls back to its project's defaults; a builtin rule records without notifying |
+| `POST /api/security/blocks/flush`, `DELETE /api/security/blocks/{key}` | Lifts edge blocks; a scanner that was refused gets through again |
+| `POST /api/security/patterns`, `DELETE /api/security/patterns` | Changes what edge blocking scores |
+| `POST /api/deploy/projects/{slug}/jobs/{job}/run` | Runs the scheduled job now, against production data |
+| `DELETE /api/deploy/projects/{slug}/jobs/{job}` | The job and its run history go |
 | `POST /api/logs/{id}/star` | A UI marker only |
 | `PUT /api/logs/{id}/note` | An operator note, for reading context |
 
@@ -128,7 +150,7 @@ Before sending a command:
 
 Even so, **read the current value before a PUT** and show the user what changes:
 ```
-AGENT_ACTION: PUT /api/routes/3 — log_enabled: true → false
+AGENT_ACTION: PUT /api/routes/3, log_enabled: true → false
 ```
 
 ## One more "never": writing to the DB directly

@@ -9,7 +9,7 @@ import (
 
 // HTTP endpoints for the central → agent command channel.
 //
-//   GET  /api/v1/agent/commands?wait=25s        long-poll, X-Api-Key auth
+//   GET  /api/v1/agent/commands?wait=25         long-poll, X-Api-Key auth
 //   POST /api/v1/agent/commands/{id}/result     terminal report, X-Api-Key auth
 //
 // The corresponding admin-side enqueue handler lives in internal/admin
@@ -17,9 +17,9 @@ import (
 
 // HandlePollCommand is the agent's long-poll endpoint. Returns 200 with
 // the command body, 204 when no command was ready before the timeout,
-// or 5xx on DB/server error. The "wait" query param caps how long the
-// server holds the connection — default 25s (just under the agent's
-// 30s HTTP client timeout), max 50s.
+// or 5xx on DB/server error. The "wait" query param, in whole seconds,
+// caps how long the server holds the connection: default 25 (just under
+// the agent's 30s HTTP client timeout), max 50.
 func (s *Service) HandlePollCommand(w http.ResponseWriter, r *http.Request) {
 	agentID, _ := r.Context().Value(agentIDKey).(string)
 	if agentID == "" {
@@ -38,9 +38,9 @@ func (s *Service) HandlePollCommand(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Long-poll holds the connection up to 50s — disable the server's
-	// 60s WriteTimeout so the final 204/200 write doesn't race the
-	// deadline.
+	// Long-poll holds the connection up to 50s, so the server's 60s
+	// WriteTimeout is cleared and the final 204/200 write does not race
+	// the deadline.
 	if rc := http.NewResponseController(w); rc != nil {
 		_ = rc.SetWriteDeadline(time.Time{})
 	}

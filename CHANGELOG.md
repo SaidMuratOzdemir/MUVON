@@ -23,6 +23,158 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+Uygulamaların loglarına yazdığı olaylardan alarm üretme, adlı bildirim
+kanalları, yazılmadan onaylanmayan container log hattı ve agent anahtarının
+central'da iptal edilmesi. Şema değişikliği var: alarm tablosu yeniden
+kuruluyor.
+
+### BREAKING
+
+- **Alarm bildirimi kanallar üzerinden.** `alerting_enabled`,
+  `alerting_slack_webhook`, `alerting_smtp_to` ve `alerting_cooldown_seconds`
+  ayarları kalktı. İlk açılışta dolu bir webhook "Slack", dolu bir alıcı
+  listesi "E-posta" adlı kanala dönüşür; bildirimleri açık olan kurulumda bu
+  kanallar bütün yerleşik kurallara bağlanır. SMTP gönderim hesabı ayarları
+  aynen kalır.
+- **Kanal testi yeni uçta.** `POST /api/alerting/test/slack` ve
+  `POST /api/alerting/test/smtp` yerine `POST /api/alert-channels/{id}/test`
+  kullanılır.
+- **Alarm API'si olay modelinde.** Alarm yanıtında `timestamp` ve `notified`
+  yerine `first_seen_at` ve `notified_at` var; ek olarak `rule_id`,
+  `rule_name`, `project`, `component`, `group_key`, `delivery`, `is_test`,
+  `evidence` ve `next_reminder_at` döner. Önem seviyelerine `high` eklendi.
+- **Yerleşik web kuralları varsayılan olarak yalnız kayıt tutar.** Alarmlar
+  sayfasına yazılırlar; bildirim göndermeleri için Alarm Kuralları sayfasında
+  bir kanala bağlanmaları gerekir. Bildirimleri açık olan kurulumlar yukarıdaki
+  taşımayla bağlı gelir.
+- **`agent.revoke` komutu kaldırıldı.** İptal artık merkezde yapılan bir durum
+  değişikliği; `POST /api/agents/{id}/commands` bu türü 400 ile reddeder.
+
+### SECURITY
+
+- **Agent anahtarı central'da iptal ediliyor.** `POST /api/agents/{id}/revoke`
+  anahtarı anında geçersiz kılar, açık watch ve komut bağlantılarını kapatır ve
+  bitmemiş komutları düşürür; agent'a ulaşılamasa da iptal gerçekleşir. Edge son
+  aldığı config ile hizmet vermeyi sürdürür, config güncellemesi, log gönderimi
+  ve deploy durur. Agent bu durumu logda bir kez bildirir ve seyrek yoklamaya
+  geçer.
+- **Anahtar yenileme.** `POST /api/agents/{id}/rotate-key` aynı agent kaydına
+  yeni bir anahtar verir ve bir kez gösterir. İptal edilmiş bir agent yalnız bu
+  yolla geri döner; host, servis ve zamanlanmış iş bağları korunur.
+- **Container log projesi doğrulanıyor.** Bir agent bir paket için ancak kendi
+  host'unda çalışan bir component'in projesini bildirebilir; aksi halde satır
+  saklanır ama projesiz kalır. `host_id` agent kaydından alınır.
+- **Slack webhook'u şifreli.** Kanal webhook'u şifreli saklanır ve API hiçbir
+  yanıtta döndürmez; panel yalnız host adını gösterir.
+- **E-posta konu satırı temizleniyor.** Alarm başlığındaki satır sonları konu
+  satırına ulaşmaz ve Türkçe karakterler kodlanır.
+
+### FEATURES
+
+- **Uygulama olay kuralları.** Uygulama `event.name` alanı olan bir JSON satırı
+  yazdığında, projeye ait bir kural bunu alarma çevirir. Kurallar koşul
+  grupları, alan koşulları, gruplama alanı ve önem kademeleriyle yazılır:
+  her olayda, bir pencerede N olayda, N farklı değerde veya son 24 saatin
+  geçmiş günlerin ortalamasını aşmasında. Log sözleşmesi ve kural modeli:
+  `docs/app-events.md`.
+- **Olay modeli.** Bir alarm onaylanana kadar açık kalır, tekrarlar sayılır ve
+  yeniden bildirilmez; önem yükselirse bildirilir. Onaydan sonra gelen olay
+  yeni alarm açar ve eşiklerin yeniden aşılması gerekir. Alarm, doğduğu log
+  satırlarını bağlantılarıyla gösterir.
+- **Adlı kanallar ve proje varsayılanları.** Slack ve e-posta kanalları ayrı
+  ayrı tanımlanır ve test edilir. Kanal seçilmemiş kural projesinin varsayılan
+  kanallarına bildirir.
+- **Günlük özet ve hatırlatma.** Özet teslimli kurallar her kanalın kendi
+  saatinde ve saat diliminde tek mesajda toplanır. Onaylanmamış kritik alarm
+  kuralın aralığıyla hatırlatılır.
+- **Bir kez tetikle.** Kural kaydedilirken test alarmı açılıp kanallarına test
+  bildirimi gönderilebilir; alarm ayrıntısı her kanalın sonucunu gösterir.
+- **Alarm Kuralları sayfası.** Kurallar, kanallar ve proje varsayılanları; kural
+  yazarken projenin son 7 günde yazdığı olay adları ve alanları listelenir.
+
+### ENHANCEMENTS
+
+- **Container log paketi yazıldıktan sonra onaylanır.** diaLOG bir paketi
+  kabul edemediğinde veya yazamadığında shipper'a hata döner; shipper paketi
+  spool'a alıp yeniden gönderir. Docker okuyucusu gönderim beklerken satır
+  düşürmek yerine okumayı bekletir. Saklanamayan tek satır ayıklanır ve hata
+  logu yazılır.
+- **Bildirim kuyruğu.** Bildirimler alarmla aynı transaction'da kuyruğa
+  yazılır, ayrı bir gönderici tarafından geri çekilmeli yeniden denemeyle
+  gönderilir; Slack veya SMTP'deki bir sorun tespiti yavaşlatmaz.
+- **Açık alarmlar silinmez.** Saklama süresi onaylanmış alarmlara uygulanır;
+  onaylanmamış alarm süresi ne olursa olsun kalır.
+- **Agent'lar sayfası Türkçe.** İptal, yeni anahtar üretme ve silme ayrı onay
+  adımlarıyla sunuluyor; iptal edilmiş agent tarih ve kişiyle işaretleniyor.
+
+### BUGFIXES
+
+- **Geri alma daha yeni bir sürüme gitmiyor.** Seçilen sürümden önce oluşturulmuş
+  en yeni başarılı sürüm hedefleniyor.
+- **`to_release_id` uygulanıyor.** Geri almada hedef sürüm doğrudan
+  seçilebiliyor; yalnız başarılı bir sürüm hedef olabilir. `from_release_id`
+  ile birlikte gönderilirse istek 400 ile reddedilir.
+- **Zamanlanmış işi olan agent silinebiliyor.** `scheduled_jobs.agent_id`
+  bağı, servislerdeki gibi agent silinince boşalıyor.
+- **Sıfırdan kurulum tamamlanıyor.** Postgres imajı artık resmi PostgreSQL 18
+  imajına yalnız TimescaleDB eklenerek kuruluyor; sürüm build argümanıyla
+  sabitlenir. Vendor tabanının açılış betiği her yeni volume'da çalışıp kendi
+  eklentilerini kuruyordu, bu yüzden taban ürünün kendi imajına alındı.
+- **pg_uuidv7 stack'ten çıktı.** UUIDv7 anahtarları PostgreSQL 18'in yerleşik
+  `uuidv7()` fonksiyonundan geliyor. Harici PostgreSQL kurulumlarında da artık
+  gerekmez.
+- **Kullanılmayan eklentiler kaldırılıyor.** Eski imajın muvon veritabanına
+  eklediği postgis, vector, pg_ivm ve fuzzystrmatch ile pg_uuidv7, içlerinde
+  bir şey yoksa kaldırılır ve veritabanının `search_path` ayarı varsayılana
+  döner. Böylece alınan yedek yeni imaja geri yüklenebilir.
+- Spool'dan yeniden gönderilen container bitiş işaretçisi artık bitiş
+  zamanını taşıyor ve log satırı olarak yazılmıyor.
+- Aynı parmak izli alarmlar bildirim kapalıyken de tek kayıtta birleşiyor.
+
+### Upgrade notları
+
+- Önce yedek alın: `POST /api/system/backup` veya Ayarlar sayfasındaki yedek
+  paneli. `rebuild_alerts_as_incidents` migration'ı alarm tablosunu yeniden
+  kurar; mevcut alarmlar onaylanmış olarak taşınır ve Alarmlar sayfasında
+  "onaylananlar dahil" görünümünde kalır.
+- diaLOG'u ve agent'ları birlikte güncelleyin. Eski bir agent yeni diaLOG ile
+  çalışmaya devam eder; Docker okuyucusunun satır düşürmemesi ve gönderim
+  beklemesi agent güncellemesiyle gelir.
+- Compose dosyasında `dialog-siem` servisine `MUVON_ADMIN_DOMAIN` eklendi;
+  bildirimlerdeki panel bağlantısı buradan kurulur. Panelden yükseltme compose
+  dosyasını kendisi yeniler.
+- Olay kuralı kullanacak uygulamaların log biçimi `docs/app-events.md`
+  dosyasında.
+- Mevcut kurulumun Postgres imajı kendiliğinden değişmez; `install.sh`
+  güncelleme modu bu imajı yeniden derlemez ve panelden yükseltme Postgres'e
+  dokunmaz. Servisler bu sürüme geçtikten sonra yeni imaja şu sırayla geçilir:
+  `docker compose stop -t 120 postgres && docker compose build postgres && docker compose up -d postgres`.
+  Veri volume'u olduğu gibi kullanılır. Postgres temiz kapatılmalıdır: yarım
+  kalmış bir kapanıştan sonraki kurtarma, eski imaja ait WAL kayıtlarını yeni
+  imajda okuyamaz.
+
+## [0.5.3] - 2026-09-16
+
+Bağımlılık güvenlik yükseltmesi ve depo dokümanlarının koda karşı
+düzeltilmesi. Şema değişikliği ve davranış değişikliği yok.
+
+### SECURITY
+
+- **Bağımlılık yükseltmeleri.** `google.golang.org/grpc` 1.83.2,
+  `golang.org/x/crypto` 0.55.0 ve `github.com/klauspost/compress` 1.18.7;
+  güvenlik taramalarının bildirdiği düzeltilmiş açıkları kapatır.
+
+### ENHANCEMENTS
+
+- **Depo dokümanları koda karşı doğrulandı.** README, CLAUDE.md ve
+  `.claude/skills/muvon` referansları; panel yüzeyleri, uç davranışları ve
+  yükseltme akışı bugünkü kodla eşleştirildi.
+
+### Upgrade notları
+
+- Panelden yükseltin veya sunucuda:
+  `cd /opt/muvon && docker compose pull && docker compose up -d --wait`.
+
 ## [0.5.2] - 2026-08-29
 
 Engellenen istekler artık log akışında görünüyor. Şema değişikliği yok.

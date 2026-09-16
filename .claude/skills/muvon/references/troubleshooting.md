@@ -9,8 +9,9 @@ So that "we have a problem with X" has a starting point.
 2. GET /api/logs?host=<x>&status_min=500&from=<RFC3339>&limit=20
    → collect the top error paths.
 3. GET /api/logs/{id} → look at the response body (the backend's own message).
-4. GET /api/deploy/deployments?slug=<component>&limit=5 → was there a deploy inside
-   that window? If so, the deploy is the prime suspect; offer a rollback.
+4. GET /api/deploy/deployments?limit=20 → filter by project_slug (the endpoint takes
+   only limit). Was there a deploy inside that window? If so, the deploy is the prime
+   suspect; offer a rollback.
 5. GET /api/system/health → is MUVON itself healthy?
 6. With SSH: docker logs <container> --since=<N> → the backend stack trace.
 7. Report the findings in about five lines.
@@ -20,8 +21,9 @@ So that "we have a problem with X" has a starting point.
 
 - 502 **while containers are healthy and instances are active**: the route binding may be gone. If a component was recently deleted and re-created (a host move), `routes.managed_component_id` fell to `NULL`. Check the route before hunting the backend; see `pitfalls.md`.
 - 502: the backend is down (a managed component crashed). `GET /api/containers` shows `exited` or `restarting`.
-- 503: the backend is healthy but overloaded. Check rate limit settings.
-- 504: backend timeout. The route's `timeout_seconds` may be too small.
+- 503: the circuit breaker for that backend is `open` after repeated failures (`GET /api/system/health/backends`). Not `agent.drain`: that command stores a flag nothing on the request path reads, so a drained edge keeps answering (see `destructive-ops.md`).
+- 502 with `proxy error: context deadline exceeded`: the route's `timeout_seconds` ran out. The proxy reports a timeout as 502, not 504.
+- 429: the route's own rate limit (`rate_limit_rps` on the route). 403 before any route: an edge block (`GET /api/security/blocks`).
 - Generic 500: internal to the backend. Read the app log.
 
 ## 2) "The deploy failed" or "the deploy is stuck pending"
@@ -35,7 +37,7 @@ So that "we have a problem with X" has a starting point.
    - agent_id == "<id>": is that agent alive (GET /api/agents → last_seen_at)?
      Is AGENT_DEPLOYER_ENABLED=true? Is AGENT_DOCKER_SOCKET reachable?
 4. With SSH: docker logs <new-container> → did the app fail to start?
-5. Stuck at migration: GET /api/container-logs?container=<migration-container>
+5. Stuck at migration: GET /api/container-logs?container_name=<migration-container>
 6. Health check failing: does the backend's /health return 200 from inside?
    ssh <alias> "docker exec <container> wget -qO- localhost:<port>/health"
 7. A "decrypt env ... for component ..." event means the encryption keys differ.
@@ -58,6 +60,7 @@ The agent is **not a systemd service**; it runs under docker compose. The instal
 
 ```
 1. GET /api/agents → last_seen_at and last_remote_addr. Which are stale?
+   Is the agent revoked (is_active=false, revoked_at and revoked_by set)?
 2. SSH to the agent host:
    ssh <agent-host> "docker compose -f /opt/muvon-agent/docker-compose.agent.yml ps"
 3. Agent log:
@@ -66,14 +69,16 @@ The agent is **not a systemd service**; it runs under docker compose. The instal
    ssh <agent-host> "curl -sf -o /dev/null -w '%{http_code} %{remote_ip}\n' \
      https://<central-domain>/api/v1/agent/config -H 'X-Api-Key: <agent-api-key>'"
    → does remote_ip come out on the path you expect (private or public)?
-5. Was the agent disabled? In muvon.agents:
-   SELECT name, is_active, last_seen_at, last_remote_addr FROM muvon.agents;
+   → 401 {"error":"agent revoked"} means the key was revoked;
+     401 {"error":"invalid api key"} means central does not know the key at all.
 ```
 
 **Typical findings**:
 
 - The container crashed or never started: `docker ps -a` shows `Created` or `Exited`.
-- `agents.is_active=false` (revoked): it must be enrolled again; the agent fails auth and exits.
+- The key was revoked (`POST /api/agents/{id}/revoke`, the panel shows "İptal edildi"). The agent does not exit: it keeps serving traffic from its last config, logs `central revoked this agent's API key; ...` once and retries every 10 minutes, so traffic looks normal while `last_seen_at` stays stale and config updates, logs and deploys stop. If the agent should come back, rotate the key (`POST /api/agents/{id}/rotate-key`, "Yeni anahtar üret"), set the new key as `AGENT_API_KEY` in the agent's `.env` and restart the agent. Do not delete and re-enroll: rotation keeps the agent's host, component and scheduled job bindings. See `pitfalls.md` #35.
+- The key was rotated and the agent still runs with the old one: central answers `invalid api key`. Restart the agent with the key the rotation returned; if nobody kept it, rotate again.
+- The agent record was deleted (`DELETE /api/agents/{id}`), so central does not know its key (`invalid api key`) and it must be enrolled again, with hosts, components and scheduled jobs rebound by hand. Like a revoked agent, it keeps serving its cached config.
 - Network: firewall, DNS or TLS certificate trouble.
 - The agent is an older build; the fleet is not necessarily uniform (see `pitfalls.md`).
 - The agent exits at startup complaining about `AGENT_ENCRYPTION_KEY`: with the embedded deployer enabled, the key is required and missing it is fatal by design.
@@ -116,8 +121,10 @@ Ownership order matters when diagnosing renewal: an operator-uploaded certificat
 ```
 1. GET /api/system/health/ingest → pipeline state.
 2. GET /api/containers/<id>/logs/stream → does SSE work?
-3. SSH: ls -la /var/lib/muvon/logship/ → is the spool filling up?
-4. docker logs muvon-deployer --tail=200 | grep logship
+3. SSH: the spool is the logship_spool named volume (compose project "muvon"):
+   sudo du -sh "$(docker volume inspect -f '{{.Mountpoint}}' muvon_logship_spool)"
+   → is it filling up? (the deployer image is distroless, so no shell inside it)
+4. docker compose -f /opt/muvon/docker-compose.yml logs --tail=200 muvon-deployer | grep logship
 5. Is the dialog-siem container healthy? docker compose ps
 ```
 
@@ -127,14 +134,25 @@ Ownership order matters when diagnosing renewal: an operator-uploaded certificat
 - The spool budget was exceeded and the oldest container's lines were dropped (`MUVON_DEPLOYER_LOGSHIP_SPOOL_MAX_BYTES`).
 - Log shipping is disabled: `MUVON_DEPLOYER_LOGSHIP_ENABLED=false` in `.env`.
 
-## 6) "No alerts, nothing in Slack"
+## 6) "An alert did not reach Slack or email"
 
 ```
-1. GET /api/settings → is alerting_enabled true?
-2. GET /api/alerts?limit=5 → are alerts being produced at all?
-3. POST /api/alerting/test/slack → a manual test, after the user approves
-4. dialog-siem log: docker logs dialog-siem | grep alert
-5. Cooldown: the same fingerprint is skipped within alerting_cooldown_seconds (default 300).
+1. GET /api/alerts?limit=5 → was an alert produced at all? If not, go to step 6.
+2. GET /api/alerts/{id} → deliveries:
+     none      the rule routes nowhere, or its delivery is digest or none
+     pending   not sent yet; attempts and last_error say how it is going
+     failed    last_error carries the sender's error after 8 attempts
+     skipped   last_error says why (channel disabled or deleted, reminder after acknowledgement)
+3. GET /api/alert-rules → the rule's enabled flag, delivery and channel_ids.
+   An event rule without channels uses its project's defaults: GET /api/alert-projects.
+   A builtin rule records without notifying until it is routed.
+4. POST /api/alert-channels/{id}/test → a manual test, after the user approves.
+5. Already open? An open alert counts repeats without notifying again (pitfalls #44).
+6. No alert for an application event:
+     GET /api/alert-events?project=<slug> → does the project log that event with event.name?
+     Is the rule enabled, on the right project and component?
+     docker compose -f /opt/muvon/docker-compose.yml logs dialog-siem | grep -i "claim dropped"
+       → the sending host does not run the component
 ```
 
 ## 7) "A setting changed but nothing happened"
@@ -157,10 +175,12 @@ Then confirm with `GET /api/system/stats` that uptime did not reset: a reload re
    SELECT client_ip, count(*) FROM dialog.http_logs
    WHERE timestamp > now() - interval '15 minutes'
    GROUP BY client_ip ORDER BY 2 DESC LIMIT 20;
-5. If an IP stands out, suggest a firewall rule or a route-level block to the user.
+5. GET /api/security/blocks → is edge blocking already refusing it? (GET /api/settings,
+   security_blocking_enabled; off by default)
+6. If an IP stands out, suggest edge blocking, a firewall rule or a route rate limit to the user.
 ```
 
-**Worth noticing**: bots scan for `/app/.env`, `/.git/config`, `/wp-admin`, `/phpmyadmin` and similar. If any of those return **200**, the backend is exposing them. MUVON does not block that, since it is a legitimate route; tell the user.
+**Worth noticing**: bots scan for `/app/.env`, `/.git/config`, `/wp-admin`, `/phpmyadmin` and similar. If any of those return **200**, the backend is exposing them. Routing still forwards them; only edge blocking, when enabled, refuses a client whose probes cross the score threshold, and it does not fix the exposure. Tell the user.
 
 ## 9) "Something is wrong with a customer application (a managed component)"
 
@@ -187,10 +207,11 @@ This skill knows MUVON, **not the customer's application internals**. The flow:
 
 **Typical findings**:
 
-- The DB volume filled up: retention never ran; clean up manually.
+- The DB volume filled up: check `GET /api/system/retention` and `GET /api/system/compression` against the `retention_days` and `compression_days` settings (`0` means keep forever). Do not delete rows by hand; changing the setting is an approved write.
 - Postgres was OOM-killed: watch memory with docker stats.
+- Postgres will not start after its image was rebuilt: it was not shut down cleanly first, and recovery cannot replay WAL from the old image's `pg_search` (see `pitfalls.md` #47).
 - Wrong TLS cache path: check the `tls_cache` volume mount.
-- A config holder panic: `docker logs muvon | grep -i panic`.
+- A config holder panic: `docker compose -f /opt/muvon/docker-compose.yml logs muvon | grep -i panic`.
 - The container exits immediately after an update with a message about `MUVON_JWT_SECRET` or `MUVON_ENCRYPTION_KEY`: both are required and have no defaults. `install.sh` generates them; a hand-rolled `.env` may be missing one.
 
 ## 11) "I sent a command but the agent did not run it"
@@ -202,19 +223,19 @@ This skill knows MUVON, **not the customer's application internals**. The flow:
    - failed: what does result.error say?
    - expired: the sweeper cleaned it up (default TTL 5 minutes) because the agent never claimed it.
 2. GET /api/agents → is the target's last_seen_at fresh? Sending to an offline agent is pointless.
-3. SSH to the agent: docker logs muvon-agent-agent-1 --tail=200 | grep -E 'command|poll'
-   - "poll: no commands" is a normal idle long poll.
-   - "poll: signature mismatch" means MUVON_ENCRYPTION_KEY and AGENT_ENCRYPTION_KEY differ.
-   - "command expired" means the TTL ran out before the agent claimed it.
-   - "command dedupe" means the same ID was delivered twice, which is expected under
-     at-least-once delivery and harmless.
+3. SSH to the agent: docker logs muvon-agent-agent-1 --tail=200 | grep -i command
+   - "agent command signature mismatch" means MUVON_ENCRYPTION_KEY and AGENT_ENCRYPTION_KEY differ.
+   - "command poll failed" is logged at debug level only; raise the level to see it.
+   - An idle long poll and a duplicate delivery log nothing: a repeated ID is answered
+     as already executed, which is expected under at-least-once delivery.
 ```
 
 **Typical findings**:
 
-- The agent was revoked and needs re-enrolling; it fails auth and exits.
-- `AGENT_ENCRYPTION_KEY` does not match central, so every command fails with `signature mismatch`. Set both sides to the same value.
-- The agent lost its Docker socket, so `agent.restart` and `container.restart` fail quietly (see `pitfalls.md`).
+- The agent is revoked. Enqueueing to it returns 409 `agent is revoked`, and the panel hides the action menu for it; revocation also expired the commands that were still `pending` or `dispatched`. Rotate the key and restart the agent with it before sending commands (see `pitfalls.md` #35).
+- The agent record was deleted: enqueueing returns 404 `agent not found`, and the host needs a new enrollment.
+- `AGENT_ENCRYPTION_KEY` does not match central, so every command is rejected at the agent with a signature mismatch. Set both sides to the same value.
+- The agent has no Docker socket, so `container.restart` fails with `docker socket unavailable` in `result.error`. `agent.restart` does not need the socket.
 - `agent.set_log_level` was sent with a very short `payload.ttl_seconds`, so debug logging reverted before anything useful was captured. Send it again with a longer TTL.
 
 ## 12) "The system upgrade hung, or the SSE stream dropped"
@@ -232,7 +253,9 @@ This skill knows MUVON, **not the customer's application internals**. The flow:
 4. Find the helper container: ssh <central> "docker ps -a --filter ancestor=docker:27-cli"
    → take the most recent exited one and read its script output with docker logs <id>.
 5. Migration failure (a new binary against an old schema): docker compose logs muvon | grep migration.
-6. Backups: ssh <central> "ls -lt /opt/muvon/backups/ | head -5"
+6. Backups: GET /api/system/backups lists the panel's dumps (the "backups" named volume,
+   /var/lib/muvon/backups in muvon-deployer, newest 5 kept). /opt/muvon/backups/ holds
+   only the dumps install.sh takes in update mode.
 7. Worst case: edit the compose file by hand (pin the old tag) and docker compose up -d --wait,
    or restore from the pg_dump (see the README's backup and restore section).
 ```
@@ -272,7 +295,7 @@ There are two separate layers. Do not conflate them:
 - The application has no client-IP handling at all, so every recorded address is the edge's.
 - It has one, but pointing at a **stale address**: the edge container's IP changes when it is recreated. `MUVON_EDGE_IP` is injected per deployment for exactly this reason; a hardcoded address stops matching silently.
 - The application enables its server's own forwarded-header handling. Behind a CDN this is worse than nothing: those implementations walk the `X-Forwarded-For` chain and pick the rightmost untrusted entry, which is the CDN edge, so the CDN gets recorded as the visitor. The contract is to read `X-Real-IP` gated on `MUVON_EDGE_IP` instead.
-- An SSR or ISR frontend fetches its own public domain server-side. Those requests come back through the edge with no real user behind them and pollute the SIEM with NAT addresses. Fix: point server-side fetches at the internal container address (`SERVER_API_URL=http://<component-slug>:<port>`) and leave the client on the public URL.
+- An SSR or ISR frontend fetches its own public domain server-side. Those requests come back through the edge with no real user behind them and pollute the SIEM with NAT addresses. Fix: point server-side fetches at the internal container address (`SERVER_API_URL=http://<project>-<component>:<port>`, the qualified alias, since a bare slug collides on multi-project hosts) and leave the client on the public URL.
 
 ## General tips
 

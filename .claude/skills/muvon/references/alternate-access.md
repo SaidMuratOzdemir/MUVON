@@ -36,7 +36,11 @@ ssh <alias> "docker exec muvon-postgres psql -U muvon -d muvon -tAc \"<SELECT>\"
   - `deployment_events`
   - `agent_commands` (UUIDv7 PK, `agent_id`, `kind`, `payload` JSONB, `signature`, `nonce`, `state`, `result` JSONB, `expires_at`, `dispatched_at`, `finished_at`)
   - `scheduled_jobs`, `scheduled_job_runs` (component-bound periodic work: cron `next_run_at`, `concurrency_policy`, run history with exit code and output tail)
-- **`dialog.*`**, the SIEM: `http_logs`, `http_log_bodies`, `alerts`, `container_logs`, `containers`, `client_events` (browser RUM, joined to `http_logs` by `trace_id` and `session_id`).
+  - `alert_rules` (`kind` builtin or event, `delivery`, `tiers`, `notify_fields`), `alert_rule_channels`, `project_alert_channels`, `alert_channels` (`slack_webhook` is encrypted)
+  - `blocklist_patterns`, `ip_blocks` (edge blocking)
+- **`dialog.*`**, the SIEM: `http_logs`, `http_log_bodies`, `log_notes`, `container_logs`, `containers`, `client_events` (browser RUM, joined to `http_logs` by `trace_id` and `session_id`), `alerts` (a plain table of incidents: one open row per `fingerprint`, `occurrences`, `acknowledged`), `alert_deliveries` (the notification outbox: `status`, `attempts`, `last_error`), `alert_channel_state`, `event_rule_hits`.
+
+The database runs in `muvon-postgres`: PostgreSQL 18 with TimescaleDB and `pg_trgm`. UUIDv7 keys come from the built-in `uuidv7()`; `pg_uuidv7` and `pg_search` are not part of the stack. `\dx` lists what is installed.
 
 ### Useful queries
 
@@ -215,7 +219,7 @@ A private repo needs `gh auth login`.
 ### (c) Which version is running?
 
 ```bash
-ssh <alias> "docker compose -f /opt/muvon/docker-compose.yml ps --format json" | jq -r '.[] | "\(.Service): \(.Image)"'
+ssh <alias> "docker compose -f /opt/muvon/docker-compose.yml ps --format json" | jq -rs 'flatten | .[] | "\(.Service): \(.Image)"'
 ```
 
 If the image carries a tag (`:v1.2.3` or a commit hash), fetch raw files at that ref. With `:latest`, check main's HEAD, remembering that `:latest` moves only on a `v*` tag push.
@@ -224,7 +228,7 @@ If the image carries a tag (`:v1.2.3` or a commit hash), fetch raw files at that
 
 ```bash
 # Every route:
-grep -nE 'HandleFunc\("(GET|POST|PUT|DELETE)' internal/admin/server.go
+grep -nE 'Handle(Func)?\("(GET|POST|PUT|PATCH|DELETE)' internal/admin/server.go
 
 # A specific handler:
 grep -rn 'handleSearchLogs' internal/admin/
@@ -262,7 +266,8 @@ Need                              → First choice      → Fallback
 read state / list / detail        → API GET           → DB SELECT (if SSH)
 log search                        → API /api/logs     → DB dialog.http_logs
 audit log                         → API /api/audit    → DB muvon.admin_audit_log
-is a secret set?                  → /opt/muvon/.env (set/empty)  → -
+is a secret setting set?          → API /api/settings → -
+is a process secret set?          → /opt/muvon/.env (set/empty)  → -
 live container log                → API SSE stream    → ssh + docker logs -f
 managed component image           → API /api/containers → docker compose ps
 endpoint not found                → read the source   → -
@@ -270,4 +275,4 @@ auth/CSRF/middleware internals    → internal/admin/*.go  → -
 deploy lifecycle internals        → internal/deployer/*.go → -
 ```
 
-Note that `GET /api/settings` cannot answer "is this secret set": it returns `********` for every secret key regardless. Check the `.env` file instead.
+`GET /api/settings` answers "is this secret setting set": it returns `********` for a secret key that holds a value and `""` for an empty one. The process secrets in `.env` (`MUVON_JWT_SECRET`, `MUVON_ENCRYPTION_KEY`, `POSTGRES_PASSWORD`) never reach the API; check the file for those.

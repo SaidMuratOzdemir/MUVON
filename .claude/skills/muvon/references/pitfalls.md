@@ -36,12 +36,12 @@ Assuming `response.data` breaks on hosts; assuming `response[0]` breaks on logs.
 
 ## 5) Secret masking is the literal `********`
 
-`GET /api/settings` returns `"********"` for every secret key, whether or not a value is set. It is **not** an empty string, and it does not tell you whether the secret exists.
+`GET /api/settings` returns `"********"` for a secret settings key (`jwt_secret`, `alerting_smtp_password`) that holds a value, and `""` for one that is empty. The value itself never comes back.
 
 Consequences:
 
-- You cannot verify "is this secret still set?" through the API. To answer that, read `/opt/muvon/.env` over SSH and report only set or empty.
-- Writing `********` back is rejected, so a masked read cannot overwrite the real value by accident.
+- For a secret **setting**, `********` versus `""` is the whole answer to "is it set?". The process secrets in `/opt/muvon/.env` (`MUVON_JWT_SECRET`, `MUVON_ENCRYPTION_KEY`, `POSTGRES_PASSWORD`) are not settings and never appear in the API; for those, read the file over SSH and report only set or empty.
+- Writing `********` back is rejected with 400 (`cannot save masked placeholder value`), so a masked read cannot overwrite the real value by accident.
 
 Treat settings writes as set-and-forget.
 
@@ -86,9 +86,9 @@ It does not disturb proxy traffic, but it does push over SSE to connected edge a
 
 `POST /api/auth/login` sits behind a rate limiter. On a 429, wait a few seconds and retry.
 
-## 13) `POST /api/alerting/test/*` **sends a real message**
+## 13) Alert tests **send real messages**
 
-Even the test path reaches the outside world: a Slack channel, someone's inbox. Never call it without explicit approval.
+`POST /api/alert-channels/{id}/test` posts to a real Slack channel or inbox, and `POST /api/alert-rules/{id}/test` also opens a test alert and notifies every channel the rule routes to. Never call either without explicit approval.
 
 ## 14) Logout **requires CSRF**
 
@@ -105,7 +105,7 @@ Bash and curl are fine. Some older libraries (Python's `http.cookiejar`, for ins
 ## 17) Settings values are typed
 
 ```json
-"alerting_enabled": false,
+"security_blocking_enabled": false,
 "correlation_anomaly_enabled": true,
 ```
 
@@ -125,7 +125,7 @@ Each host toggles JWT identity extraction independently. `jwt_identity_mode` is 
 
 ## 21) The agent API key is **no longer in the list response**
 
-`GET /api/agents` does not return `api_key`, because it is stored SHA-256 hashed. The plaintext key comes back **once**, in the create response: `POST /api/agents` → `{"agent": {...}, "api_key": "abc123..."}`. Show it to the user and then treat it as gone. If the operator loses it, enroll a new agent.
+`GET /api/agents` does not return `api_key`, because it is stored SHA-256 hashed. The plaintext key comes back **once**, in the create response: `POST /api/agents` → `{"agent": {...}, "api_key": "abc123..."}`. Show it to the user and then treat it as gone. If the operator loses it, issue a new one on the same agent with `POST /api/agents/{id}/rotate-key` (the panel's "Yeni anahtar üret"), which returns `{agent, api_key}` once, keeps the agent's host, component and scheduled job bindings, and makes the old key stop working immediately.
 
 The legacy plaintext `api_key` column still exists in the table for migration purposes. The auth middleware fills in the hash on the first successful call, which is transparent to the user.
 
@@ -189,7 +189,7 @@ The key is **required for the binary to start at all**, so there is no "key miss
 Handlers in `cmd/agent/commands.go` are written to be idempotent, and `Registry.markSeen` (an LRU of 1000 entries) drops a repeated ID. Operator-side care is still needed:
 
 - Sending the same command twice from the UI creates two rows with different UUIDv7s. The dedup only protects against the **same ID** being delivered twice.
-- Do not send destructive commands such as `agent.restart` or `agent.revoke` more than once: the history gets noisy and the supervisor's behaviour starts to look like a restart loop.
+- Do not send destructive commands such as `agent.restart` or `agent.self_upgrade` more than once: the history gets noisy and the supervisor's behaviour starts to look like a restart loop.
 
 ## 31) Concurrent system upgrades are blocked with 409
 
@@ -209,23 +209,25 @@ Practical guidance:
 
 In the UI: `ComponentEditorDialog`, the "Gelişmiş" tab, "Tutulan release sayısı". A DB CHECK enforces at least 1.
 
-## 33) A 409 during image prune is a deliberate no-op
+## 33) An image the prune leaves behind is usually still in use
 
-`pruneImagesAfterPromote` calls `docker rmi` per image ref. If a container still uses it, Docker returns 409 and the code swallows it as success without logging. That is correct: Docker's refcount catches a case the SQL `in_use` filter cannot, such as another component sharing the same image. Symptom: you expected an image to disappear and it is still there. Check `docker ps -a --filter ancestor=<ref>`.
+`pruneImagesAfterPromote` removes images by the ID recorded at pull time and reports each attempt as deleted, absent or in use; only a real deletion is logged. An image still referenced by a container, typically the instance draining after the same promote, answers in use and is left alone without forcing, and a later run removes it once the drain is over. Symptom: you expected an image to disappear right after a deploy and it is still there. Check `docker ps -a --filter ancestor=<ref>` before suspecting the prune.
 
 ## 34) Orphan reconciliation uses `ContainerListAll(all=1)`
 
 It used to list running containers only, so exited orphans (a failed migration, a crashed candidate) were invisible. Now every state is scanned, which means **any container labelled `muvon.managed=true` that the DB does not know about** is stopped and force-removed, whatever its state. Hand-running `docker run` with that label means it disappears on the next tick.
 
-## 35) `agent.revoke` is a clean shutdown, not a crash loop
+## 35) A revoked edge keeps serving traffic from its last config and comes back only with a new key
 
-`POST /api/agents/{id}/commands` with `{"kind":"agent.revoke"}` stops the agent permanently:
+Revocation is a central state change, not a command: there is no `agent.revoke` kind any more, and `POST /api/agents/{id}/commands` with it returns 400 `unknown command kind`. `POST /api/agents/{id}/revoke` (the panel's "Anahtarı iptal et") works whether or not the agent is reachable:
 
-1. Central sets `agents.is_active=false`.
-2. The command reaches the agent and its handler exits 1.
-3. If a supervisor restarts it, central rejects its auth and it exits immediately. It looks like a crash loop, and that is the expected shape.
+1. Central sets `is_active=false`, records `revoked_at` and `revoked_by`, expires the agent's `pending` and `dispatched` commands, and ends its open config watch stream and command long poll. Revoking again keeps the original time and author.
+2. The agent API answers the key with 401 `{"error":"agent revoked"}` (an unknown key gets `invalid api key`). dialog-siem's TCP gRPC refuses inactive agents on every call, so log shipping stops at the next batch. New commands get 409 `agent is revoked`.
+3. The agent does **not** exit. It keeps serving traffic with the last config it holds (and its local cache after a restart), logs `central revoked this agent's API key; ...` once, and retries only every 10 minutes. Config updates, log shipping and deploys stop.
 
-To undo: enroll a new agent (`POST /api/agents`) and delete the old record (`DELETE /api/agents/{id}`). The plaintext key is returned once.
+So a revoked edge still answers requests: revocation cuts its link to central, not its traffic. To take the host offline, stop the agent on the host (`docker compose -f /opt/muvon-agent/docker-compose.agent.yml down`).
+
+A revoked key is never switched back on. The only way back is `POST /api/agents/{id}/rotate-key` (the panel's "Yeni anahtar üret"): it issues a new key on the same row, sets `is_active=true`, clears `revoked_at` and `revoked_by`, and returns the plaintext key once. Host, component and scheduled job bindings are kept. Put the new key in the agent's env and restart the agent. Deleting and re-enrolling is not needed, and it would lose those bindings.
 
 ## 36) Docker subnets and the agent's container IP **differ per installation**
 
@@ -312,7 +314,7 @@ Also note that `:latest` moves only when a new `v*` tag is published, and an age
 
 Because `agent_id` cannot be changed, moving a component to another host means delete and re-create (see #23). The new component gets a **new id**, while `routes.managed_component_id` pointed at the old one. The DELETE sets that field to `NULL` and the route ends up bound to no backend.
 
-The symptom is thoroughly misleading: containers are `healthy`, instances show `active` in `/api/deploy/projects`, `GET /api/system/health/backends` reports everything `open`, and yet **every domain returns 502**. Since the backend looks healthy, people hunt in the deployer or the application, while the problem is at the route layer.
+The symptom is thoroughly misleading: containers are `healthy`, instances show `active` in `/api/deploy/projects`, `GET /api/system/health/backends` reports every circuit breaker `closed` (the healthy state; `open` means failing), and yet **every domain returns 502**. Since the backend looks healthy, people hunt in the deployer or the application, while the problem is at the route layer.
 
 Always check after a move:
 
@@ -324,13 +326,13 @@ WHERE h.domain LIKE '%<project>%' ORDER BY 1;
 
 Rebind every proxy route showing `NULL` to the new component id. `PUT /api/routes/{id}` wants the **complete route object** (no pointer fields), so `GET /api/routes/{id}` first, change only `managed_component_id`, and write it back.
 
-A route can also **disappear entirely**: in one real move a domain's only route was deleted and it started returning 404. Compare the route count before and after, and restore anything missing with `POST /api/hosts/{id}/routes`.
+A route can also **disappear entirely**, and a domain left with no route returns 404. Compare the route count before and after, and restore anything missing with `POST /api/hosts/{id}/routes`.
 
 ## 42) Two projects on one host sharing a component slug collide in Docker DNS
 
 The deployer attaches a container to the network under its component slug. On a single-project host that is fine, but on a multi-project host where two projects each have a component named `api`, **both containers claim the same name on the shared proxy network**. Docker DNS round-robins, so a request to `http://api:8000` lands on an arbitrary project's service.
 
-In one real installation four containers shared the name `api`, four shared `landing` and two shared `admin`. Nothing errors; the wrong project's data is simply served. Server-side rendering that points at `SERVER_API_URL=http://api:8000` is especially exposed.
+Common slugs such as `api`, `landing` and `admin` are the usual collisions. Nothing errors; the wrong project's data is simply served. Server-side rendering that points at `SERVER_API_URL=http://api:8000` is especially exposed.
 
 Check:
 
@@ -349,3 +351,30 @@ Fix: containers now also carry a `<project>-<component>` alias. On multi-project
 `MUVON_ENCRYPTION_KEY` and `MUVON_JWT_SECRET` are both required and have no defaults. A container that exits immediately after an update, complaining about one of them, is configured rather than broken: `install.sh` generates both, but a hand-written `.env` may be missing one.
 
 The strictness is deliberate: `GET` masks secret keys unconditionally, so a build that accepted a missing key could store a value unencrypted and still show `********` for it. On an installation that predates the requirement, treat secrets written without a key as unencrypted and rewrite them through the API once one is configured.
+
+## 44) An alert is an incident: acknowledging it is what re-arms it
+
+A rule keeps **one open alert** per group value. While it is open, repeats only raise `occurrences` and move `last_seen_at`; nothing is sent again unless the severity rises or a reminder for an unacknowledged critical alert is due. So "events keep coming but Slack is quiet" is the intended behaviour for an open alert, not a broken channel.
+
+Acknowledging closes it. The next firing opens a new alert and notifies again, and a threshold rule has to be crossed again: its window starts no earlier than the acknowledgement.
+
+## 45) An event rule sees only JSON lines with `event.name`, from a verified project
+
+A plain text line never matches, however clearly it names the event, and neither does a JSON line without `event.name`. `GET /api/alert-events?project=<slug>` shows what the project actually logs as events.
+
+The project on a log line is kept only when the component runs on the host that shipped it. A component moved to another host and still draining on the old one, or a container labelled with a project it does not belong to, arrives without a project and matches no rule; dialog-siem logs `container log project claim dropped` once an hour per container.
+
+## 46) Whether a notification went out is recorded per channel
+
+`GET /api/alerts/{id}` returns `deliveries`. Read `status` and `last_error` there before reading the dialog-siem log: `failed` carries the sender's error after eight attempts, and `skipped` says why nothing was sent (channel disabled or deleted, alert acknowledged or gone before the send).
+
+## 47) The Postgres image is never switched for you
+
+`muvon-postgres` is built locally from `postgres/Dockerfile`: the official `postgres:18-trixie` image plus TimescaleDB 2.30.0. Older installs run a ParadeDB-based build. Neither upgrade path moves an existing install onto the new image: `install.sh` builds the Postgres image only in install mode, and the panel upgrade pulls and recreates `muvon`, `dialog-siem` and `muvon-deployer` only.
+
+Switching is a manual host operation that needs operator approval, and Postgres must be shut down **cleanly** first (`docker compose stop -t 120 postgres`, then `docker compose build postgres` and `docker compose up -d postgres`). Crash recovery on the new image cannot replay WAL records written by `pg_search`, because that library is no longer present, so a container that was killed rather than stopped can refuse to start.
+
+Related sharp edges:
+
+- The data volume is reused as is. The `drop_unused_extensions` migration removes `postgis`, `vector`, `pg_ivm`, `fuzzystrmatch` and `pg_uuidv7` when they hold nothing, and leaves one in place with a warning otherwise. A dump that still names one of them does not restore onto the new image.
+- `pg_uuidv7` is gone: UUIDv7 keys come from PostgreSQL 18's built-in `uuidv7()`. `pg_search` and `pg_cron` are not preloaded (compose preloads `timescaledb,pg_stat_statements`), so re-adding either extension without restoring the preload fails at startup.
