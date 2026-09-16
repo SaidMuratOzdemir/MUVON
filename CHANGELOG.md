@@ -23,6 +23,8 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-16
+
 Uygulamaların loglarına yazdığı olaylardan alarm üretme, adlı bildirim
 kanalları, yazılmadan onaylanmayan container log hattı ve agent anahtarının
 central'da iptal edilmesi. Şema değişikliği var: alarm tablosu yeniden
