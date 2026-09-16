@@ -195,15 +195,11 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("POST /api/agents/{id}/commands", s.handleEnqueueAgentCommand)
 	api.HandleFunc("GET /api/agents/{id}/commands", s.handleListAgentCommands)
 
-	// Alerts (correlation engine output)
+	// Alerts: incidents raised by builtin detections and event rules
 	api.HandleFunc("GET /api/alerts", s.handleListAlerts)
 	api.HandleFunc("GET /api/alerts/stats", s.handleAlertStats)
 	api.HandleFunc("GET /api/alerts/{id}", s.handleGetAlert)
 	api.HandleFunc("POST /api/alerts/{id}/acknowledge", s.handleAckAlert)
-
-	// Alerting channel tests (sends a synthetic alert via the real notifier)
-	api.HandleFunc("POST /api/alerting/test/slack", s.handleTestSlackAlert)
-	api.HandleFunc("POST /api/alerting/test/smtp", s.handleTestSMTPAlert)
 
 	// Container Logs — proxied to muvon-deployer (live) and diaLOG (history)
 	api.HandleFunc("GET /api/containers", s.handleListContainers)

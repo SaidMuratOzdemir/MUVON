@@ -20,6 +20,7 @@ import (
 	"muvon/internal/admin"
 	"muvon/internal/agentctrl"
 	"muvon/internal/agentsvc"
+	"muvon/internal/alertrules"
 	"muvon/internal/blocklist"
 	"muvon/internal/blocklistsvc"
 	"muvon/internal/config"
@@ -298,6 +299,21 @@ func main() {
 			slog.Warn("blocklist: reload after seeding failed", "error", err)
 		}
 	}
+	// Alert rules. Builtin detections are synced so a release can add one;
+	// the operator's routing is never overwritten. The legacy global Slack and
+	// recipient settings are turned into named channels once, after the sync,
+	// so an install that had notifications on keeps them.
+	if n, err := database.SyncBuiltinAlertRules(ctx, alertrules.BuiltinRules()); err != nil {
+		slog.Warn("alert rules: syncing builtin rules failed", "error", err)
+	} else if n > 0 {
+		slog.Info("alert rules: added builtin rules", "added", n)
+	}
+	if migrated, err := database.MigrateLegacyAlertingSettings(ctx, box.Encrypt); err != nil {
+		slog.Warn("alert rules: migrating legacy alerting settings failed", "error", err)
+	} else if migrated {
+		slog.Info("alert rules: legacy alerting settings moved to named channels")
+	}
+
 	blockSvc := blocklistsvc.New(ch, blocklistsvc.DBPersister{DB: database, Host: "central"})
 	rt.ProxyHandler().SetBlocker(blockSvc.Scorer())
 	go blockSvc.Run(ctx)

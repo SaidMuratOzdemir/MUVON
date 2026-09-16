@@ -106,16 +106,13 @@ type GlobalConfig struct {
 	JWTClaims          []string // claim keys to extract
 	JWTSecret          string   // HS256 secret (write-only in UI)
 
-	// Alerting settings
-	AlertingEnabled         bool
-	AlertingSlackWebhook    string
-	AlertingSMTPHost        string
-	AlertingSMTPPort        int
-	AlertingSMTPUsername    string
-	AlertingSMTPPassword    string
-	AlertingSMTPFrom        string
-	AlertingSMTPTo          string
-	AlertingCooldownSeconds int
+	// The SMTP account email alert channels send through. Channels, routing
+	// and recipients are alert_rules / alert_channels rows, not settings.
+	AlertingSMTPHost     string
+	AlertingSMTPPort     int
+	AlertingSMTPUsername string
+	AlertingSMTPPassword string
+	AlertingSMTPFrom     string
 
 	// Correlation engine — every threshold and path list is editable live
 	// so ops can tune detection to the protected app's traffic shape.
@@ -285,16 +282,12 @@ func loadGlobalConfig(ctx context.Context, database *db.DB, box *secret.Box) (Gl
 	}
 	g.JWTSecret = decryptSetting(box, getStrSetting(settings, "jwt_secret", ""), "jwt_secret")
 
-	// Alerting
-	g.AlertingEnabled = getBoolSetting(settings, "alerting_enabled", false)
-	g.AlertingSlackWebhook = getStrSetting(settings, "alerting_slack_webhook", "")
+	// Alerting SMTP account
 	g.AlertingSMTPHost = getStrSetting(settings, "alerting_smtp_host", "")
 	g.AlertingSMTPPort = getIntSetting(settings, "alerting_smtp_port", 587)
 	g.AlertingSMTPUsername = getStrSetting(settings, "alerting_smtp_username", "")
 	g.AlertingSMTPPassword = decryptSetting(box, getStrSetting(settings, "alerting_smtp_password", ""), "alerting_smtp_password")
 	g.AlertingSMTPFrom = getStrSetting(settings, "alerting_smtp_from", "")
-	g.AlertingSMTPTo = getStrSetting(settings, "alerting_smtp_to", "")
-	g.AlertingCooldownSeconds = getIntSetting(settings, "alerting_cooldown_seconds", 300)
 
 	g.Correlation = loadCorrelationConfig(settings)
 

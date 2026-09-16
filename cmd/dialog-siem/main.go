@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -210,36 +211,29 @@ func main() {
 		})
 	})
 
-	// Alerting manager
-	alertMgr := alerting.NewManager(database, func() alerting.Config {
-		cfg := ch.Get()
-		return alerting.Config{
-			Enabled:         cfg.Global.AlertingEnabled,
-			SlackWebhook:    cfg.Global.AlertingSlackWebhook,
-			SMTPHost:        cfg.Global.AlertingSMTPHost,
-			SMTPPort:        cfg.Global.AlertingSMTPPort,
-			SMTPUsername:    cfg.Global.AlertingSMTPUsername,
-			SMTPPassword:    cfg.Global.AlertingSMTPPassword,
-			SMTPFrom:        cfg.Global.AlertingSMTPFrom,
-			SMTPTo:          cfg.Global.AlertingSMTPTo,
-			CooldownSeconds: cfg.Global.AlertingCooldownSeconds,
+	// Alerting. Rules and channels are reloaded from the database; raising an
+	// alert queues its notifications in the same transaction, and the
+	// dispatcher sends them, so Slack or SMTP trouble never reaches detection.
+	alertStore := alerting.NewStore(database, box)
+	if err := alertStore.Load(ctx); err != nil {
+		slog.Warn("alert rules could not be loaded at startup; retrying in the background", "error", err)
+	}
+	go alertStore.Run(ctx, 5*time.Second)
+	alertMgr := alerting.NewManager(database, alertStore)
+	dispatcher := alerting.NewDispatcher(database, alertStore, func() alerting.SMTPConfig {
+		g := ch.Get().Global
+		return alerting.SMTPConfig{
+			Host:     g.AlertingSMTPHost,
+			Port:     g.AlertingSMTPPort,
+			Username: g.AlertingSMTPUsername,
+			Password: g.AlertingSMTPPassword,
+			From:     g.AlertingSMTPFrom,
 		}
-	})
-	alertMgr.AddNotifier(alerting.NewSlackNotifier(func() string {
-		return ch.Get().Global.AlertingSlackWebhook
-	}))
-	alertMgr.AddNotifier(alerting.NewEmailNotifier(func() alerting.Config {
-		cfg := ch.Get()
-		return alerting.Config{
-			SMTPHost:     cfg.Global.AlertingSMTPHost,
-			SMTPPort:     cfg.Global.AlertingSMTPPort,
-			SMTPUsername: cfg.Global.AlertingSMTPUsername,
-			SMTPPassword: cfg.Global.AlertingSMTPPassword,
-			SMTPFrom:     cfg.Global.AlertingSMTPFrom,
-			SMTPTo:       cfg.Global.AlertingSMTPTo,
-		}
-	}))
-	alertMgr.Start()
+	}, panelURL(os.Getenv("MUVON_ADMIN_DOMAIN")))
+	alertMgr.SetWake(dispatcher.Wake)
+	go dispatcher.Run(ctx, 5*time.Second)
+	go alertMgr.RunReminders(ctx, 30*time.Second)
+	go runAlertPurge(ctx, database, ch)
 
 	// Correlation engine — subscribes to pipeline, produces alerts.
 	// The config func is read on every event so admin-panel changes to
@@ -311,7 +305,6 @@ func main() {
 		if clientEventPipeline != nil {
 			clientEventPipeline.Stop()
 		}
-		alertMgr.Stop()
 		cancel()
 	}()
 	if *tcpAddr != "" {
@@ -504,6 +497,58 @@ func runCertExpiryWatch(ctx context.Context, database *db.DB, sink *alerting.Man
 		case <-timer.C:
 			check()
 			timer.Reset(certExpiryCheckInterval)
+		}
+	}
+}
+
+// panelURL turns the admin domain into the base address notifications link
+// to. Empty means no links rather than a guessed address.
+func panelURL(adminDomain string) string {
+	adminDomain = strings.TrimSpace(adminDomain)
+	if adminDomain == "" {
+		return ""
+	}
+	if strings.HasPrefix(adminDomain, "http://") || strings.HasPrefix(adminDomain, "https://") {
+		return strings.TrimRight(adminDomain, "/")
+	}
+	return "https://" + strings.TrimRight(adminDomain, "/")
+}
+
+// alertPurgeInterval is how often acknowledged alerts past retention are
+// removed. Open alerts are never purged, whatever their age.
+const alertPurgeInterval = time.Hour
+
+// runAlertPurge applies retention_days to acknowledged alerts and settled
+// deliveries. The alerts table is not a hypertable, so the Timescale
+// retention job that governs the log tables does not reach it.
+func runAlertPurge(ctx context.Context, database *db.DB, ch *config.Holder) {
+	purge := func() {
+		cfg := ch.Get()
+		if cfg == nil || cfg.Global.RetentionDays <= 0 {
+			return
+		}
+		cutoff := time.Now().AddDate(0, 0, -cfg.Global.RetentionDays)
+		alerts, deliveries, err := database.PurgeAcknowledgedAlerts(ctx, cutoff)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Warn("alert purge failed", "error", err)
+			}
+			return
+		}
+		if alerts > 0 || deliveries > 0 {
+			slog.Info("purged acknowledged alerts past retention",
+				"alerts", alerts, "deliveries", deliveries, "retention_days", cfg.Global.RetentionDays)
+		}
+	}
+	timer := time.NewTimer(time.Minute)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			purge()
+			timer.Reset(alertPurgeInterval)
 		}
 	}
 }

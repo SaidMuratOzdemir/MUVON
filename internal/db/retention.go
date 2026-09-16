@@ -13,12 +13,15 @@ const RetentionSchema = "dialog"
 // RetentionTables are the hypertables governed by the single retention_days
 // setting. Order is stable so log lines and API responses read the same way
 // on every run.
+//
+// alerts is not here: an alert stays until it is acknowledged, so only
+// acknowledged alerts are purged, by PurgeAcknowledgedAlerts on the same
+// setting.
 var RetentionTables = []string{
 	"http_logs",
 	"http_log_bodies",
 	"container_logs",
 	"client_events",
-	"alerts",
 }
 
 // MaxRetentionDays caps the knob. Ten years of request bodies is never what

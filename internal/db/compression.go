@@ -15,7 +15,6 @@ var CompressionTables = []string{
 	"http_log_bodies",
 	"container_logs",
 	"client_events",
-	"alerts",
 }
 
 // BodiesTable is called out because compressing it is the one choice with a

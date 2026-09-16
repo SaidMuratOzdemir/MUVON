@@ -2,26 +2,17 @@ package db
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 )
 
 // Retention is enforced by TimescaleDB's job catalog, not by our own SQL, so
 // the only way to know the statements are right is to run them against a real
-// Timescale. The test is skipped unless MUVON_TEST_PG_DSN points at a
-// throwaway database; it creates its own hypertables and drops them after.
-//
-//	docker run -d --name muvon-retention-test -e POSTGRES_PASSWORD=test \
-//	  -e POSTGRES_DB=muvon -e POSTGRES_USER=muvon -p 55432:5432 \
-//	  timescale/timescaledb:latest-pg17
-//	MUVON_TEST_PG_DSN='postgres://muvon:test@localhost:55432/muvon?sslmode=disable' \
-//	  go test ./internal/db -run TestApplyRetentionAgainstTimescale -v
+// Timescale. The test is skipped unless MUVON_TEST_PG_DSN is set; it runs in a
+// database of its own (see openTestDatabase and internal/testpg for the server
+// setup).
 func TestApplyRetentionAgainstTimescale(t *testing.T) {
-	dsn := os.Getenv("MUVON_TEST_PG_DSN")
-	if dsn == "" {
-		t.Skip("MUVON_TEST_PG_DSN not set")
-	}
+	dsn := openTestDatabase(t, "timescaledb")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -31,10 +22,6 @@ func TestApplyRetentionAgainstTimescale(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer database.Close()
-
-	if _, err := database.Pool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS timescaledb`); err != nil {
-		t.Fatalf("create extension: %v", err)
-	}
 
 	// Build the same shape the migrations produce: a hypertable per retention
 	// table, each starting at the 30 day default.
@@ -54,13 +41,6 @@ func TestApplyRetentionAgainstTimescale(t *testing.T) {
 			t.Fatalf("seed policy %s: %v", tbl, err)
 		}
 	}
-	t.Cleanup(func() {
-		cleanCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		for _, tbl := range RetentionTables {
-			database.Pool.Exec(cleanCtx, `DROP TABLE IF EXISTS `+RetentionSchema+`.`+tbl+` CASCADE`)
-		}
-	})
 
 	assertAll := func(want int, wantPolicy bool) {
 		t.Helper()

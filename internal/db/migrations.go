@@ -1439,4 +1439,161 @@ INSERT INTO settings (key, value) VALUES
   ('security_block_allowlist',        '""')
 ON CONFLICT (key) DO NOTHING;`,
 	},
+	// Named notification channels. A Slack webhook is a credential: it is
+	// stored encrypted by the admin API and never returned by it.
+	{
+		name: "create_alert_channels", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS alert_channels (
+    id              UUID DEFAULT gen_uuidv7() PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    kind            TEXT NOT NULL CHECK (kind IN ('slack','email')),
+    enabled         BOOLEAN NOT NULL DEFAULT TRUE,
+    slack_webhook   TEXT NOT NULL DEFAULT '',
+    email_to        TEXT[] NOT NULL DEFAULT '{}',
+    digest_hour     SMALLINT NOT NULL DEFAULT 9 CHECK (digest_hour BETWEEN 0 AND 23),
+    digest_timezone TEXT NOT NULL DEFAULT 'UTC',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (kind <> 'slack' OR slack_webhook <> ''),
+    CHECK (kind <> 'email' OR cardinality(email_to) > 0)
+);`,
+	},
+	// Alert rules are data. Builtin rows describe detections that live in
+	// code and are synced on boot; the operator owns their routing. Event
+	// rows match application events in container logs and belong to a
+	// project. Channels are join tables rather than id arrays so deleting a
+	// channel cannot leave a rule pointing at nothing.
+	{
+		name: "create_alert_rules", product: "muvon",
+		sql: `
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id             UUID DEFAULT gen_uuidv7() PRIMARY KEY,
+    kind           TEXT NOT NULL CHECK (kind IN ('builtin','event')),
+    builtin_key    TEXT UNIQUE,
+    name           TEXT NOT NULL,
+    description    TEXT NOT NULL DEFAULT '',
+    enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+    project_id     INTEGER REFERENCES deploy_projects(id) ON DELETE CASCADE,
+    component      TEXT NOT NULL DEFAULT '',
+    match          JSONB NOT NULL DEFAULT '{}',
+    group_by       TEXT NOT NULL DEFAULT '',
+    tiers          JSONB NOT NULL DEFAULT '[]',
+    notify_fields  TEXT[] NOT NULL DEFAULT '{}',
+    delivery       TEXT NOT NULL DEFAULT 'instant' CHECK (delivery IN ('instant','digest','none')),
+    remind_minutes INTEGER NOT NULL DEFAULT 240 CHECK (remind_minutes >= 0),
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((kind = 'builtin') = (builtin_key IS NOT NULL)),
+    CHECK (kind = 'builtin' OR project_id IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_alert_rules_project ON alert_rules (project_id) WHERE project_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS alert_rule_channels (
+    rule_id    UUID NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,
+    channel_id UUID NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
+    PRIMARY KEY (rule_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS project_alert_channels (
+    project_id INTEGER NOT NULL REFERENCES deploy_projects(id) ON DELETE CASCADE,
+    channel_id UUID NOT NULL REFERENCES alert_channels(id) ON DELETE CASCADE,
+    PRIMARY KEY (project_id, channel_id)
+);`,
+	},
+	// An alert is now an incident that stays open until someone acknowledges
+	// it, so the row is mutable for as long as the problem lasts. The
+	// hypertable it replaces compressed rows after a week and dropped them at
+	// retention, which would let an unacknowledged critical alert vanish on
+	// its own. At most one open alert exists per fingerprint; the partial
+	// unique index is what makes concurrent raises converge on one row.
+	//
+	// Existing rows are kept as history and arrive acknowledged by the
+	// migration: they were never routed anywhere, and opening thousands of
+	// them at once would bury the alerts that matter.
+	{
+		name: "rebuild_alerts_as_incidents", product: "dialog",
+		sql: `
+ALTER TABLE alerts RENAME TO alerts_legacy;
+
+CREATE TABLE alerts (
+    id               UUID NOT NULL DEFAULT gen_uuidv7(),
+    rule             TEXT NOT NULL,
+    rule_id          UUID,
+    rule_name        TEXT NOT NULL DEFAULT '',
+    severity         TEXT NOT NULL CHECK (severity IN ('info','warning','high','critical')),
+    title            TEXT NOT NULL,
+    detail           JSONB,
+    source_ip        TEXT,
+    host             TEXT,
+    project          TEXT,
+    component        TEXT,
+    fingerprint      TEXT NOT NULL,
+    group_key        TEXT NOT NULL DEFAULT '',
+    delivery         TEXT NOT NULL DEFAULT 'none' CHECK (delivery IN ('instant','digest','none')),
+    is_test          BOOLEAN NOT NULL DEFAULT FALSE,
+    occurrences      INTEGER NOT NULL DEFAULT 1,
+    first_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    evidence         JSONB NOT NULL DEFAULT '[]',
+    notified_at      TIMESTAMPTZ,
+    next_reminder_at TIMESTAMPTZ,
+    acknowledged     BOOLEAN NOT NULL DEFAULT FALSE,
+    acknowledged_at  TIMESTAMPTZ,
+    acknowledged_by  TEXT,
+    CONSTRAINT alerts_incident_pkey PRIMARY KEY (id)
+);
+CREATE UNIQUE INDEX idx_alert_open_fingerprint ON alerts (fingerprint) WHERE NOT acknowledged;
+CREATE INDEX idx_alert_last_seen ON alerts (last_seen_at DESC);
+CREATE INDEX idx_alert_open_last_seen ON alerts (last_seen_at DESC) WHERE NOT acknowledged;
+CREATE INDEX idx_alert_rule_last_seen ON alerts (rule, last_seen_at DESC);
+CREATE INDEX idx_alert_project_last_seen ON alerts (project, last_seen_at DESC) WHERE project IS NOT NULL;
+CREATE INDEX idx_alert_acknowledged_fingerprint ON alerts (fingerprint, acknowledged_at DESC) WHERE acknowledged;
+CREATE INDEX idx_alert_reminder_due ON alerts (next_reminder_at) WHERE NOT acknowledged AND next_reminder_at IS NOT NULL;
+CREATE INDEX idx_alert_acknowledged_at ON alerts (acknowledged_at) WHERE acknowledged;
+
+INSERT INTO alerts (
+    id, rule, severity, title, detail, source_ip, host, fingerprint, delivery,
+    occurrences, first_seen_at, last_seen_at, notified_at,
+    acknowledged, acknowledged_at, acknowledged_by
+)
+SELECT id, rule, severity, title, detail, source_ip, host, fingerprint, 'none',
+       occurrences, timestamp, last_seen_at, notified_at,
+       TRUE, COALESCE(acknowledged_at, now()), COALESCE(acknowledged_by, 'system:migration')
+FROM alerts_legacy
+ON CONFLICT (id) DO NOTHING;
+
+DROP TABLE alerts_legacy;`,
+	},
+	// Notifications are an outbox. Raising an alert writes the delivery rows
+	// in the same transaction, and a dispatcher sends them, so a slow or
+	// unreachable Slack never holds up detection, a failed send is retried,
+	// and the panel can show whether each channel actually received it. A
+	// digest delivery covers several alerts, hence the id array.
+	{
+		name: "create_alert_deliveries", product: "dialog",
+		sql: `
+CREATE TABLE IF NOT EXISTS alert_deliveries (
+    id              UUID NOT NULL DEFAULT gen_uuidv7() PRIMARY KEY,
+    alert_ids       UUID[] NOT NULL,
+    channel_id      UUID NOT NULL,
+    channel_name    TEXT NOT NULL DEFAULT '',
+    kind            TEXT NOT NULL CHECK (kind IN ('opened','escalated','reminder','digest','test')),
+    severity        TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','sent','failed','skipped')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_error      TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_at         TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_alert_deliveries_due ON alert_deliveries (next_attempt_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_alert_deliveries_alert_ids ON alert_deliveries USING gin (alert_ids);
+CREATE INDEX IF NOT EXISTS idx_alert_deliveries_created ON alert_deliveries (created_at);
+
+CREATE TABLE IF NOT EXISTS alert_channel_state (
+    channel_id     UUID PRIMARY KEY,
+    last_digest_at TIMESTAMPTZ NOT NULL
+);`,
+	},
 }

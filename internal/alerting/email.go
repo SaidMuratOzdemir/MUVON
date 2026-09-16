@@ -2,69 +2,96 @@ package alerting
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
 
-	"muvon/internal/correlation"
+	"muvon/internal/alertrules"
 )
 
-// EmailNotifier sends alerts via SMTP.
-type EmailNotifier struct {
-	configFn ConfigFunc
+// SMTPConfig is the sending account every email channel uses. A channel only
+// chooses recipients.
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
 }
 
-func NewEmailNotifier(configFn ConfigFunc) *EmailNotifier {
-	return &EmailNotifier{configFn: configFn}
+// EmailSender sends through the configured SMTP account.
+type EmailSender struct {
+	Config func() SMTPConfig
 }
 
-func (e *EmailNotifier) Name() string { return "email" }
-
-func (e *EmailNotifier) Send(ctx context.Context, alert correlation.Alert) error {
-	cfg := e.configFn()
-	if cfg.SMTPHost == "" || cfg.SMTPFrom == "" || cfg.SMTPTo == "" {
-		return nil
+func (e *EmailSender) Send(ctx context.Context, ch alertrules.Channel, m Message) error {
+	cfg := e.Config()
+	if cfg.Host == "" || cfg.From == "" {
+		return errors.New("email: the SMTP sending account is not configured")
+	}
+	if len(ch.EmailTo) == 0 {
+		return errors.New("email: channel has no recipients")
+	}
+	msg, err := buildEmail(cfg.From, ch.EmailTo, m.Subject(), m.PlainText(), time.Now())
+	if err != nil {
+		return err
 	}
 
-	subject := fmt.Sprintf("[%s] %s", strings.ToUpper(alert.Severity), alert.Title)
-
-	body := fmt.Sprintf("Rule: %s\nSeverity: %s\n", alert.Rule, alert.Severity)
-	if alert.SourceIP != "" {
-		body += fmt.Sprintf("Source IP: %s\n", alert.SourceIP)
+	port := cfg.Port
+	if port == 0 {
+		port = 587
 	}
-	if alert.Host != "" {
-		body += fmt.Sprintf("Host: %s\n", alert.Host)
-	}
-	for k, v := range alert.Detail {
-		body += fmt.Sprintf("%s: %v\n", k, v)
-	}
-
-	recipients := strings.Split(cfg.SMTPTo, ",")
-	for i := range recipients {
-		recipients[i] = strings.TrimSpace(recipients[i])
-	}
-
-	msg := "From: " + cfg.SMTPFrom + "\r\n" +
-		"To: " + cfg.SMTPTo + "\r\n" +
-		"Subject: " + subject + "\r\n" +
-		"Content-Type: text/plain; charset=UTF-8\r\n" +
-		"\r\n" +
-		body
-
-	addr := fmt.Sprintf("%s:%d", cfg.SMTPHost, cfg.SMTPPort)
-
+	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
 	var auth smtp.Auth
-	if cfg.SMTPUsername != "" {
-		auth = smtp.PlainAuth("", cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPHost)
+	if cfg.Username != "" {
+		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+	}
+	return sendSMTP(ctx, addr, cfg.Host, port == 465, auth, cfg.From, ch.EmailTo, msg)
+}
+
+// buildEmail assembles an RFC 5322 message. The subject is built from alert
+// titles, which can come from log content, so line breaks are removed before
+// it becomes a header and non-ASCII text is encoded rather than sent raw.
+func buildEmail(from string, to []string, subject, body string, now time.Time) ([]byte, error) {
+	if _, err := mail.ParseAddress(from); err != nil {
+		return nil, fmt.Errorf("email: invalid sender address: %w", err)
+	}
+	for _, r := range to {
+		if _, err := mail.ParseAddress(r); err != nil {
+			return nil, fmt.Errorf("email: invalid recipient %q: %w", r, err)
+		}
+	}
+	subject = strings.Join(strings.Fields(subject), " ")
+
+	id := make([]byte, 12)
+	if _, err := rand.Read(id); err != nil {
+		return nil, fmt.Errorf("email: message id: %w", err)
+	}
+	domain := "muvon.local"
+	if at := strings.LastIndexByte(from, '@'); at >= 0 {
+		domain = strings.Trim(from[at+1:], "> ")
 	}
 
-	// Direct TLS on 465, STARTTLS (when advertised) otherwise. Every step is
-	// bounded by a dial timeout + connection deadline so an unreachable or slow
-	// SMTP host can never stall the caller (the alerting dispatch goroutine).
-	return sendSMTP(ctx, addr, cfg.SMTPHost, cfg.SMTPPort == 465, auth, cfg.SMTPFrom, recipients, []byte(msg))
+	var b strings.Builder
+	b.WriteString("From: " + from + "\r\n")
+	b.WriteString("To: " + strings.Join(to, ", ") + "\r\n")
+	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
+	b.WriteString("Date: " + now.Format(time.RFC1123Z) + "\r\n")
+	b.WriteString("Message-ID: <" + hex.EncodeToString(id) + "@" + domain + ">\r\n")
+	b.WriteString("MIME-Version: 1.0\r\n")
+	b.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
+	b.WriteString("Content-Transfer-Encoding: 8bit\r\n")
+	b.WriteString("\r\n")
+	b.WriteString(strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\n", "\r\n"))
+	return []byte(b.String()), nil
 }
 
 // smtpTimeout bounds the whole SMTP exchange (connect + protocol). Without it,

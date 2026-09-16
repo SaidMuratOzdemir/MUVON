@@ -59,31 +59,60 @@ func TestPlanRetentionZeroRemovesPolicy(t *testing.T) {
 // The reconciler owns every hypertable that carries log data. A new one
 // added later without being listed here would keep the migration default
 // forever and quietly ignore the operator's setting.
+//
+// Migrations are walked in order because a table can stop being that
+// hypertable: alerts was renamed away and rebuilt as a plain table, and its
+// old policy went with the renamed table.
 func TestRetentionTablesCoverEveryLogHypertable(t *testing.T) {
 	listed := map[string]bool{}
 	for _, tbl := range RetentionTables {
 		listed[tbl] = true
 	}
+	withPolicy := map[string]bool{}
 	for _, m := range migrations {
 		if m.product != "dialog" {
 			continue
 		}
 		for _, line := range strings.Split(m.sql, "\n") {
-			const marker = "add_retention_policy('"
-			i := strings.Index(line, marker)
-			if i < 0 {
-				continue
+			if tbl, ok := quotedAfter(line, "add_retention_policy('"); ok {
+				withPolicy[tbl] = true
 			}
-			rest := line[i+len(marker):]
-			end := strings.Index(rest, "'")
-			if end < 0 {
-				continue
-			}
-			if tbl := rest[:end]; !listed[tbl] {
-				t.Fatalf("hypertable %q has a retention policy in migrations but is missing from RetentionTables", tbl)
+			if tbl, ok := renamedTable(line); ok {
+				delete(withPolicy, tbl)
 			}
 		}
 	}
+	for tbl := range withPolicy {
+		if !listed[tbl] {
+			t.Fatalf("hypertable %q has a retention policy in migrations but is missing from RetentionTables", tbl)
+		}
+	}
+	if withPolicy["alerts"] || listed["alerts"] {
+		t.Fatal("alerts is a mutable incident table now; retention must not drop open alerts")
+	}
+}
+
+func quotedAfter(line, marker string) (string, bool) {
+	i := strings.Index(line, marker)
+	if i < 0 {
+		return "", false
+	}
+	rest := line[i+len(marker):]
+	end := strings.Index(rest, "'")
+	if end < 0 {
+		return "", false
+	}
+	return rest[:end], true
+}
+
+// renamedTable reads "ALTER TABLE <name> RENAME TO ...".
+func renamedTable(line string) (string, bool) {
+	fields := strings.Fields(line)
+	if len(fields) >= 5 && strings.EqualFold(fields[0], "ALTER") && strings.EqualFold(fields[1], "TABLE") &&
+		strings.EqualFold(fields[3], "RENAME") && strings.EqualFold(fields[4], "TO") {
+		return fields[2], true
+	}
+	return "", false
 }
 
 // The stray-key migration must copy before it deletes, otherwise the

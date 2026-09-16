@@ -4,188 +4,187 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"muvon/internal/alertrules"
 	"muvon/internal/correlation"
 	"muvon/internal/db"
 )
 
-// Config holds alerting configuration, loaded from the atomic config holder.
-type Config struct {
-	Enabled         bool
-	SlackWebhook    string
-	SMTPHost        string
-	SMTPPort        int
-	SMTPUsername    string
-	SMTPPassword    string
-	SMTPFrom        string
-	SMTPTo          string
-	CooldownSeconds int
-}
-
-// ConfigFunc returns the current alerting configuration.
-type ConfigFunc func() Config
-
-// Manager handles alert persistence, cooldown, and notification dispatch.
+// Manager turns rule firings into alerts and queues the notifications they
+// call for. Sending is the Dispatcher's job; the Manager only writes, in the
+// same transaction as the alert, so a notification exists exactly when the
+// alert change that caused it does.
 type Manager struct {
-	database  *db.DB
-	configFn  ConfigFunc
-	notifiers []Notifier
-
-	// In-memory cooldown is a fast-path cache that lets a single node skip
-	// the DB round-trip when the same fingerprint re-fires in quick
-	// succession. The DB remains the source of truth — multi-node cooldown
-	// and per-row occurrence counting happen there.
-	cooldowns sync.Map
-	quit      chan struct{}
-	stopped   chan struct{}
+	database *db.DB
+	store    *Store
+	wake     func()
 }
 
-// Notifier sends alerts to an external channel.
-type Notifier interface {
-	Name() string
-	Send(ctx context.Context, alert correlation.Alert) error
+// NewManager wires a manager to its rule store.
+func NewManager(database *db.DB, store *Store) *Manager {
+	return &Manager{database: database, store: store, wake: func() {}}
 }
 
-func NewManager(database *db.DB, configFn ConfigFunc) *Manager {
-	m := &Manager{
-		database: database,
-		configFn: configFn,
-		quit:     make(chan struct{}),
-		stopped:  make(chan struct{}),
+// SetWake registers what to call once queued notifications are committed,
+// normally Dispatcher.Wake, so they go out without waiting for its next tick.
+func (m *Manager) SetWake(fn func()) {
+	if fn != nil {
+		m.wake = fn
 	}
-	return m
 }
 
-// AddNotifier adds a notification channel.
-func (m *Manager) AddNotifier(n Notifier) {
-	m.notifiers = append(m.notifiers, n)
-}
+// Wake signals that notifications were committed.
+func (m *Manager) Wake() { m.wake() }
 
-// Start begins the cooldown cleanup goroutine.
-func (m *Manager) Start() {
-	go m.cleanupLoop()
-	slog.Info("alerting manager started")
-}
-
-// Stop shuts down the manager.
-func (m *Manager) Stop() {
-	close(m.quit)
-	<-m.stopped
-	slog.Info("alerting manager stopped")
-}
-
-// HandleAlert implements correlation.AlertSink.
-//
-// The flow is:
-//
-//  1. Check the in-memory cooldown cache. Hit → we know (locally) a
-//     notification just went out; skip the DB trip and only record the
-//     occurrence. (The DB-backed path below would give the same answer, at
-//     the cost of a lookup.)
-//  2. Miss → ask UpsertAlert whether this fingerprint is already active
-//     somewhere (any node). If yes, it bumps occurrences; if no, it inserts
-//     a fresh row. Either way it reports whether we should notify.
-//  3. If we should notify, run every registered notifier. Failures are
-//     logged but do not revert the DB state — better to over-record a
-//     delivery failure than to risk a duplicate Slack message.
-//
-// Cooldown=0 disables grouping entirely (old behavior, useful for tests).
-func (m *Manager) HandleAlert(ctx context.Context, alert correlation.Alert) {
-	cfg := m.configFn()
-	cooldown := time.Duration(cfg.CooldownSeconds) * time.Second
-
-	detailJSON, _ := json.Marshal(alert.Detail)
-	rec := db.AlertRecord{
-		Rule:        alert.Rule,
-		Severity:    alert.Severity,
-		Title:       alert.Title,
-		Detail:      detailJSON,
-		SourceIP:    alert.SourceIP,
-		Host:        alert.Host,
-		Fingerprint: alert.Fingerprint,
+// HandleAlert implements correlation.AlertSink for builtin detections: the
+// HTTP correlation rules and the certificate watch. How the alert is routed
+// comes from the builtin's rule row. A builtin the operator disabled records
+// nothing; one not synced yet records without notifying.
+func (m *Manager) HandleAlert(ctx context.Context, a correlation.Alert) {
+	snap := m.store.Get()
+	rule, known := snap.Builtins[a.Rule]
+	if known && !rule.Enabled {
+		return
 	}
 
-	// Fast path: if we recently notified this fingerprint on this node,
-	// just record the occurrence and skip notification dispatch.
-	inCooldown := cfg.Enabled && cfg.CooldownSeconds > 0 && m.isCoolingDown(alert.Fingerprint, cfg.CooldownSeconds)
-
-	notifyRequested := cfg.Enabled && !inCooldown
-	result, err := m.database.UpsertAlert(ctx, rec, cooldown, notifyRequested)
+	detail, err := json.Marshal(a.Detail)
 	if err != nil {
-		slog.Error("alerting: upsert failed", "error", err, "rule", alert.Rule)
+		slog.Error("alerting: encode alert detail", "rule", a.Rule, "error", err)
 		return
 	}
+	ev := db.AlertEvent{
+		Rule:        a.Rule,
+		RuleName:    a.Rule,
+		Severity:    a.Severity,
+		Title:       a.Title,
+		Detail:      detail,
+		SourceIP:    a.SourceIP,
+		Host:        a.Host,
+		Fingerprint: a.Fingerprint,
+		Delivery:    alertrules.DeliveryNone,
+		Occurrences: 1,
+		At:          time.Now(),
+	}
+	var channels []alertrules.Channel
+	if known {
+		ev.RuleID = rule.ID
+		ev.RuleName = rule.Name
+		ev.Delivery = rule.Delivery
+		ev.RemindAfter = time.Duration(rule.RemindMinutes) * time.Minute
+		channels = snap.ChannelsFor(rule)
+	}
 
-	if !result.ShouldNotify {
-		// Either cooldown was active (in-memory or DB) or alerting is
-		// disabled. Either way, the event was persisted; nothing to send.
+	queued := false
+	err = pgx.BeginFunc(ctx, m.database.Pool, func(tx pgx.Tx) error {
+		_, q, err := m.Raise(ctx, tx, ev, channels)
+		queued = q
+		return err
+	})
+	if err != nil {
+		slog.Error("alerting: raise alert failed", "rule", a.Rule, "error", err)
 		return
 	}
-
-	// Dispatch notifications off the caller's goroutine. The correlation engine
-	// calls HandleAlert synchronously while holding its lock, so a slow or
-	// blackholed Slack/SMTP endpoint must never stall correlation (fail-open).
-	// A fresh background context bounds the send independently of the caller's
-	// lifecycle; cooldown gating keeps the goroutine count low.
-	go func() {
-		dctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if m.dispatch(dctx, alert) {
-			m.setCooldown(alert.Fingerprint)
-		}
-	}()
-}
-
-func (m *Manager) dispatch(ctx context.Context, alert correlation.Alert) bool {
-	sent := false
-	for _, n := range m.notifiers {
-		if err := n.Send(ctx, alert); err != nil {
-			slog.Error("notification failed", "notifier", n.Name(), "error", err)
-		} else {
-			sent = true
-		}
+	if queued {
+		m.wake()
 	}
-	return sent
 }
 
-func (m *Manager) isCoolingDown(fingerprint string, cooldownSeconds int) bool {
-	if cooldownSeconds <= 0 {
-		return false
+// Raise merges an event into its alert and queues what that change should
+// notify: a new alert, an escalation, or a test. It reports whether anything
+// was queued so the caller can wake the dispatcher after committing.
+func (m *Manager) Raise(ctx context.Context, tx pgx.Tx, ev db.AlertEvent, channels []alertrules.Channel) (db.RaiseResult, bool, error) {
+	res, err := db.RaiseAlert(ctx, tx, ev)
+	if err != nil {
+		return res, false, err
 	}
-	v, ok := m.cooldowns.Load(fingerprint)
-	if !ok {
-		return false
+	kind := notificationKind(ev, res)
+	if kind == "" || len(channels) == 0 {
+		return res, false, nil
 	}
-	lastTime := v.(time.Time)
-	return time.Since(lastTime) < time.Duration(cooldownSeconds)*time.Second
+	if err := db.QueueAlertDeliveries(ctx, tx, []string{res.AlertID}, channels, kind, res.Severity); err != nil {
+		return res, false, err
+	}
+	return res, true, nil
 }
 
-func (m *Manager) setCooldown(fingerprint string) {
-	m.cooldowns.Store(fingerprint, time.Now())
+// notificationKind decides whether an alert change is news. A test always is;
+// otherwise only instant delivery notifies, and only when the alert opens or
+// its severity rises. Repeats of an open alert are counted, not sent.
+func notificationKind(ev db.AlertEvent, res db.RaiseResult) string {
+	switch {
+	case ev.IsTest:
+		return db.DeliveryTest
+	case ev.Delivery != alertrules.DeliveryInstant:
+		return ""
+	case res.Opened:
+		return db.DeliveryOpened
+	case res.Escalated:
+		return db.DeliveryEscalated
+	}
+	return ""
 }
 
-func (m *Manager) cleanupLoop() {
-	defer close(m.stopped)
-	ticker := time.NewTicker(1 * time.Minute)
+// reminderBatch bounds how many reminders one pass queues.
+const reminderBatch = 100
+
+// RunReminders re-notifies critical alerts that stay unacknowledged, on each
+// rule's interval, until ctx ends.
+func (m *Manager) RunReminders(ctx context.Context, every time.Duration) {
+	ticker := time.NewTicker(every)
 	defer ticker.Stop()
-
 	for {
 		select {
-		case <-ticker.C:
-			// Keep the cache from growing unbounded: anything older than 2×
-			// the longest reasonable cooldown is safe to forget — the DB
-			// would handle it anyway.
-			cutoff := time.Now().Add(-1 * time.Hour)
-			m.cooldowns.Range(func(key, value any) bool {
-				if value.(time.Time).Before(cutoff) {
-					m.cooldowns.Delete(key)
-				}
-				return true
-			})
-		case <-m.quit:
+		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			if err := m.sendDueReminders(ctx); err != nil && ctx.Err() == nil {
+				slog.Warn("alerting: reminder pass failed", "error", err)
+			}
 		}
 	}
+}
+
+func (m *Manager) sendDueReminders(ctx context.Context) error {
+	snap := m.store.Get()
+	queued := false
+	err := pgx.BeginFunc(ctx, m.database.Pool, func(tx pgx.Tx) error {
+		due, err := db.ClaimDueReminders(ctx, tx, reminderBatch)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		for _, r := range due {
+			rule, ok := snap.Rules[r.RuleID]
+			if !ok {
+				rule, ok = snap.Builtins[r.Rule]
+			}
+			// The rule may have changed since the alert opened; its
+			// current settings decide whether reminders continue.
+			if !ok || !rule.Enabled || rule.Delivery != alertrules.DeliveryInstant ||
+				rule.RemindMinutes <= 0 || r.Severity != alertrules.SeverityCritical {
+				if err := db.SetAlertReminder(ctx, tx, r.AlertID, nil); err != nil {
+					return err
+				}
+				continue
+			}
+			if channels := snap.ChannelsFor(rule); len(channels) > 0 {
+				if err := db.QueueAlertDeliveries(ctx, tx, []string{r.AlertID}, channels, db.DeliveryReminder, r.Severity); err != nil {
+					return err
+				}
+				queued = true
+			}
+			next := now.Add(time.Duration(rule.RemindMinutes) * time.Minute)
+			if err := db.SetAlertReminder(ctx, tx, r.AlertID, &next); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err == nil && queued {
+		m.wake()
+	}
+	return err
 }

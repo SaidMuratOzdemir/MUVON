@@ -1,10 +1,11 @@
 package admin
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/google/uuid"
 
 	"muvon/internal/db"
 )
@@ -24,15 +25,27 @@ func (s *Server) handleListAlerts(w http.ResponseWriter, r *http.Request) {
 		Severity:    q.Get("severity"),
 		Host:        q.Get("host"),
 		SourceIP:    q.Get("source_ip"),
+		Project:     q.Get("project"),
 		Fingerprint: q.Get("fingerprint"),
 	}
-	if v := q.Get("acknowledged"); v != "" {
-		b, err := strconv.ParseBool(v)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "acknowledged must be true or false"})
+	if v := q.Get("rule_id"); v != "" {
+		if _, err := uuid.Parse(v); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rule_id must be a UUID"})
 			return
 		}
-		params.Acknowledged = &b
+		params.RuleID = v
+	}
+	for key, dst := range map[string]**bool{"acknowledged": &params.Acknowledged, "is_test": &params.IsTest} {
+		v := q.Get(key)
+		if v == "" {
+			continue
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": key + " must be true or false"})
+			return
+		}
+		*dst = &b
 	}
 	if v := q.Get("from"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
@@ -111,40 +124,4 @@ func (s *Server) handleAlertStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
-}
-
-// --- Alerting test endpoints -----------------------------------------------
-//
-// Customers configure Slack webhooks and SMTP credentials in Settings.
-// Without a round-trip test, the first sign a typo'd webhook URL is wrong
-// would be a missed critical alert. These endpoints fire a synthetic alert
-// through the same notifier code path the correlation engine uses, so a
-// successful test proves the full path — not just "the URL is reachable".
-
-func (s *Server) handleTestSlackAlert(w http.ResponseWriter, r *http.Request) {
-	webhook := s.configHolder.Get().Global.AlertingSlackWebhook
-	if webhook == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "slack webhook is not configured"})
-		return
-	}
-	err := sendTestAlert(r, "slack", webhook, s)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("slack test failed: %v", err)})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
-}
-
-func (s *Server) handleTestSMTPAlert(w http.ResponseWriter, r *http.Request) {
-	cfg := s.configHolder.Get().Global
-	if cfg.AlertingSMTPHost == "" || cfg.AlertingSMTPFrom == "" || cfg.AlertingSMTPTo == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "smtp host, from, and to must all be set"})
-		return
-	}
-	err := sendTestAlert(r, "smtp", "", s)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("smtp test failed: %v", err)})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "sent"})
 }

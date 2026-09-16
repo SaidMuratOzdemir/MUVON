@@ -55,6 +55,8 @@ services:
       DIALOG_TCP_ADDR: ":9001"
       DIALOG_LOG_LEVEL: ${LOG_LEVEL:-info}
       MUVON_ENCRYPTION_KEY: ${MUVON_ENCRYPTION_KEY:?MUVON_ENCRYPTION_KEY is required}
+      # Base of the panel links in alert notifications.
+      MUVON_ADMIN_DOMAIN: ${MUVON_ADMIN_DOMAIN:-}
     volumes:
       - sockets:/run/muvon
     logging:
