@@ -23,6 +23,11 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-01
+
+Geçidin gzip sıkıştırması içerik türüne göre karar veriyor. Şema değişikliği
+yok.
+
 ### BUGFIXES
 
 - **Gzip yalnız metin türlerine uygulanır.** Geçit bir yanıtı yalnız içerik
@@ -31,6 +36,14 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
   gibi iletilir; kaynağa her istekte `Accept-Encoding: gzip` ekleyen bir CDN
   arkasında da boyut bilgisi istemciye ulaşır. `Content-Encoding` taşıyan ve
   kısmi (`206`) yanıtlar sıkıştırılmaz.
+
+### Upgrade notları
+
+- Panelden yükseltin veya sunucuda:
+  `cd /opt/muvon && docker compose pull && docker compose up -d --wait`.
+- Düzeltme agent'ta da çalışır: agent üzerinden servis edilen host'lar için
+  her agent'ı panelden `agent.self_upgrade` ile veya `install-agent.sh` ile
+  güncelleyin.
 
 ## [0.6.0] - 2026-09-16
 
