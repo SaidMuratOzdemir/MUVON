@@ -23,6 +23,15 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+### BUGFIXES
+
+- **Gzip yalnız metin türlerine uygulanır.** Geçit bir yanıtı yalnız içerik
+  türü metin, JSON, JavaScript, CSS veya XML olduğunda sıkıştırır. PDF, resim,
+  video, arşiv ve türü bilinmeyen yanıtlar `Content-Length` başlığıyla olduğu
+  gibi iletilir; kaynağa her istekte `Accept-Encoding: gzip` ekleyen bir CDN
+  arkasında da boyut bilgisi istemciye ulaşır. `Content-Encoding` taşıyan ve
+  kısmi (`206`) yanıtlar sıkıştırılmaz.
+
 ## [0.6.0] - 2026-09-16
 
 Uygulamaların loglarına yazdığı olaylardan alarm üretme, adlı bildirim
