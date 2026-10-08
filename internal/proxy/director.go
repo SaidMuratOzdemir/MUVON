@@ -114,6 +114,8 @@ func Rewrite(target *url.URL, stripPrefix string, route db.Route, clientIP strin
 		req.Header.Set("X-Forwarded-Proto", schemeFor(in, trustedUpstream))
 		req.Header.Set("X-Forwarded-Host", originalHost)
 
+		scrubCloudflareHeaders(req.Header, cloudflareVerified(in))
+
 		// Per-route request header manipulation
 		for _, h := range route.ReqHeadersDel {
 			req.Header.Del(h)

@@ -50,8 +50,6 @@ func SetCloudflareTrust(header, secret string) {
 	cfTrustSecret.Store(&secret)
 }
 
-// cloudflareTrustedRequest reports whether the request carries the operator's
-// configured Cloudflare shared secret. Disabled (false) when no secret is set.
 // CloudflareLocation returns the visitor's country and city as reported by
 // Cloudflare, or empty strings when the request did not arrive through the
 // operator's own Cloudflare zone.
@@ -67,7 +65,7 @@ func SetCloudflareTrust(header, secret string) {
 // carries no location, which is the same outcome as a host that is not behind
 // Cloudflare at all.
 func CloudflareLocation(r *http.Request) (country, city string) {
-	if !isCloudflareIP(peerHost(r)) || !cloudflareTrustedRequest(r) {
+	if !cloudflareVerified(r) {
 		return "", ""
 	}
 	country = strings.TrimSpace(r.Header.Get("CF-IPCountry"))
@@ -79,6 +77,29 @@ func CloudflareLocation(r *http.Request) (country, city string) {
 	return country, strings.TrimSpace(r.Header.Get("CF-IPCity"))
 }
 
+// cloudflareVerified: Cloudflare edge peer carrying the operator's shared secret.
+func cloudflareVerified(r *http.Request) bool {
+	return isCloudflareIP(peerHost(r)) && cloudflareTrustedRequest(r)
+}
+
+// scrubCloudflareHeaders keeps the secret at the edge and CF-* only on verified requests.
+func scrubCloudflareHeaders(h http.Header, verified bool) {
+	secret := cfTrustHeaderName()
+	for k := range h {
+		// CGI servers read CF_IPCity as CF-IPCity; Cloudflare never sends underscores.
+		name := strings.ReplaceAll(k, "_", "-")
+		cloudflare := (len(name) >= 3 && strings.EqualFold(name[:3], "cf-")) || strings.EqualFold(name, "True-Client-IP")
+		switch {
+		case strings.EqualFold(name, secret):
+			delete(h, k)
+		case cloudflare && (!verified || name != k):
+			delete(h, k)
+		}
+	}
+}
+
+// cloudflareTrustedRequest reports whether the request carries the operator's
+// configured Cloudflare shared secret. Disabled (false) when no secret is set.
 func cloudflareTrustedRequest(r *http.Request) bool {
 	sp := cfTrustSecret.Load()
 	if sp == nil || *sp == "" {

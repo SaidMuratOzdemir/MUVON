@@ -310,7 +310,7 @@ Each service owns its own schema in a single PostgreSQL instance. No cross-schem
 | Static File Serving | `static_root` with optional SPA fallback |
 | Redirect Routes | 301 redirects with optional target rewrite |
 | Header Manipulation | Per-route add/del on request and response |
-| Client IP Forwarding | `X-Real-IP` carries the resolved client address, `X-Forwarded-For` the hop chain; apps gate on the injected `MUVON_EDGE_IP`. See [docs/client-ip.md](docs/client-ip.md) |
+| Client IP Forwarding | `X-Real-IP` carries the resolved client address, `X-Forwarded-For` the hop chain; apps gate on the injected `MUVON_EDGE_IP`. Cloudflare's `CF-*` headers reach the app only on a verified Cloudflare request. See [docs/client-ip.md](docs/client-ip.md) |
 | Health-Aware Backends | Circuit breaker on consecutive failures |
 | Multi-Backend Load Balance | Round-robin across `backend_urls[]` |
 | Custom Error Pages | Per-route HTML for 4xx/5xx |
@@ -406,7 +406,7 @@ If diaLOG is down, log pages show a service-offline banner. Everything else keep
 | `-config-reload-interval` | `MUVON_CONFIG_RELOAD_INTERVAL` | `5s` | Background config reload cadence. A reload whose snapshot is byte-identical to the last one skips both the swap and the reload callbacks |
 | `-version` | | | Print version and exit |
 | | `MUVON_CLOUDFLARE_IP_SECRET` | `""` | Shared secret the operator injects with a Transform Rule on their own Cloudflare zone. Empty disables Cloudflare client-IP and visitor-location trust, which is the safe default |
-| | `MUVON_CLOUDFLARE_IP_HEADER` | `X-Muvon-CF-Key` | Header that carries the secret above. Stripped before request headers reach the log pipeline |
+| | `MUVON_CLOUDFLARE_IP_HEADER` | `X-Muvon-CF-Key` | Header that carries the secret above. Stripped before request headers reach the log pipeline, and never forwarded to the application |
 
 ### muvon-deployer
 
@@ -457,7 +457,7 @@ If diaLOG is down, log pages show a service-offline banner. Everything else keep
 | `-deployer-tcp-listen` | `AGENT_DEPLOYER_TCP_LISTEN` | `""` | host:port for the deployer gRPC TCP listener that central dials for live container tail; empty disables it |
 | `-version` | | | Print version and exit |
 | | `AGENT_CLOUDFLARE_IP_SECRET` | `""` | Same contract as the central variable; empty disables Cloudflare client-IP trust |
-| | `AGENT_CLOUDFLARE_IP_HEADER` | `X-Muvon-CF-Key` | Header carrying that secret |
+| | `AGENT_CLOUDFLARE_IP_HEADER` | `X-Muvon-CF-Key` | Header carrying that secret; never forwarded to the application |
 
 ### diaLOG
 

@@ -256,6 +256,8 @@ else:
 
 `docs/client-ip.md` carries the full contract with ready middleware for ASGI, Django and nginx.
 
+Cloudflare's own headers (`CF-Connecting-IP`, `CF-IPCountry`, `CF-IPCity` and the rest of `CF-*`, plus `True-Client-IP`) reach the application only when the request passed the Cloudflare gate (edge peer plus the shared secret); otherwise the edge removes them, as it does every underscore spelling of them and the secret header itself. An application reading location from them uses the same `MUVON_EDGE_IP` gate.
+
 **Do not enable the application server's own forwarded-header handling** (`--proxy-headers`, `--forwarded-allow-ips`, `FORWARDED_ALLOW_IPS`). Those implementations walk the `X-Forwarded-For` chain and take the rightmost entry that is not in their trusted list. Behind a CDN, MUVON emits `client, cdn-edge`, so with only the edge trusted the rightmost untrusted entry is the CDN and the application records the CDN as the visitor. Making it correct would mean trusting the CDN's entire address ranges and keeping that list current forever. The server layer also runs before application middleware, so when it is active it wins and the middleware never gets a chance.
 
 Two related traps:

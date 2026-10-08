@@ -593,7 +593,7 @@ func upstreamTrusted(r *http.Request, trustedProxies []string) bool {
 	if directProxyTrusted(r, trustedProxies) {
 		return true
 	}
-	return isCloudflareIP(peerHost(r)) && cloudflareTrustedRequest(r)
+	return cloudflareVerified(r)
 }
 
 func directProxyTrusted(r *http.Request, trustedProxies []string) bool {
@@ -618,7 +618,7 @@ func directProxyTrusted(r *http.Request, trustedProxies []string) bool {
 func clientIPFor(r *http.Request, trustedProxies []string) string {
 	peer := peerHost(r)
 
-	if isCloudflareIP(peer) && cloudflareTrustedRequest(r) {
+	if cloudflareVerified(r) {
 		if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" {
 			return cf
 		}

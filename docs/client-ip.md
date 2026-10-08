@@ -319,4 +319,20 @@ equivalents). Leave the secret empty and CDN client-address trust stays off, whi
 is the safe default.
 
 The secret header is stripped before request headers are stored in the log
-pipeline, so it does not end up readable in the SIEM.
+pipeline, so it does not end up readable in the SIEM, and it is never forwarded to
+the application.
+
+Cloudflare's own headers (`CF-Connecting-IP`, `CF-IPCountry`, `CF-IPCity`,
+`CF-Region-Code` and every other `CF-*` header, plus `True-Client-IP`) reach the
+application only when the request passed this same check. On any other request
+MUVON removes them before proxying, because a client that reaches the origin
+directly can send them with any value. Underscore spellings of these names
+(`CF_IPCity`, `X_Muvon_CF_Key`) are removed from every request, verified or not:
+Cloudflare never sends them, and servers that map header names to CGI variables
+would read `CF_IPCity` and `CF-IPCity` as the same value.
+
+An application may therefore read the visitor location headers as Cloudflare's
+answer, under the same `MUVON_EDGE_IP` gate as `X-Real-IP`, which stays the one
+header to use for the client address. `CF-IPCity` carries raw UTF-8 bytes, so a
+server that decodes headers as Latin-1 has to re-encode the value before decoding
+it as UTF-8.

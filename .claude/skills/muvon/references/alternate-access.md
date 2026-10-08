@@ -160,7 +160,7 @@ Typical keys in that `.env`:
 
 - `AGENT_API_KEY`: secret
 - `AGENT_ENCRYPTION_KEY`: secret, must equal central's `MUVON_ENCRYPTION_KEY`. Required when `AGENT_DEPLOYER_ENABLED=true`, and the agent exits at startup without it
-- `AGENT_CLOUDFLARE_IP_SECRET` and `AGENT_CLOUDFLARE_IP_HEADER`: one secret, one not. They enable trust in a CDN's client-IP header; empty means CDN headers are not believed
+- `AGENT_CLOUDFLARE_IP_SECRET` and `AGENT_CLOUDFLARE_IP_HEADER`: one secret, one not. They enable trust in a CDN's client-IP header; empty means CDN headers are not believed, and the edge removes Cloudflare's `CF-*` headers before they reach an application
 - `AGENT_CENTRAL_URL`, `AGENT_LOG_ADDR`: not secret. Where central and diaLOG are reached. The central URL is the admin domain over HTTPS, without a port: `:9443` is plain HTTP and compose binds it to loopback
 - `AGENT_DEPLOYER_ENABLED`, `AGENT_DEPLOYER_POLL_MS`, `AGENT_DEPLOYER_TCP_LISTEN`: not secret. `AGENT_DEPLOYER_TCP_BIND` is a compose-level variable for the host-side port mapping, while `AGENT_DEPLOYER_TCP_LISTEN` is what the binary reads. Binding to an internal address is preferred over listening on all interfaces
 - `AGENT_DOCKERWATCH_ENABLED`, `AGENT_DOCKERWATCH_MANAGED_ONLY`: not secret

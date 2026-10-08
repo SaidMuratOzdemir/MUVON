@@ -23,6 +23,25 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+### SECURITY
+
+- **Cloudflare başlıkları yalnız doğrulanmış istekte uygulamaya iletilir.**
+  `CF-Connecting-IP`, `CF-IPCountry`, `CF-IPCity` ve diğer `CF-*` başlıkları
+  ile `True-Client-IP`, isteğin operatörün kendi Cloudflare zone'undan geldiği
+  (Cloudflare adresi ve paylaşılan secret) doğrulanmadıysa backend'e
+  gönderilmeden silinir. Paylaşılan secret başlığı (`X-Muvon-CF-Key` veya
+  ayarlanan ad) hiçbir istekte uygulamaya iletilmez. Bu adların alt çizgili
+  yazımları (`CF_IPCity` gibi) doğrulanmış istekte de silinir, çünkü bazı
+  sunucular `CF_IPCity` ile `CF-IPCity`'yi aynı değişkene çevirir.
+
+### Upgrade notları
+
+- Uygulamanız Cloudflare'in konum başlıklarını okuyorsa davranış değişmez:
+  bu başlıklar doğrulanmış istekte aynen gelir. Gerçek istemci adresi için
+  `X-Real-IP` okunmaya devam eder.
+- Agent üzerinden servis edilen host'lar için her agent'ı panelden
+  `agent.self_upgrade` ile veya `install-agent.sh` ile güncelleyin.
+
 ## [0.6.1] - 2026-10-01
 
 Geçidin gzip sıkıştırması içerik türüne göre karar veriyor. Şema değişikliği
