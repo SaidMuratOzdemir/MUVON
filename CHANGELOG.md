@@ -23,6 +23,11 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-10-09
+
+Geçit, Cloudflare başlıklarını uygulamaya yalnız doğrulanmış istekte
+iletiyor. Şema değişikliği yok.
+
 ### SECURITY
 
 - **Cloudflare başlıkları yalnız doğrulanmış istekte uygulamaya iletilir.**
@@ -36,6 +41,8 @@ Upgrade'den önce: PostgreSQL ve volume'larınızı yedekleyin. Migration'lar
 
 ### Upgrade notları
 
+- Panelden yükseltin veya sunucuda:
+  `cd /opt/muvon && docker compose pull && docker compose up -d --wait`.
 - Uygulamanız Cloudflare'in konum başlıklarını okuyorsa davranış değişmez:
   bu başlıklar doğrulanmış istekte aynen gelir. Gerçek istemci adresi için
   `X-Real-IP` okunmaya devam eder.
